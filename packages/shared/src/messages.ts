@@ -1,6 +1,6 @@
 export type InputMessage = {
   type: "input";
-  seq: number;
+  seq?: number;
   dir: { x: number; z: number };
 };
 
