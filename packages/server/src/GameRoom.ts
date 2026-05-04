@@ -7,6 +7,17 @@ import { clampDirection } from "./input.js";
 const TICK_INTERVAL_MS = 50;            // 20 Hz
 const SIM_DT_S = TICK_INTERVAL_MS / 1000; // fixed 0.05s per tick — see AD1
 const MAX_PLAYERS = 10;
+const DEFAULT_RECONNECTION_GRACE_S = 30;
+
+// MP_RECONNECTION_GRACE_S overrides the grace window in seconds. Tests set
+// it to "1" so reconnect.test.ts runs in ~1.5s instead of ~31s. Anything
+// that doesn't parse to a finite, positive number falls back to the
+// production default — guards against typos like `MP_RECONNECTION_GRACE_S=foo`
+// silently collapsing the window to ~1ms via setTimeout(NaN * 1000).
+function parseGraceSeconds(): number {
+  const raw = Number(process.env.MP_RECONNECTION_GRACE_S);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_RECONNECTION_GRACE_S;
+}
 
 type JoinOptions = {
   name?: string;
@@ -91,10 +102,13 @@ export class GameRoom extends Room<RoomState> {
     }
 
     try {
-      const graceS = Number(process.env.MP_RECONNECTION_GRACE_S ?? 30);
+      const graceS = parseGraceSeconds();
       await this.allowReconnection(client, graceS);
       // Reconnected. Same sessionId, same Player schema. Nothing else to do.
-    } catch {
+    } catch (err) {
+      console.log(
+        `[room ${this.state.code}] reconnect grace ended for ${client.sessionId}: ${err === false ? "timeout" : err}`,
+      );
       this.state.players.delete(client.sessionId);
     }
   }
