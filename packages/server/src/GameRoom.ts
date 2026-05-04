@@ -30,8 +30,16 @@ export class GameRoom extends Room<RoomState> {
     console.log(`[room ${code}] created seed=${state.seed}`);
     this.setState(state);
 
-    // setMetadata is what filterBy(["code"]) actually filters against; state.code is for
-    // the client UI to display. Both writes are required.
+    // The matchmaker's filterBy(["code"]) matches against the room listing's
+    // top-level fields, which Colyseus initializes from the CREATING client's
+    // options. Since the creating client doesn't know the code yet (we just
+    // generated it), we have to write it onto the listing manually so a
+    // second client's join({ code }) can find this room. setMetadata only
+    // updates listing.metadata, which the matchmaker's driver query does
+    // NOT read — it would not be sufficient on its own.
+    this.listing.code = code;
+    // Metadata is still useful for getAvailableRooms() and exposing room
+    // info to clients via the matchmaker; keep it in sync.
     await this.setMetadata({ code });
 
     this.onMessage<InputMessage>("input", (client, message) => {

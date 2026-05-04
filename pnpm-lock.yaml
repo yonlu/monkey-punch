@@ -67,6 +67,9 @@ importers:
       '@types/node':
         specifier: ^20.12.0
         version: 20.19.39
+      colyseus.js:
+        specifier: ^0.16.0
+        version: 0.16.22
       tsx:
         specifier: ^4.7.0
         version: 4.21.0
