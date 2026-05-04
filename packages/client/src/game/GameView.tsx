@@ -173,6 +173,19 @@ export function GameView({
       if (e.code === "F3") {
         e.preventDefault();
         hudState.visible = !hudState.visible;
+        return;
+      }
+      if (!hudState.visible) return;
+
+      if (e.code === "BracketRight" && !e.shiftKey) {
+        e.preventDefault();
+        room.send("debug_spawn", { type: "debug_spawn", count: 10 });
+      } else if (e.code === "BracketRight" && e.shiftKey) {
+        e.preventDefault();
+        room.send("debug_spawn", { type: "debug_spawn", count: 100 });
+      } else if (e.code === "Backslash") {
+        e.preventDefault();
+        room.send("debug_clear_enemies", { type: "debug_clear_enemies" });
       }
     };
     window.addEventListener("keydown", keyHandler);
