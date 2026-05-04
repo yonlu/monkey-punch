@@ -170,6 +170,7 @@ export function GameView({
     }, 1000);
 
     const keyHandler = (e: KeyboardEvent) => {
+      if (e.repeat) return;
       if (e.code === "F3") {
         e.preventDefault();
         hudState.visible = !hudState.visible;
