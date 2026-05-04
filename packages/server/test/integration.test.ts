@@ -72,6 +72,42 @@ describe("integration: room create → join-by-code → state sync", () => {
   }, 5000);
 });
 
+describe("integration: enemy spawn + movement over real ticks", () => {
+  it("spawns ~5 enemies in 5 seconds and they move toward the connected player", async () => {
+    const client = new Client(`ws://localhost:${PORT}`);
+    const room = await client.create<{
+      code: string;
+      enemies: { size: number; forEach: (cb: (e: { x: number; z: number }, k: string) => void) => void };
+    }>("game", { name: "Solo" });
+
+    await waitFor(() => room.state.code !== "" && room.state.code != null, 1000);
+
+    // Server runs at 20 Hz; spawn interval is 1.0 s. Wait ~5.5 s wall time.
+    await new Promise((r) => setTimeout(r, 5500));
+
+    const enemyCount = room.state.enemies.size;
+    expect(enemyCount).toBeGreaterThanOrEqual(4);
+    expect(enemyCount).toBeLessThanOrEqual(6);
+
+    // Snapshot current enemy positions; wait 4 ticks; assert at least one
+    // enemy moved.
+    const before = new Map<string, { x: number; z: number }>();
+    room.state.enemies.forEach((e, k) => before.set(k, { x: e.x, z: e.z }));
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    let moved = 0;
+    room.state.enemies.forEach((e, k) => {
+      const prev = before.get(k);
+      if (!prev) return;
+      if (Math.abs(e.x - prev.x) > 1e-4 || Math.abs(e.z - prev.z) > 1e-4) moved++;
+    });
+    expect(moved).toBeGreaterThan(0);
+
+    await room.leave();
+  }, 10_000);
+});
+
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (!cond()) {

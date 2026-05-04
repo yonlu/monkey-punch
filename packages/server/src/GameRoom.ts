@@ -1,5 +1,15 @@
 import { Room, Client } from "colyseus";
-import { Player, RoomState, tickPlayers, SIM_DT_S } from "@mp/shared";
+import {
+  Player,
+  RoomState,
+  tickPlayers,
+  tickEnemies,
+  tickSpawner,
+  SIM_DT_S,
+  mulberry32,
+  type Rng,
+  type SpawnerState,
+} from "@mp/shared";
 import type { InputMessage, PingMessage } from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
 import { clampDirection } from "./input.js";
@@ -25,6 +35,8 @@ type JoinOptions = {
 
 export class GameRoom extends Room<RoomState> {
   override maxClients = MAX_PLAYERS;
+  private rng!: Rng;
+  private spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
 
   override async onCreate(_options: JoinOptions): Promise<void> {
     const state = new RoomState();
@@ -40,6 +52,7 @@ export class GameRoom extends Room<RoomState> {
     state.tick = 0;
     console.log(`[room ${code}] created seed=${state.seed}`);
     this.setState(state);
+    this.rng = mulberry32(state.seed);
 
     // The matchmaker's filterBy(["code"]) matches against the room listing's
     // top-level fields, which Colyseus initializes from the CREATING client's
@@ -115,5 +128,7 @@ export class GameRoom extends Room<RoomState> {
   private tick(): void {
     this.state.tick += 1;
     tickPlayers(this.state, SIM_DT_S);
+    tickEnemies(this.state, SIM_DT_S);
+    tickSpawner(this.state, this.spawner, SIM_DT_S, this.rng);
   }
 }
