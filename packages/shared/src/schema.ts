@@ -63,9 +63,27 @@ defineTypes(Player, {
 });
 
 export class Enemy extends Schema {
-  // intentionally empty for now; first gameplay PR fills this in.
-  // No defineTypes() call — empty schemas have no fields to register.
+  declare id: number;
+  declare kind: number;
+  declare x: number;
+  declare z: number;
+  declare hp: number;
+  constructor() {
+    super();
+    this.id = 0;
+    this.kind = 0;
+    this.x = 0;
+    this.z = 0;
+    this.hp = 0;
+  }
 }
+defineTypes(Enemy, {
+  id: "uint32",
+  kind: "uint8",
+  x: "number",
+  z: "number",
+  hp: "uint16",
+});
 
 export class RoomState extends Schema {
   declare code: string;
