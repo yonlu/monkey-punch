@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { RoomState, Player } from "../src/schema.js";
-import { tickPlayers, PLAYER_SPEED } from "../src/rules.js";
+import { tickPlayers } from "../src/rules.js";
+import { PLAYER_SPEED } from "../src/constants.js";
 
 function addPlayer(state: RoomState, id: string, dirX: number, dirZ: number): Player {
   const p = new Player();
