@@ -17,21 +17,36 @@ const HUD_STYLE: React.CSSProperties = {
 export function DebugHud() {
   const [, force] = useState(0);
   const raf = useRef<number | null>(null);
+  const lastFrameMs = useRef<number | null>(null);
 
   useEffect(() => {
     const tick = () => {
+      const now = performance.now();
+      if (lastFrameMs.current != null) {
+        const dt = now - lastFrameMs.current;
+        if (dt > 0) {
+          // Exponential smoothing — keeps the number stable enough to read.
+          const instantFps = 1000 / dt;
+          hudState.fps = hudState.fps === 0
+            ? instantFps
+            : hudState.fps * 0.9 + instantFps * 0.1;
+        }
+      }
+      lastFrameMs.current = now;
       force((n) => (n + 1) & 0x7fffffff);
       raf.current = requestAnimationFrame(tick);
     };
     raf.current = requestAnimationFrame(tick);
     return () => {
       if (raf.current != null) cancelAnimationFrame(raf.current);
+      lastFrameMs.current = null;
     };
   }, []);
 
   if (!hudState.visible) return null;
 
   const lines = [
+    `fps        ${hudState.fps.toFixed(0)}`,
     `ping       ${hudState.pingMs.toFixed(0)} ms`,
     `server tick ${hudState.serverTick}`,
     `snapshots  ${hudState.snapshotsPerSec.toFixed(1)} / s`,

@@ -9,6 +9,7 @@ export type HudState = {
   interpDelayMs: number;
   playerCount: number;
   reconErr: number;
+  fps: number;                 // smoothed render fps (DebugHud rAF tick)
   enemyCount: number;          // active enemies
   enemyDrawCalls: number;      // gl.info.render.calls — proxy for "instancing working"
   lastSnapshotBytes: number;   // best-effort client-side; authoritative number is in server log
@@ -22,6 +23,7 @@ export const hudState: HudState = {
   interpDelayMs: 100,
   playerCount: 0,
   reconErr: 0,
+  fps: 0,
   enemyCount: 0,
   enemyDrawCalls: 0,
   lastSnapshotBytes: 0,
