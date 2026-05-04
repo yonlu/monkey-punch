@@ -25,6 +25,7 @@ const TICK_INTERVAL_MS = SIM_DT_S * 1000; // 50 ms — must equal shared SIM_DT_
 const MAX_PLAYERS = 10;
 const DEFAULT_RECONNECTION_GRACE_S = 30;
 const ALLOW_DEBUG_MESSAGES = true;     // becomes runtime config later
+const SNAPSHOT_LOG_INTERVAL_MS = 5_000;
 
 // MP_RECONNECTION_GRACE_S overrides the grace window in seconds. Tests set
 // it to "1" so reconnect.test.ts runs in ~1.5s instead of ~31s. Anything
@@ -52,6 +53,11 @@ export class GameRoom extends Room<RoomState> {
   // (esbuild emitting Object.defineProperty over @colyseus/schema's
   // prototype setters) only affects Schema subclasses.
   private spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+
+  private snapshotLogTimer: NodeJS.Timeout | null = null;
+  private patchByteCount = 0;
+  private patchSampleCount = 0;
+  private patchInstrumentationFailed = false;
 
   override async onCreate(_options: JoinOptions): Promise<void> {
     const state = new RoomState();
@@ -127,6 +133,7 @@ export class GameRoom extends Room<RoomState> {
       });
     }
 
+    this.installSnapshotLogger();
     this.setSimulationInterval(() => this.tick(), TICK_INTERVAL_MS);
   }
 
@@ -166,10 +173,76 @@ export class GameRoom extends Room<RoomState> {
     }
   }
 
+  override onDispose(): void {
+    if (this.snapshotLogTimer) clearInterval(this.snapshotLogTimer);
+  }
+
   private tick(): void {
     this.state.tick += 1;
     tickPlayers(this.state, SIM_DT_S);
     tickEnemies(this.state, SIM_DT_S);
     tickSpawner(this.state, this.spawner, SIM_DT_S, this.rng);
+  }
+
+  private installSnapshotLogger(): void {
+    // Per-tick byte counting via broadcastPatch override. The exact internal
+    // signature varies between Colyseus versions; the try/catch lets a
+    // future upgrade fail loudly rather than silently logging zeros.
+    try {
+      const self = this as unknown as { broadcastPatch?: () => unknown };
+      const original = self.broadcastPatch?.bind(this);
+      if (typeof original !== "function") {
+        throw new Error("Room#broadcastPatch unavailable on this Colyseus version");
+      }
+      self.broadcastPatch = () => {
+        const result = original();
+        const len = (result as { length?: number } | undefined)?.length;
+        if (typeof len === "number" && Number.isFinite(len)) {
+          this.patchByteCount += len;
+          this.patchSampleCount += 1;
+        }
+        return result;
+      };
+    } catch (err) {
+      this.patchInstrumentationFailed = true;
+      console.warn(
+        `[room ${this.state.code}] patch instrumentation unavailable: ${
+          err instanceof Error ? err.message : String(err)
+        } — snapshot log will show full-state only`,
+      );
+    }
+
+    this.snapshotLogTimer = setInterval(() => {
+      const enemies = this.state.enemies.size;
+      const players = this.state.players.size;
+      const avgPatch = this.patchSampleCount > 0
+        ? Math.round(this.patchByteCount / this.patchSampleCount)
+        : 0;
+
+      let fullBytes = -1;
+      try {
+        // Colyseus 0.16: full state lives in _serializer.getFullState().
+        // Older/newer fallback: state.encodeAll() may exist on some versions.
+        const serializer = (this as unknown as { _serializer?: { getFullState?: (c: null) => { length?: number } | undefined } })._serializer;
+        const buf = serializer?.getFullState?.(null)
+          ?? (this.state as unknown as { encodeAll?: () => Uint8Array }).encodeAll?.call(this.state);
+        if (buf?.length != null) fullBytes = buf.length;
+      } catch (err) {
+        console.warn(
+          `[room ${this.state.code}] full-state encode failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+
+      const patchStr = this.patchInstrumentationFailed ? "n/a" : `${avgPatch}B/tick`;
+      const fullStr = fullBytes >= 0 ? `${fullBytes}B` : "n/a";
+      console.log(
+        `[room ${this.state.code}] snapshot avg=${patchStr} full=${fullStr} enemies=${enemies} players=${players}`,
+      );
+
+      this.patchByteCount = 0;
+      this.patchSampleCount = 0;
+    }, SNAPSHOT_LOG_INTERVAL_MS);
   }
 }
