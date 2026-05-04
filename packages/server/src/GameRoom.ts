@@ -108,6 +108,10 @@ export class GameRoom extends Room<RoomState> {
 
         const requested = Number(message?.count);
         if (!Number.isFinite(requested) || requested <= 0) return;
+        // Defense-in-depth: spawnDebugBurst already clamps to remaining
+        // capacity (MAX_ENEMIES - state.enemies.size), but we cap here too
+        // so a pathologically large `requested` (e.g. 1e9) doesn't pass
+        // through to a function that doesn't expect to allocate Infinity.
         const cap = Math.min(Math.floor(requested), MAX_ENEMIES);
 
         const kindRaw = Number(message?.kind);
