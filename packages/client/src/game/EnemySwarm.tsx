@@ -71,10 +71,17 @@ export function EnemySwarm({ enemyIds, buffers }: EnemySwarmProps) {
   });
 
   return (
+    // No castShadow: with the directionalLight's default shadow camera
+    // (~5x5 world units) and enemies scattered to ENEMY_SPAWN_RADIUS=30,
+    // every instance is outside the shadow frustum every frame. In Three.js
+    // 0.164 with @react-three/fiber 8.18, this combination causes the
+    // entire InstancedMesh to be silently dropped from the main render
+    // pass. Disabling castShadow keeps enemies visible. Future work:
+    // expand the shadow camera bounds and add castShadow back, or use a
+    // custom depth material for enemy shadows.
     <instancedMesh
       ref={meshRef}
       args={[undefined, undefined, MAX_ENEMIES]}
-      castShadow
       frustumCulled={false}
     >
       <coneGeometry args={[0.5, 1.2, 6]} />
