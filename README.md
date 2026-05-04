@@ -53,3 +53,23 @@ See [CLAUDE.md](CLAUDE.md) for the binding architectural rules.
 ## Deployment
 
 Not deployed. Target is Fly.io for the server. The included [Dockerfile](Dockerfile) is a placeholder for that work.
+
+## Manual smoke test (M2 sync invariants)
+
+After any non-trivial sync change, run through these in two browser tabs.
+
+1. `pnpm dev`, open two tabs at `http://localhost:5173`. Create in tab A;
+   join with the displayed code in tab B.
+2. Move both cubes with WASD. Throttle the network in DevTools to "Fast
+   3G" in one tab. Confirm the remote cube still moves smoothly (no
+   jitter, no rubber-banding) and the local cube remains responsive.
+3. Press `F3` in either tab. The debug HUD appears top-right with
+   `ping`, `server tick`, `snapshots`, `interp`, `players`, `recon err`.
+   In steady state `recon err` should be ≈ 0; brief spikes after a
+   network blip should recover within a few ticks.
+4. Open a third tab and join. The two existing tabs should see the new
+   cube appear without any flicker on existing cubes.
+5. Kill the dev server with the two tabs still connected. Both tabs
+   should show `Reconnecting…` then `Disconnected — Rejoin?`. Click
+   `Rejoin` and confirm Landing pre-fills the name and code and a
+   fresh join works.

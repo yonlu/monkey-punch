@@ -36,14 +36,20 @@ binding — violations are bugs.
    seed is set per-run and stored on `RoomState`.
 7. **No identity beyond Colyseus sessionId.** No accounts, no auth, no
    persistence. Display name is passed at join time and stored on the Player
-   schema. Treat sessionId as the only identity.
+   schema. Treat sessionId as the only identity. Reconnection within a 30s
+   grace window preserves the same sessionId; clients that reconnect after
+   the window get a new sessionId and a fresh `Player`. There is no
+   cross-tab or cross-room identity.
 8. **Projectiles do not sync.** Only weapon state syncs. Clients simulate
    projectile spawn/motion/lifetime locally from synced weapon state and the
    seeded PRNG. (Not implemented yet — but no design choice may foreclose this.)
-9. **Tickrate.** Server simulates at 20Hz. Client renders at 60fps and
-   interpolates between the most recent two server snapshots for non-local
-   players. Local player position is also driven by server state (no client
-   prediction yet).
+9. **Tickrate.** Server simulates at 20Hz with a fixed `dt` of `0.05`s.
+   The client renders at 60fps and interpolates remote players between
+   the two most recent server snapshots (≈100ms behind newest). The
+   local player runs client-side prediction at 20Hz and reconciles
+   with the server on each snapshot: unacknowledged inputs (those with
+   `seq > Player.lastProcessedInput`) are re-applied to the server's
+   authoritative position to produce the predicted current frame.
 
 ## Things NOT to do
 
