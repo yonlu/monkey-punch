@@ -73,3 +73,34 @@ After any non-trivial sync change, run through these in two browser tabs.
    should show `Reconnecting…` then `Disconnected — Rejoin?`. Click
    `Rejoin` and confirm Landing pre-fills the name and code and a
    fresh join works.
+
+## Manual perf test (M3)
+
+Run on 2026-05-04, M2 MacBook Pro, two connected Chrome tabs.
+
+| Enemies | Client FPS | Server tick | Full-state bytes | Draw calls |
+|--------:|-----------:|------------:|-----------------:|-----------:|
+| 0       | 60         | 20Hz        | 192              | 3          |
+| ~210    | 60         | 20Hz        | 6,776            | 4          |
+| 300     | 60         | 20Hz        | 9,944            | 4          |
+
+Notes:
+
+- Full-state size scales linearly at ~32 bytes per enemy; 300 enemies = 9.9 KB,
+  well under the 50 KB stop threshold from the M3 spec.
+- Per-tick patch size logs as `n/a` because Colyseus 0.16's `broadcastPatch()`
+  returns a boolean (`hasChanges`) rather than the encoded buffer, so the
+  byte-counting hook can't sample. The `[room XXXX] patch instrumentation
+  produced no measurable bytes` warn fires once per room. Full-state numbers
+  are the reliable signal at this stage.
+- Draw calls are constant at 4 with any non-zero enemy count: 1 ground + 2
+  player cubes + 1 InstancedMesh (regardless of how many cones it draws).
+  This is the empirical confirmation that instanced rendering is doing its
+  job — the architecture would have to change before draw calls grew.
+- FPS held at 60 in both tabs across all measurements; never observed below
+  60. No GC stutter visible in DevTools Performance tab.
+- Cross-client determinism verified: each enemy at the same world position
+  in both tabs (same seeded RNG, server-only spawning).
+- Reconnect mid-spawn verified: tab A dropped to Offline for ~5s with ~100
+  enemies on screen, restored cleanly with no duplicates and same enemy ids
+  as tab B.
