@@ -50,6 +50,14 @@ binding — violations are bugs.
    with the server on each snapshot: unacknowledged inputs (those with
    `seq > Player.lastProcessedInput`) are re-applied to the server's
    authoritative position to produce the predicted current frame.
+10. **Enemies are simulated server-only and rendered client-side via
+    InstancedMesh.** Never one Three.js Mesh per enemy. The single
+    InstancedMesh has capacity `MAX_ENEMIES`; per-instance position comes
+    from interpolating a per-enemy `SnapshotBuffer`, identified by the
+    server-assigned `Enemy.id` (never by `MapSchema` iteration order).
+    Spawner state (`accumulator`, `nextEnemyId`) lives on the GameRoom
+    instance, not on RoomState — server-only counters do not pollute the
+    schema.
 
 ## Things NOT to do
 
