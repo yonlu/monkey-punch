@@ -1,0 +1,24 @@
+{
+  "name": "@mp/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "clean": "rm -rf dist .tsbuildinfo"
+  },
+  "dependencies": {
+    "@colyseus/schema": "^3.0.0",
+    "@mp/shared": "workspace:*",
+    "colyseus": "^0.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "tsx": "^4.7.0",
+    "vitest": "^1.6.0"
+  }
+}
