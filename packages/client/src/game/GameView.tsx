@@ -185,6 +185,7 @@ export function GameView({
       room.onLeave.remove(leaveHandler);
       perPlayerDisposers.forEach((off) => off());
       perPlayerDisposers.clear();
+      buffers.clear();
       offEnemyAdd();
       offEnemyRemove();
       perEnemyDisposers.forEach((off) => off());
