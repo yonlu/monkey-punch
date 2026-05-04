@@ -27,6 +27,7 @@ export class GameRoom extends Room<RoomState> {
     state.code = code;
     state.seed = (Math.random() * 0xffffffff) >>> 0;
     state.tick = 0;
+    console.log(`[room ${code}] created seed=${state.seed}`);
     this.setState(state);
 
     // setMetadata is what filterBy(["code"]) actually filters against; state.code is for

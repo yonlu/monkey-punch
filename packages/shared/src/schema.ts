@@ -41,7 +41,7 @@ export class RoomState extends Schema {
 defineTypes(RoomState, {
   code: "string",
   seed: "uint32",
-  tick: "number",
+  tick: "uint32",
   players: { map: Player },
   enemies: { map: Enemy },
 });

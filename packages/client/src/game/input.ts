@@ -3,6 +3,13 @@ import type { InputMessage, RoomState } from "@mp/shared";
 
 const KEYS = { w: false, a: false, s: false, d: false };
 
+const CODE_TO_KEY: Record<string, "w" | "a" | "s" | "d"> = {
+  KeyW: "w",
+  KeyA: "a",
+  KeyS: "s",
+  KeyD: "d",
+};
+
 function computeDir(): { x: number; z: number } {
   let x = 0, z = 0;
   if (KEYS.w) z -= 1;
@@ -26,8 +33,8 @@ export function attachInput(room: Room<RoomState>): () => void {
   };
 
   const onKey = (down: boolean) => (e: KeyboardEvent) => {
-    const k = e.key.toLowerCase();
-    if (k !== "w" && k !== "a" && k !== "s" && k !== "d") return;
+    const k = CODE_TO_KEY[e.code];
+    if (!k) return;
     if (KEYS[k] === down) return;
     KEYS[k] = down;
     send();
