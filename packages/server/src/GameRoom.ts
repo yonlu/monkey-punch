@@ -4,7 +4,8 @@ import type { InputMessage } from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
 import { clampDirection } from "./input.js";
 
-const TICK_INTERVAL_MS = 50; // 20 Hz
+const TICK_INTERVAL_MS = 50;            // 20 Hz
+const SIM_DT_S = TICK_INTERVAL_MS / 1000; // fixed 0.05s per tick — see AD1
 const MAX_PLAYERS = 10;
 
 type JoinOptions = {
@@ -17,12 +18,6 @@ export class GameRoom extends Room<RoomState> {
 
   override async onCreate(_options: JoinOptions): Promise<void> {
     const state = new RoomState();
-    // Join-code collisions are tolerated. ~31^4 ≈ 1M codes; for friends-only
-    // sessions the probability of two concurrent rooms sharing a code is
-    // negligible. If it ever happens, the second joiner lands in whichever
-    // room the matchmaker returns first — both rooms work, just routed to
-    // possibly the wrong friend group. Revisit if collision rate becomes a
-    // real complaint.
     const code = generateJoinCode();
     state.code = code;
     state.seed = (Math.random() * 0xffffffff) >>> 0;
@@ -30,27 +25,26 @@ export class GameRoom extends Room<RoomState> {
     console.log(`[room ${code}] created seed=${state.seed}`);
     this.setState(state);
 
-    // The matchmaker's filterBy(["code"]) matches against the room listing's
-    // top-level fields, which Colyseus initializes from the CREATING client's
-    // options. Since the creating client doesn't know the code yet (we just
-    // generated it), we have to write it onto the listing manually so a
-    // second client's join({ code }) can find this room. setMetadata only
-    // updates listing.metadata, which the matchmaker's driver query does
-    // NOT read — it would not be sufficient on its own.
     this.listing.code = code;
-    // Metadata is still useful for getAvailableRooms() and exposing room
-    // info to clients via the matchmaker; keep it in sync.
     await this.setMetadata({ code });
 
     this.onMessage<InputMessage>("input", (client, message) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
+
+      const seq = Number(message?.seq);
+      if (!Number.isFinite(seq) || seq <= player.lastProcessedInput) {
+        // Stale or replayed input — drop silently.
+        return;
+      }
+
       const dir = clampDirection(Number(message?.dir?.x), Number(message?.dir?.z));
       player.inputDir.x = dir.x;
       player.inputDir.z = dir.z;
+      player.lastProcessedInput = seq;
     });
 
-    this.setSimulationInterval((dt) => this.tick(dt), TICK_INTERVAL_MS);
+    this.setSimulationInterval(() => this.tick(), TICK_INTERVAL_MS);
   }
 
   override onJoin(client: Client, options: JoinOptions): void {
@@ -67,8 +61,8 @@ export class GameRoom extends Room<RoomState> {
     this.state.players.delete(client.sessionId);
   }
 
-  private tick(dtMs: number): void {
+  private tick(): void {
     this.state.tick += 1;
-    tickPlayers(this.state, dtMs / 1000);
+    tickPlayers(this.state, SIM_DT_S);
   }
 }
