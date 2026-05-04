@@ -1,6 +1,6 @@
 export type InputMessage = {
   type: "input";
-  seq?: number;
+  seq: number;                            // monotonic per client (required)
   dir: { x: number; z: number };
 };
 

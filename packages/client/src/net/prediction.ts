@@ -1,11 +1,12 @@
 import { PLAYER_SPEED, SIM_DT_S } from "@mp/shared";
+import type { InputMessage } from "@mp/shared";
 
 type UnackedInput = {
   seq: number;
   dir: { x: number; z: number };
 };
 
-export type SendInput = (msg: { type: "input"; seq: number; dir: { x: number; z: number } }) => void;
+export type SendInput = (msg: InputMessage) => void;
 
 /**
  * Owns the local player's predicted state. The network layer calls step()

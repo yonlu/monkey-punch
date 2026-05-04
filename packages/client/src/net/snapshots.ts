@@ -1,7 +1,6 @@
 export type Snapshot = { t: number; x: number; z: number };
 
 const HISTORY = 5; // keep a small ring buffer per player
-export const INTERP_DELAY_MS = 100; // render this far behind newest snapshot
 
 export class SnapshotBuffer {
   private snaps: Snapshot[] = [];

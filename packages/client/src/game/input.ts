@@ -1,5 +1,6 @@
 import type { Room } from "colyseus.js";
-import type { InputMessage, RoomState } from "@mp/shared";
+import type { RoomState } from "@mp/shared";
+import { LocalPredictor } from "../net/prediction.js";
 
 const KEYS = { w: false, a: false, s: false, d: false };
 
@@ -9,6 +10,8 @@ const CODE_TO_KEY: Record<string, "w" | "a" | "s" | "d"> = {
   KeyS: "s",
   KeyD: "d",
 };
+
+const STEP_INTERVAL_MS = 50; // 20 Hz; must equal server TICK_INTERVAL_MS
 
 function computeDir(): { x: number; z: number } {
   let x = 0, z = 0;
@@ -21,23 +24,17 @@ function computeDir(): { x: number; z: number } {
   return { x, z };
 }
 
-export function attachInput(room: Room<RoomState>): () => void {
-  let last = { x: 0, z: 0 };
-
-  const send = () => {
-    const dir = computeDir();
-    if (dir.x === last.x && dir.z === last.z) return;
-    last = dir;
-    const msg: InputMessage = { type: "input", dir };
-    room.send("input", msg);
-  };
-
+/**
+ * Owns keyboard listeners and a 20 Hz step loop that drives the predictor
+ * and sends one input message per step. Caller is responsible for
+ * disposing via the returned function on unmount.
+ */
+export function attachInput(room: Room<RoomState>, predictor: LocalPredictor): () => void {
   const onKey = (down: boolean) => (e: KeyboardEvent) => {
     const k = CODE_TO_KEY[e.code];
     if (!k) return;
     if (KEYS[k] === down) return;
     KEYS[k] = down;
-    send();
   };
 
   const downHandler = onKey(true);
@@ -45,18 +42,18 @@ export function attachInput(room: Room<RoomState>): () => void {
   window.addEventListener("keydown", downHandler);
   window.addEventListener("keyup", upHandler);
 
-  // Heartbeat: re-send current dir periodically while non-zero, in case a packet was lost.
-  const heartbeat = window.setInterval(() => {
-    const dir = computeDir();
-    if (dir.x === 0 && dir.z === 0) return;
-    const msg: InputMessage = { type: "input", dir };
+  const send = (msg: { type: "input"; seq: number; dir: { x: number; z: number } }) => {
     room.send("input", msg);
-  }, 200);
+  };
+
+  const stepTimer = window.setInterval(() => {
+    predictor.step(computeDir(), send);
+  }, STEP_INTERVAL_MS);
 
   return () => {
     window.removeEventListener("keydown", downHandler);
     window.removeEventListener("keyup", upHandler);
-    window.clearInterval(heartbeat);
+    window.clearInterval(stepTimer);
     KEYS.w = KEYS.a = KEYS.s = KEYS.d = false;
   };
 }

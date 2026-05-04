@@ -1,15 +1,9 @@
 import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import type { Mesh } from "three";
-import { SnapshotBuffer, INTERP_DELAY_MS } from "../net/snapshots.js";
-
-export type PlayerView = {
-  sessionId: string;
-  name: string;
-  x: number;
-  y: number;
-  z: number;
-};
+import { SnapshotBuffer } from "../net/snapshots.js";
+import { hudState } from "../net/hudState.js";
+import type { LocalPredictor } from "../net/prediction.js";
 
 function colorFor(sessionId: string): string {
   let hash = 0;
@@ -24,21 +18,32 @@ export type PlayerCubeProps = {
   sessionId: string;
   name: string;
   buffer: SnapshotBuffer;
+  predictor?: LocalPredictor; // present iff this is the local player
 };
 
-export function PlayerCube({ sessionId, buffer }: PlayerCubeProps) {
+export function PlayerCube({ sessionId, buffer, predictor }: PlayerCubeProps) {
   const ref = useRef<Mesh>(null);
   const color = useMemo(() => colorFor(sessionId), [sessionId]);
 
   useEffect(() => {
     if (!ref.current) return;
-    const sample = buffer.sample(performance.now() - INTERP_DELAY_MS);
+    if (predictor) {
+      ref.current.position.set(predictor.predictedX, 0.5, predictor.predictedZ);
+      return;
+    }
+    const sample = buffer.sample(performance.now() - hudState.interpDelayMs);
     if (sample) ref.current.position.set(sample.x, 0.5, sample.z);
-  }, [buffer]);
+  }, [buffer, predictor]);
 
   useFrame(() => {
     if (!ref.current) return;
-    const sample = buffer.sample(performance.now() - INTERP_DELAY_MS);
+    if (predictor) {
+      ref.current.position.x = predictor.predictedX;
+      ref.current.position.z = predictor.predictedZ;
+      ref.current.position.y = 0.5;
+      return;
+    }
+    const sample = buffer.sample(performance.now() - hudState.interpDelayMs);
     if (!sample) return;
     ref.current.position.x = sample.x;
     ref.current.position.z = sample.z;

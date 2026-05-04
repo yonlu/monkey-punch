@@ -7,6 +7,9 @@ import { Ground } from "./Ground.js";
 import { PlayerCube } from "./PlayerCube.js";
 import { SnapshotBuffer } from "../net/snapshots.js";
 import { attachInput } from "./input.js";
+import { LocalPredictor } from "../net/prediction.js";
+import { hudState } from "../net/hudState.js";
+import { DebugHud } from "./DebugHud.js";
 
 type PlayerEntry = {
   sessionId: string;
@@ -14,23 +17,40 @@ type PlayerEntry = {
   buffer: SnapshotBuffer;
 };
 
-export function GameView({ room }: { room: Room<RoomState> }) {
+export function GameView({
+  room,
+  onUnexpectedLeave = () => {},
+}: {
+  room: Room<RoomState>;
+  onUnexpectedLeave?: () => void;
+}) {
   const [players, setPlayers] = useState<Map<string, PlayerEntry>>(new Map());
   const [code, setCode] = useState<string>(room.state.code ?? "");
 
-  // The buffer map is mutable across re-renders; we just trigger renders when entries change.
   const buffers = useMemo(() => new Map<string, SnapshotBuffer>(), []);
+  const predictor = useMemo(() => new LocalPredictor(), []);
 
   useEffect(() => {
-    const detachInput = attachInput(room);
+    const detachInput = attachInput(room, predictor);
 
-    // colyseus.js 0.16 / @colyseus/schema 3.x: listeners live on a callback proxy
-    // returned by getStateCallbacks(room), not on the schema instance itself.
     const $ = getStateCallbacks(room);
 
     const updateCode = () => setCode(room.state.code ?? "");
     const offCode = $(room.state).listen("code", updateCode);
     updateCode();
+
+    let snapshotsThisSec = 0;
+    let lastSecMs = performance.now();
+    const offTick = $(room.state).listen("tick", (value) => {
+      hudState.serverTick = Number(value);
+      snapshotsThisSec += 1;
+      const now = performance.now();
+      if (now - lastSecMs >= 1000) {
+        hudState.snapshotsPerSec = snapshotsThisSec * (1000 / (now - lastSecMs));
+        snapshotsThisSec = 0;
+        lastSecMs = now;
+      }
+    });
 
     const perPlayerDisposers = new Map<string, () => void>();
 
@@ -42,12 +62,16 @@ export function GameView({ room }: { room: Room<RoomState> }) {
       }
       buf.push({ t: performance.now(), x: player.x, z: player.z });
 
-      // Defensive: if a stale onChange disposer exists for this sessionId, clean it up first.
       const existing = perPlayerDisposers.get(sessionId);
       if (existing) existing();
 
       const offChange = $(player).onChange(() => {
-        buf!.push({ t: performance.now(), x: player.x, z: player.z });
+        if (sessionId === room.sessionId) {
+          predictor.reconcile(player.x, player.z, player.lastProcessedInput);
+          hudState.reconErr = predictor.lastReconErr;
+        } else {
+          buf!.push({ t: performance.now(), x: player.x, z: player.z });
+        }
       });
       perPlayerDisposers.set(sessionId, offChange);
 
@@ -56,6 +80,7 @@ export function GameView({ room }: { room: Room<RoomState> }) {
         next.set(sessionId, { sessionId, name: player.name, buffer: buf! });
         return next;
       });
+      hudState.playerCount = buffers.size;
     };
 
     const onRemove = (_player: Player, sessionId: string) => {
@@ -70,23 +95,48 @@ export function GameView({ room }: { room: Room<RoomState> }) {
         next.delete(sessionId);
         return next;
       });
+      hudState.playerCount = buffers.size;
     };
 
     const offAdd = $(room.state).players.onAdd(onAdd);
     const offRemove = $(room.state).players.onRemove(onRemove);
 
-    // Seed any players already present at the moment we attach.
     room.state.players.forEach((p, id) => onAdd(p, id));
+
+    const leaveHandler = (closeCode: number) => {
+      if (closeCode !== 1000) onUnexpectedLeave();
+    };
+    room.onLeave(leaveHandler);
+
+    // Ping/pong RTT for the HUD.
+    const offPong = room.onMessage("pong", (msg: { t: number }) => {
+      const rtt = Date.now() - Number(msg.t);
+      hudState.pingMs = hudState.pingMs === 0 ? rtt : hudState.pingMs * 0.8 + rtt * 0.2;
+    });
+    const pingTimer = window.setInterval(() => {
+      room.send("ping", { type: "ping", t: Date.now() });
+    }, 1000);
+
+    const keyHandler = (e: KeyboardEvent) => {
+      if (e.code === "F3") {
+        hudState.visible = !hudState.visible;
+      }
+    };
+    window.addEventListener("keydown", keyHandler);
 
     return () => {
       offCode();
+      offTick();
       offAdd();
       offRemove();
       perPlayerDisposers.forEach((off) => off());
       perPlayerDisposers.clear();
+      offPong();
+      window.clearInterval(pingTimer);
+      window.removeEventListener("keydown", keyHandler);
       detachInput();
     };
-  }, [room, buffers]);
+  }, [room, buffers, predictor, onUnexpectedLeave]);
 
   return (
     <div style={{ position: "relative", width: "100vw", height: "100vh" }}>
@@ -100,9 +150,16 @@ export function GameView({ room }: { room: Room<RoomState> }) {
         <directionalLight position={[10, 20, 5]} intensity={1.0} castShadow />
         <Ground />
         {Array.from(players.values()).map((p) => (
-          <PlayerCube key={p.sessionId} sessionId={p.sessionId} name={p.name} buffer={p.buffer} />
+          <PlayerCube
+            key={p.sessionId}
+            sessionId={p.sessionId}
+            name={p.name}
+            buffer={p.buffer}
+            predictor={p.sessionId === room.sessionId ? predictor : undefined}
+          />
         ))}
       </Canvas>
+      <DebugHud />
     </div>
   );
 }
