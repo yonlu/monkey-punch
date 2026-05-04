@@ -23,12 +23,13 @@ function computeDir(): { x: number; z: number } {
 
 export function attachInput(room: Room<RoomState>): () => void {
   let last = { x: 0, z: 0 };
+  let seq = 0;
 
   const send = () => {
     const dir = computeDir();
     if (dir.x === last.x && dir.z === last.z) return;
     last = dir;
-    const msg: InputMessage = { type: "input", dir };
+    const msg: InputMessage = { type: "input", seq: seq++, dir };
     room.send("input", msg);
   };
 
@@ -49,7 +50,7 @@ export function attachInput(room: Room<RoomState>): () => void {
   const heartbeat = window.setInterval(() => {
     const dir = computeDir();
     if (dir.x === 0 && dir.z === 0) return;
-    const msg: InputMessage = { type: "input", dir };
+    const msg: InputMessage = { type: "input", seq: seq++, dir };
     room.send("input", msg);
   }, 200);
 
