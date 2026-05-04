@@ -71,7 +71,12 @@ export function EnemySwarm({ enemyIds, buffers }: EnemySwarmProps) {
   });
 
   return (
-    <instancedMesh ref={meshRef} args={[undefined, undefined, MAX_ENEMIES]} castShadow>
+    <instancedMesh
+      ref={meshRef}
+      args={[undefined, undefined, MAX_ENEMIES]}
+      castShadow
+      frustumCulled={false}
+    >
       <coneGeometry args={[0.5, 1.2, 6]} />
       <meshStandardMaterial color="#c44" />
     </instancedMesh>
