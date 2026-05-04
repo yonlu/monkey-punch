@@ -29,8 +29,10 @@ export function GameView({ room }: { room: Room<RoomState> }) {
     const $ = getStateCallbacks(room);
 
     const updateCode = () => setCode(room.state.code ?? "");
-    $(room.state).listen("code", updateCode);
+    const offCode = $(room.state).listen("code", updateCode);
     updateCode();
+
+    const perPlayerDisposers = new Map<string, () => void>();
 
     const onAdd = (player: Player, sessionId: string) => {
       let buf = buffers.get(sessionId);
@@ -40,9 +42,14 @@ export function GameView({ room }: { room: Room<RoomState> }) {
       }
       buf.push({ t: performance.now(), x: player.x, z: player.z });
 
-      $(player).onChange(() => {
+      // Defensive: if a stale onChange disposer exists for this sessionId, clean it up first.
+      const existing = perPlayerDisposers.get(sessionId);
+      if (existing) existing();
+
+      const offChange = $(player).onChange(() => {
         buf!.push({ t: performance.now(), x: player.x, z: player.z });
       });
+      perPlayerDisposers.set(sessionId, offChange);
 
       setPlayers((prev) => {
         const next = new Map(prev);
@@ -52,6 +59,11 @@ export function GameView({ room }: { room: Room<RoomState> }) {
     };
 
     const onRemove = (_player: Player, sessionId: string) => {
+      const off = perPlayerDisposers.get(sessionId);
+      if (off) {
+        off();
+        perPlayerDisposers.delete(sessionId);
+      }
       buffers.delete(sessionId);
       setPlayers((prev) => {
         const next = new Map(prev);
@@ -60,13 +72,18 @@ export function GameView({ room }: { room: Room<RoomState> }) {
       });
     };
 
-    $(room.state).players.onAdd(onAdd);
-    $(room.state).players.onRemove(onRemove);
+    const offAdd = $(room.state).players.onAdd(onAdd);
+    const offRemove = $(room.state).players.onRemove(onRemove);
 
     // Seed any players already present at the moment we attach.
     room.state.players.forEach((p, id) => onAdd(p, id));
 
     return () => {
+      offCode();
+      offAdd();
+      offRemove();
+      perPlayerDisposers.forEach((off) => off());
+      perPlayerDisposers.clear();
       detachInput();
     };
   }, [room, buffers]);
