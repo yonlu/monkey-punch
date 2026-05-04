@@ -1,5 +1,12 @@
-import type { Enemy, Player, RoomState } from "./schema.js";
-import { ENEMY_SPEED, PLAYER_SPEED } from "./constants.js";
+import { Enemy, type Player, type RoomState } from "./schema.js";
+import {
+  ENEMY_SPAWN_INTERVAL_S,
+  ENEMY_SPAWN_RADIUS,
+  ENEMY_SPEED,
+  MAX_ENEMIES,
+  PLAYER_SPEED,
+} from "./constants.js";
+import type { Rng } from "./rng.js";
 
 export function tickPlayers(state: RoomState, dt: number): void {
   state.players.forEach((p) => {
@@ -41,4 +48,60 @@ export function tickEnemies(state: RoomState, dt: number): void {
     enemy.x += (nearestDx / dist) * step;
     enemy.z += (nearestDz / dist) * step;
   });
+}
+
+export type SpawnerState = {
+  accumulator: number;   // seconds since last spawn
+  nextEnemyId: number;   // monotonic; starts at 1 so id=0 is never valid
+};
+
+/**
+ * Advance the spawn timer; emit enemies when the interval elapses.
+ * No-op (and does NOT advance the accumulator) when the room is empty —
+ * this avoids "join into a swarm" when a player joins a long-empty room.
+ *
+ * When state.enemies.size >= MAX_ENEMIES, drain the accumulator on the
+ * same call. Reasoning: if it stalled, the moment one enemy was removed
+ * (next milestone, when combat lands) we'd flood. Drain is the right
+ * default.
+ */
+export function tickSpawner(
+  state: RoomState,
+  spawner: SpawnerState,
+  dt: number,
+  rng: Rng,
+): void {
+  if (state.players.size === 0) return;
+
+  spawner.accumulator += dt;
+
+  while (spawner.accumulator >= ENEMY_SPAWN_INTERVAL_S) {
+    if (state.enemies.size >= MAX_ENEMIES) {
+      spawner.accumulator = 0;
+      return;
+    }
+
+    const playerIdx = Math.floor(rng() * state.players.size);
+    let i = 0;
+    let target: Player | undefined;
+    state.players.forEach((p) => {
+      if (i === playerIdx) target = p;
+      i++;
+    });
+    if (!target) {
+      spawner.accumulator = 0;
+      return;
+    }
+
+    const angle = rng() * Math.PI * 2;
+    const enemy = new Enemy();
+    enemy.id = spawner.nextEnemyId++;
+    enemy.kind = 0;
+    enemy.x = target.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
+    enemy.z = target.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
+    enemy.hp = 1;
+    state.enemies.set(String(enemy.id), enemy);
+
+    spawner.accumulator -= ENEMY_SPAWN_INTERVAL_S;
+  }
 }

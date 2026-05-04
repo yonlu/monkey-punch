@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { RoomState, Player, Enemy } from "../src/schema.js";
-import { tickPlayers, tickEnemies } from "../src/rules.js";
-import { PLAYER_SPEED, ENEMY_SPEED } from "../src/constants.js";
+import { tickPlayers, tickEnemies, tickSpawner, type SpawnerState } from "../src/rules.js";
+import { PLAYER_SPEED, ENEMY_SPEED, ENEMY_SPAWN_INTERVAL_S, ENEMY_SPAWN_RADIUS, MAX_ENEMIES } from "../src/constants.js";
+import { mulberry32 } from "../src/rng.js";
 
 function addPlayer(state: RoomState, id: string, dirX: number, dirZ: number): Player {
   const p = new Player();
@@ -135,5 +136,124 @@ describe("tickEnemies", () => {
     expect(Number.isFinite(e.z)).toBe(true);
     expect(e.x).toBe(0);
     expect(e.z).toBe(0);
+  });
+});
+
+function freshSpawner(): SpawnerState {
+  return { accumulator: 0, nextEnemyId: 1 };
+}
+
+describe("tickSpawner", () => {
+  it("does not spawn before the interval elapses", () => {
+    const state = new RoomState();
+    addPlayer(state, "p1", 0, 0);
+    const spawner = freshSpawner();
+    const rng = mulberry32(1);
+
+    tickSpawner(state, spawner, ENEMY_SPAWN_INTERVAL_S - 0.001, rng);
+
+    expect(state.enemies.size).toBe(0);
+    expect(spawner.accumulator).toBeCloseTo(ENEMY_SPAWN_INTERVAL_S - 0.001);
+    expect(spawner.nextEnemyId).toBe(1);
+  });
+
+  it("spawns exactly one enemy at the spawn interval", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const spawner = freshSpawner();
+    const rng = mulberry32(7);
+
+    tickSpawner(state, spawner, ENEMY_SPAWN_INTERVAL_S, rng);
+
+    expect(state.enemies.size).toBe(1);
+    expect(spawner.accumulator).toBeCloseTo(0);
+    expect(spawner.nextEnemyId).toBe(2);
+
+    const enemy = state.enemies.get("1");
+    expect(enemy).toBeDefined();
+    expect(enemy!.id).toBe(1);
+    expect(enemy!.kind).toBe(0);
+    expect(enemy!.hp).toBe(1);
+    const r = Math.hypot(enemy!.x - p.x, enemy!.z - p.z);
+    expect(r).toBeCloseTo(ENEMY_SPAWN_RADIUS, 5);
+  });
+
+  it("produces reproducible spawn positions from a fixed seed", () => {
+    // Determinism load-bearing test. If this drifts, two clients will see
+    // enemies at different positions.
+    const stateA = new RoomState();
+    addPlayer(stateA, "p1", 0, 0);
+    const spawnerA = freshSpawner();
+    const rngA = mulberry32(42);
+
+    for (let i = 0; i < 5; i++) {
+      tickSpawner(stateA, spawnerA, ENEMY_SPAWN_INTERVAL_S, rngA);
+    }
+    expect(stateA.enemies.size).toBe(5);
+
+    const stateB = new RoomState();
+    addPlayer(stateB, "p1", 0, 0);
+    const spawnerB = freshSpawner();
+    const rngB = mulberry32(42);
+
+    for (let i = 0; i < 5; i++) {
+      tickSpawner(stateB, spawnerB, ENEMY_SPAWN_INTERVAL_S, rngB);
+    }
+
+    for (let id = 1; id <= 5; id++) {
+      const a = stateA.enemies.get(String(id))!;
+      const b = stateB.enemies.get(String(id))!;
+      expect(b.x).toBeCloseTo(a.x, 10);
+      expect(b.z).toBeCloseTo(a.z, 10);
+    }
+  });
+
+  it("catches up when dt is several intervals", () => {
+    const state = new RoomState();
+    addPlayer(state, "p1", 0, 0);
+    const spawner = freshSpawner();
+    const rng = mulberry32(3);
+
+    tickSpawner(state, spawner, 2.5 * ENEMY_SPAWN_INTERVAL_S, rng);
+
+    expect(state.enemies.size).toBe(2);
+    expect(spawner.accumulator).toBeCloseTo(0.5 * ENEMY_SPAWN_INTERVAL_S);
+    expect(spawner.nextEnemyId).toBe(3);
+  });
+
+  it("stops spawning at MAX_ENEMIES and drains the accumulator", () => {
+    const state = new RoomState();
+    addPlayer(state, "p1", 0, 0);
+    for (let i = 1; i <= MAX_ENEMIES; i++) {
+      const e = new Enemy();
+      e.id = i; e.kind = 0; e.x = 0; e.z = 0; e.hp = 1;
+      state.enemies.set(String(i), e);
+    }
+    const spawner: SpawnerState = { accumulator: 0, nextEnemyId: MAX_ENEMIES + 1 };
+    const rng = mulberry32(5);
+
+    tickSpawner(state, spawner, 5 * ENEMY_SPAWN_INTERVAL_S, rng);
+
+    expect(state.enemies.size).toBe(MAX_ENEMIES);
+    expect(spawner.accumulator).toBe(0);
+    expect(spawner.nextEnemyId).toBe(MAX_ENEMIES + 1);
+  });
+
+  it("does not advance the accumulator when the room is empty", () => {
+    const state = new RoomState();
+    const spawner = freshSpawner();
+    const rng = mulberry32(9);
+
+    tickSpawner(state, spawner, 100 * ENEMY_SPAWN_INTERVAL_S, rng);
+
+    expect(state.enemies.size).toBe(0);
+    expect(spawner.accumulator).toBe(0);
+
+    addPlayer(state, "p1", 0, 0);
+    tickSpawner(state, spawner, ENEMY_SPAWN_INTERVAL_S, rng);
+
+    expect(state.enemies.size).toBe(1);
+    expect(spawner.accumulator).toBeCloseTo(0);
   });
 });
