@@ -76,8 +76,27 @@ export class GameRoom extends Room<RoomState> {
     this.state.players.set(client.sessionId, player);
   }
 
-  override onLeave(client: Client): void {
-    this.state.players.delete(client.sessionId);
+  override async onLeave(client: Client, consented: boolean): Promise<void> {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+
+    // Stop drift while the client is gone — the last-known inputDir would
+    // otherwise keep being integrated each tick.
+    player.inputDir.x = 0;
+    player.inputDir.z = 0;
+
+    if (consented) {
+      this.state.players.delete(client.sessionId);
+      return;
+    }
+
+    try {
+      const graceS = Number(process.env.MP_RECONNECTION_GRACE_S ?? 30);
+      await this.allowReconnection(client, graceS);
+      // Reconnected. Same sessionId, same Player schema. Nothing else to do.
+    } catch {
+      this.state.players.delete(client.sessionId);
+    }
   }
 
   private tick(): void {
