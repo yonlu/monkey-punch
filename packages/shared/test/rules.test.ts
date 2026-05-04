@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { RoomState, Player, Enemy } from "../src/schema.js";
-import { tickPlayers, tickEnemies, tickSpawner, type SpawnerState } from "../src/rules.js";
+import { tickPlayers, tickEnemies, tickSpawner, spawnDebugBurst, type SpawnerState } from "../src/rules.js";
 import { PLAYER_SPEED, ENEMY_SPEED, ENEMY_SPAWN_INTERVAL_S, ENEMY_SPAWN_RADIUS, MAX_ENEMIES } from "../src/constants.js";
 import { mulberry32 } from "../src/rng.js";
 
@@ -255,5 +255,64 @@ describe("tickSpawner", () => {
 
     expect(state.enemies.size).toBe(1);
     expect(spawner.accumulator).toBeCloseTo(0);
+  });
+});
+
+describe("spawnDebugBurst", () => {
+  it("spawns N enemies around the given player at ENEMY_SPAWN_RADIUS", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 5; p.z = -3;
+    const spawner = freshSpawner();
+    const rng = mulberry32(11);
+
+    spawnDebugBurst(state, spawner, rng, p, 10, 0);
+
+    expect(state.enemies.size).toBe(10);
+    state.enemies.forEach((e) => {
+      const r = Math.hypot(e.x - p.x, e.z - p.z);
+      expect(r).toBeCloseTo(ENEMY_SPAWN_RADIUS, 5);
+      expect(e.kind).toBe(0);
+      expect(e.hp).toBe(1);
+    });
+  });
+
+  it("clamps the burst at remaining capacity (MAX_ENEMIES - current)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    // Pre-fill to MAX_ENEMIES - 5.
+    for (let i = 1; i <= MAX_ENEMIES - 5; i++) {
+      const e = new Enemy();
+      e.id = i; e.kind = 0; e.x = 0; e.z = 0; e.hp = 1;
+      state.enemies.set(String(i), e);
+    }
+    const spawner: SpawnerState = { accumulator: 0, nextEnemyId: MAX_ENEMIES - 4 };
+    const rng = mulberry32(13);
+
+    spawnDebugBurst(state, spawner, rng, p, 50, 0);
+
+    expect(state.enemies.size).toBe(MAX_ENEMIES);     // exactly 5 added
+    expect(spawner.nextEnemyId).toBe(MAX_ENEMIES + 1); // 5 ids consumed
+  });
+
+  it("shares the nextEnemyId sequence with the auto-spawner", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const spawner = freshSpawner();
+    const rng = mulberry32(17);
+
+    // 1 auto-spawn → id=1
+    tickSpawner(state, spawner, ENEMY_SPAWN_INTERVAL_S, rng);
+    // burst of 3 → ids 2,3,4
+    spawnDebugBurst(state, spawner, rng, p, 3, 0);
+    // 1 auto-spawn → id=5
+    tickSpawner(state, spawner, ENEMY_SPAWN_INTERVAL_S, rng);
+
+    expect(state.enemies.size).toBe(5);
+    for (let id = 1; id <= 5; id++) {
+      expect(state.enemies.get(String(id))).toBeDefined();
+    }
+    expect(spawner.nextEnemyId).toBe(6);
   });
 });

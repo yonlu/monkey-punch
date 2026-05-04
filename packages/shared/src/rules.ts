@@ -111,3 +111,32 @@ export function tickSpawner(
     spawner.accumulator -= ENEMY_SPAWN_INTERVAL_S;
   }
 }
+
+/**
+ * Used by the server's debug_spawn handler. Places `count` enemies (clamped
+ * to MAX_ENEMIES - current) at random angles around centerPlayer at
+ * ENEMY_SPAWN_RADIUS. Uses the same rng + nextEnemyId as the auto-spawner —
+ * a burst does NOT desync future deterministic spawns.
+ */
+export function spawnDebugBurst(
+  state: RoomState,
+  spawner: SpawnerState,
+  rng: Rng,
+  centerPlayer: Player,
+  count: number,
+  kind: number,
+): void {
+  const remaining = MAX_ENEMIES - state.enemies.size;
+  const n = Math.max(0, Math.min(count, remaining));
+
+  for (let i = 0; i < n; i++) {
+    const angle = rng() * Math.PI * 2;
+    const enemy = new Enemy();
+    enemy.id = spawner.nextEnemyId++;
+    enemy.kind = kind;
+    enemy.x = centerPlayer.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
+    enemy.z = centerPlayer.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
+    enemy.hp = 1;
+    state.enemies.set(String(enemy.id), enemy);
+  }
+}
