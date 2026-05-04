@@ -1,11 +1,10 @@
 import { Room, Client } from "colyseus";
-import { Player, RoomState, tickPlayers } from "@mp/shared";
+import { Player, RoomState, tickPlayers, SIM_DT_S } from "@mp/shared";
 import type { InputMessage, PingMessage } from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
 import { clampDirection } from "./input.js";
 
-const TICK_INTERVAL_MS = 50;            // 20 Hz
-const SIM_DT_S = TICK_INTERVAL_MS / 1000; // fixed 0.05s per tick — see AD1
+const TICK_INTERVAL_MS = SIM_DT_S * 1000; // 50 ms — must equal shared SIM_DT_S
 const MAX_PLAYERS = 10;
 const DEFAULT_RECONNECTION_GRACE_S = 30;
 
