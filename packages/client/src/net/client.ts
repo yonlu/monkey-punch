@@ -5,10 +5,13 @@ const SERVER_URL = (import.meta.env.VITE_SERVER_URL as string | undefined) ?? "w
 
 export const colyseusClient = new Client(SERVER_URL);
 
-async function waitForCode(room: Room<RoomState>, timeoutMs = 2000): Promise<void> {
+export async function waitForCode(room: Room<RoomState>, timeoutMs = 2000): Promise<void> {
   const start = Date.now();
   while (!room.state.code) {
-    if (Date.now() - start > timeoutMs) return;
+    if (Date.now() - start > timeoutMs) {
+      await room.leave().catch(() => {});
+      throw new Error("server did not sync room code within timeout");
+    }
     await new Promise((r) => setTimeout(r, 20));
   }
 }

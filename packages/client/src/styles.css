@@ -41,6 +41,16 @@ html, body, #root { margin: 0; padding: 0; height: 100%; background: #111; color
 
 .landing .error { color: #f77; min-height: 1.2em; }
 
+.banner-msg {
+  margin: 0.5rem 0 1rem;
+  padding: 0.4rem 0.75rem;
+  background: rgba(255, 200, 60, 0.15);
+  border: 1px solid rgba(255, 200, 60, 0.35);
+  color: #f0d878;
+  font-size: 0.9rem;
+  border-radius: 4px;
+}
+
 .banner {
   position: absolute;
   top: 0; left: 0; right: 0;

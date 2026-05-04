@@ -3,7 +3,7 @@ import type { Room } from "colyseus.js";
 import type { RoomState } from "@mp/shared";
 import { Landing } from "./Landing.js";
 import { GameView } from "./game/GameView.js";
-import { colyseusClient } from "./net/client.js";
+import { colyseusClient, waitForCode } from "./net/client.js";
 
 type Phase =
   | { kind: "landing"; initialName?: string; initialCode?: string; banner?: string }
@@ -30,9 +30,7 @@ export function App() {
     (async () => {
       try {
         const room = await colyseusClient.reconnect<RoomState>(phase.token);
-        for (let i = 0; i < 100 && !room.state.code; i++) {
-          await new Promise((r) => setTimeout(r, 20));
-        }
+        await waitForCode(room);
         if (cancelled) {
           await room.leave();
           return;
