@@ -11,6 +11,8 @@ import { LocalPredictor } from "../net/prediction.js";
 import { hudState } from "../net/hudState.js";
 import { DebugHud } from "./DebugHud.js";
 
+const NOOP = () => {};
+
 type PlayerEntry = {
   sessionId: string;
   name: string;
@@ -19,7 +21,7 @@ type PlayerEntry = {
 
 export function GameView({
   room,
-  onUnexpectedLeave = () => {},
+  onUnexpectedLeave = NOOP,
 }: {
   room: Room<RoomState>;
   onUnexpectedLeave?: () => void;
@@ -129,6 +131,7 @@ export function GameView({
       offTick();
       offAdd();
       offRemove();
+      room.onLeave.remove(leaveHandler);
       perPlayerDisposers.forEach((off) => off());
       perPlayerDisposers.clear();
       offPong();
