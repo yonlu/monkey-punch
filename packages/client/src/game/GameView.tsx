@@ -2,9 +2,10 @@ import { Canvas } from "@react-three/fiber";
 import { useEffect, useMemo, useState } from "react";
 import type { Room } from "colyseus.js";
 import { getStateCallbacks } from "colyseus.js";
-import type { Player, RoomState } from "@mp/shared";
+import type { Enemy, Player, RoomState } from "@mp/shared";
 import { Ground } from "./Ground.js";
 import { PlayerCube } from "./PlayerCube.js";
+import { EnemySwarm } from "./EnemySwarm.js";
 import { SnapshotBuffer } from "../net/snapshots.js";
 import { attachInput } from "./input.js";
 import { LocalPredictor } from "../net/prediction.js";
@@ -26,6 +27,9 @@ export function GameView({
 }) {
   const [players, setPlayers] = useState<Map<string, PlayerEntry>>(new Map());
   const [code, setCode] = useState<string>(room.state.code ?? "");
+
+  const enemyBuffers = useMemo(() => new Map<number, SnapshotBuffer>(), []);
+  const [enemyIds, setEnemyIds] = useState<Set<number>>(new Set());
 
   const buffers = useMemo(() => new Map<string, SnapshotBuffer>(), []);
   const predictor = useMemo(() => new LocalPredictor(), []);
@@ -103,6 +107,54 @@ export function GameView({
 
     room.state.players.forEach((p, id) => onAdd(p, id));
 
+    const perEnemyDisposers = new Map<number, () => void>();
+
+    const onEnemyAdd = (enemy: Enemy, key: string) => {
+      const id = Number(key);
+      let buf = enemyBuffers.get(id);
+      if (!buf) {
+        buf = new SnapshotBuffer();
+        enemyBuffers.set(id, buf);
+      }
+      buf.push({ t: performance.now(), x: enemy.x, z: enemy.z });
+
+      const existing = perEnemyDisposers.get(id);
+      if (existing) existing();
+
+      const offChange = $(enemy).onChange(() => {
+        buf!.push({ t: performance.now(), x: enemy.x, z: enemy.z });
+      });
+      perEnemyDisposers.set(id, offChange);
+
+      setEnemyIds((prev) => {
+        const next = new Set(prev);
+        next.add(id);
+        return next;
+      });
+      hudState.enemyCount = enemyBuffers.size;
+    };
+
+    const onEnemyRemove = (_enemy: Enemy, key: string) => {
+      const id = Number(key);
+      const off = perEnemyDisposers.get(id);
+      if (off) {
+        off();
+        perEnemyDisposers.delete(id);
+      }
+      enemyBuffers.delete(id);
+      setEnemyIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      hudState.enemyCount = enemyBuffers.size;
+    };
+
+    const offEnemyAdd = $(room.state).enemies.onAdd(onEnemyAdd);
+    const offEnemyRemove = $(room.state).enemies.onRemove(onEnemyRemove);
+
+    room.state.enemies.forEach((e, key) => onEnemyAdd(e, key));
+
     const leaveHandler = (closeCode: number) => {
       if (closeCode !== 1000) onUnexpectedLeave();
     };
@@ -133,12 +185,17 @@ export function GameView({
       room.onLeave.remove(leaveHandler);
       perPlayerDisposers.forEach((off) => off());
       perPlayerDisposers.clear();
+      offEnemyAdd();
+      offEnemyRemove();
+      perEnemyDisposers.forEach((off) => off());
+      perEnemyDisposers.clear();
+      enemyBuffers.clear();
       offPong();
       window.clearInterval(pingTimer);
       window.removeEventListener("keydown", keyHandler);
       detachInput();
     };
-  }, [room, buffers, predictor, onUnexpectedLeave]);
+  }, [room, buffers, predictor, enemyBuffers, onUnexpectedLeave]);
 
   return (
     <div style={{ position: "relative", width: "100vw", height: "100vh" }}>
@@ -160,6 +217,7 @@ export function GameView({
             predictor={p.sessionId === room.sessionId ? predictor : undefined}
           />
         ))}
+        <EnemySwarm enemyIds={enemyIds} buffers={enemyBuffers} />
       </Canvas>
       <DebugHud />
     </div>
