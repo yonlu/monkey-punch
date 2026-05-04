@@ -38,6 +38,9 @@ export function DebugHud() {
     `interp     ${hudState.interpDelayMs} ms`,
     `players    ${hudState.playerCount}`,
     `recon err  ${hudState.reconErr.toFixed(3)} u`,
+    `enemies    ${hudState.enemyCount}`,
+    `draw calls ${hudState.enemyDrawCalls}`,
+    `snap bytes ${hudState.lastSnapshotBytes} B`,
   ];
   return <div style={HUD_STYLE}>{lines.join("\n")}</div>;
 }
