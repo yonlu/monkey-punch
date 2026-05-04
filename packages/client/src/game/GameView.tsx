@@ -11,8 +11,6 @@ import { LocalPredictor } from "../net/prediction.js";
 import { hudState } from "../net/hudState.js";
 import { DebugHud } from "./DebugHud.js";
 
-const NOOP = () => {};
-
 type PlayerEntry = {
   sessionId: string;
   name: string;
@@ -21,10 +19,10 @@ type PlayerEntry = {
 
 export function GameView({
   room,
-  onUnexpectedLeave = NOOP,
+  onUnexpectedLeave,
 }: {
   room: Room<RoomState>;
-  onUnexpectedLeave?: () => void;
+  onUnexpectedLeave: () => void;
 }) {
   const [players, setPlayers] = useState<Map<string, PlayerEntry>>(new Map());
   const [code, setCode] = useState<string>(room.state.code ?? "");

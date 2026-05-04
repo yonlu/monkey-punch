@@ -4,12 +4,15 @@ import type { RoomState } from "@mp/shared";
 import { createRoom, joinRoom } from "./net/client.js";
 
 type Props = {
-  onJoined: (room: Room<RoomState>) => void;
+  onJoined: (room: Room<RoomState>, name: string) => void;
+  initialName?: string;
+  initialCode?: string;
+  banner?: string;
 };
 
-export function Landing({ onJoined }: Props) {
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
+export function Landing({ onJoined, initialName = "", initialCode = "", banner }: Props) {
+  const [name, setName] = useState(initialName);
+  const [code, setCode] = useState(initialCode);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -24,7 +27,7 @@ export function Landing({ onJoined }: Props) {
     setError("");
     try {
       const room = await action();
-      onJoined(room);
+      onJoined(room, trimmedName);
     } catch (err) {
       setError((err as Error).message ?? "failed to join");
       setBusy(false);
@@ -34,6 +37,7 @@ export function Landing({ onJoined }: Props) {
   return (
     <div className="landing">
       <h1>monkey-punch</h1>
+      {banner ? <div className="banner-msg">{banner}</div> : null}
       <input
         placeholder="display name"
         value={name}
