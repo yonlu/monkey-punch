@@ -82,5 +82,5 @@ binding — violations are bugs.
 
 - `pnpm dev` — runs server (`tsx watch`) and client (`vite`) concurrently.
 - `pnpm typecheck` — `tsc -b` over all references.
-- `pnpm test` — Vitest in shared + server.
+- `pnpm test` — Vitest in shared, server, and client.
 - `pnpm build` — builds shared, server, and client for production.
