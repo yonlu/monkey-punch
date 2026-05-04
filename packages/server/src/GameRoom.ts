@@ -35,7 +35,14 @@ type JoinOptions = {
 
 export class GameRoom extends Room<RoomState> {
   override maxClients = MAX_PLAYERS;
+  // Assigned in onCreate before setSimulationInterval is called; tick()
+  // cannot fire until after that, so the definite-assignment assertion
+  // is safe.
   private rng!: Rng;
+  // SpawnerState is a plain TypeScript object, not a Schema subclass —
+  // class field initializer is safe here. The schema.ts landmine
+  // (esbuild emitting Object.defineProperty over @colyseus/schema's
+  // prototype setters) only affects Schema subclasses.
   private spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
 
   override async onCreate(_options: JoinOptions): Promise<void> {
