@@ -18,6 +18,12 @@ export class GameRoom extends Room<RoomState> {
 
   override async onCreate(_options: JoinOptions): Promise<void> {
     const state = new RoomState();
+    // Join-code collisions are tolerated. ~31^4 ≈ 1M codes; for friends-only
+    // sessions the probability of two concurrent rooms sharing a code is
+    // negligible. If it ever happens, the second joiner lands in whichever
+    // room the matchmaker returns first — both rooms work, just routed to
+    // possibly the wrong friend group. Revisit if collision rate becomes a
+    // real complaint.
     const code = generateJoinCode();
     state.code = code;
     state.seed = (Math.random() * 0xffffffff) >>> 0;
@@ -25,6 +31,13 @@ export class GameRoom extends Room<RoomState> {
     console.log(`[room ${code}] created seed=${state.seed}`);
     this.setState(state);
 
+    // The matchmaker's filterBy(["code"]) matches against the room listing's
+    // top-level fields, which Colyseus initializes from the CREATING client's
+    // options. Since the creating client doesn't know the code yet (we just
+    // generated it), we have to write it onto the listing manually so a
+    // second client's join({ code }) can find this room. setMetadata only
+    // updates listing.metadata, which the matchmaker's driver query does
+    // NOT read — it would not be sufficient on its own.
     this.listing.code = code;
     await this.setMetadata({ code });
 
