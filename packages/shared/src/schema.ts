@@ -1,8 +1,32 @@
 import { Schema, MapSchema, defineTypes } from "@colyseus/schema";
 
+// IMPORTANT: schema fields are declared with `declare` (type-only) and assigned
+// in the constructor body. Class field INITIALIZERS (`x = 0`) compile differently
+// across toolchains: tsc honors `useDefineForClassFields: false` and emits
+// `this.x = 0` (which goes through the prototype setters that defineTypes()
+// installs), but esbuild — used by tsx and Vite — does NOT honor that flag for
+// files loaded across package boundaries via tsconfig paths. esbuild emits
+// `Object.defineProperty(this, "x", { value: 0 })`, which creates an own data
+// property that shadows the prototype setter. The setter never runs, the
+// MapSchema's $childType is never set, and the encoder crashes the first time
+// a real client connects with `Cannot read properties of undefined`.
+//
+// `declare` declarations are erased entirely by both tsc and esbuild — no
+// `defineProperty` is emitted — so the constructor-body assignment is the only
+// runtime touch of the field, and it correctly invokes the setter.
+//
+// This must stay this way as long as we use defineTypes() with
+// @colyseus/schema. Adding a class field initializer to any Schema subclass
+// (e.g. `inputDir = new Vec2()`) will silently break the encoder.
+
 export class Vec2 extends Schema {
-  x = 0;
-  z = 0;
+  declare x: number;
+  declare z: number;
+  constructor() {
+    super();
+    this.x = 0;
+    this.z = 0;
+  }
 }
 defineTypes(Vec2, {
   x: "number",
@@ -10,12 +34,21 @@ defineTypes(Vec2, {
 });
 
 export class Player extends Schema {
-  sessionId = "";
-  name = "";
-  x = 0;
-  y = 0;
-  z = 0;
-  inputDir = new Vec2();
+  declare sessionId: string;
+  declare name: string;
+  declare x: number;
+  declare y: number;
+  declare z: number;
+  declare inputDir: Vec2;
+  constructor() {
+    super();
+    this.sessionId = "";
+    this.name = "";
+    this.x = 0;
+    this.y = 0;
+    this.z = 0;
+    this.inputDir = new Vec2();
+  }
 }
 defineTypes(Player, {
   sessionId: "string",
@@ -32,11 +65,19 @@ export class Enemy extends Schema {
 }
 
 export class RoomState extends Schema {
-  code = "";
-  seed = 0;
-  tick = 0;
-  players = new MapSchema<Player>();
-  enemies = new MapSchema<Enemy>();
+  declare code: string;
+  declare seed: number;
+  declare tick: number;
+  declare players: MapSchema<Player>;
+  declare enemies: MapSchema<Enemy>;
+  constructor() {
+    super();
+    this.code = "";
+    this.seed = 0;
+    this.tick = 0;
+    this.players = new MapSchema<Player>();
+    this.enemies = new MapSchema<Enemy>();
+  }
 }
 defineTypes(RoomState, {
   code: "string",
