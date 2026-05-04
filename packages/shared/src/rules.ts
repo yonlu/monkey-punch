@@ -89,8 +89,14 @@ export function tickSpawner(
       i++;
     });
     if (!target) {
-      spawner.accumulator = 0;
-      return;
+      // Unreachable given mulberry32's [0,1) output range and the size>0
+      // check above (state.players.size === 0 short-circuits at the top).
+      // Throw rather than silently swallow so a future refactor that
+      // breaks the index math surfaces immediately instead of degrading
+      // determinism by consuming RNG calls in an asymmetric pattern.
+      throw new Error(
+        `tickSpawner: unreachable — playerIdx=${playerIdx} out of range for size=${state.players.size}`,
+      );
     }
 
     const angle = rng() * Math.PI * 2;
