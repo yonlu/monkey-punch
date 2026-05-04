@@ -1,6 +1,6 @@
 import { Room, Client } from "colyseus";
 import { Player, RoomState, tickPlayers } from "@mp/shared";
-import type { InputMessage } from "@mp/shared";
+import type { InputMessage, PingMessage } from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
 import { clampDirection } from "./input.js";
 
@@ -55,6 +55,12 @@ export class GameRoom extends Room<RoomState> {
       player.inputDir.x = dir.x;
       player.inputDir.z = dir.z;
       player.lastProcessedInput = seq;
+    });
+
+    this.onMessage<PingMessage>("ping", (client, message) => {
+      const t = Number(message?.t);
+      if (!Number.isFinite(t)) return;
+      client.send("pong", { type: "pong", t });
     });
 
     this.setSimulationInterval(() => this.tick(), TICK_INTERVAL_MS);

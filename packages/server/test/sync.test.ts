@@ -76,4 +76,22 @@ describe("integration: input seq + fixed-dt simulation", () => {
 
     await room.leave();
   }, 5000);
+
+  it("echoes ping as pong with the original t", async () => {
+    const client = new Client(`ws://localhost:${PORT}`);
+    const room = await client.create<any>("game", { name: "Carol" });
+    await waitFor(() => room.state.code !== "" && room.state.code != null, 1000);
+
+    const echoed = await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("pong timeout")), 500);
+      room.onMessage("pong", (msg: { t: number }) => {
+        clearTimeout(timer);
+        resolve(msg.t);
+      });
+      room.send("ping", { type: "ping", t: 12345 });
+    });
+    expect(echoed).toBe(12345);
+
+    await room.leave();
+  }, 5000);
 });
