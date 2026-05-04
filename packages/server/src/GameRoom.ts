@@ -200,6 +200,15 @@ export class GameRoom extends Room<RoomState> {
         if (typeof len === "number" && Number.isFinite(len)) {
           this.patchByteCount += len;
           this.patchSampleCount += 1;
+        } else if (!this.patchInstrumentationFailed) {
+          // First call returned something that isn't a buffer — common on
+          // Colyseus 0.16 where broadcastPatch returns boolean (hasChanges)
+          // rather than the encoded buffer. Mark failed once so the 5s log
+          // shows n/a instead of a misleading 0B/tick, and warn once.
+          this.patchInstrumentationFailed = true;
+          console.warn(
+            `[room ${this.state.code}] patch instrumentation produced no measurable bytes (broadcastPatch returned ${typeof result}) — snapshot log will show full-state only`,
+          );
         }
         return result;
       };
