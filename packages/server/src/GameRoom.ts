@@ -2,6 +2,7 @@ import { Room, Client } from "colyseus";
 import { Player, RoomState, tickPlayers } from "@mp/shared";
 import type { InputMessage } from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
+import { clampDirection } from "./input.js";
 
 const TICK_INTERVAL_MS = 50; // 20 Hz
 const MAX_PLAYERS = 10;
@@ -14,8 +15,14 @@ type JoinOptions = {
 export class GameRoom extends Room<RoomState> {
   override maxClients = MAX_PLAYERS;
 
-  override onCreate(_options: JoinOptions): void {
+  override async onCreate(_options: JoinOptions): Promise<void> {
     const state = new RoomState();
+    // Join-code collisions are tolerated. ~31^4 ≈ 1M codes; for friends-only
+    // sessions the probability of two concurrent rooms sharing a code is
+    // negligible. If it ever happens, the second joiner lands in whichever
+    // room the matchmaker returns first — both rooms work, just routed to
+    // possibly the wrong friend group. Revisit if collision rate becomes a
+    // real complaint.
     const code = generateJoinCode();
     state.code = code;
     state.seed = (Math.random() * 0xffffffff) >>> 0;
@@ -24,18 +31,14 @@ export class GameRoom extends Room<RoomState> {
 
     // setMetadata is what filterBy(["code"]) actually filters against; state.code is for
     // the client UI to display. Both writes are required.
-    this.setMetadata({ code });
+    await this.setMetadata({ code });
 
     this.onMessage<InputMessage>("input", (client, message) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
-      const dx = Number(message?.dir?.x);
-      const dz = Number(message?.dir?.z);
-      if (!Number.isFinite(dx) || !Number.isFinite(dz)) return;
-      const len = Math.hypot(dx, dz);
-      const scale = len > 1 ? 1 / len : 1;
-      player.inputDir.x = dx * scale;
-      player.inputDir.z = dz * scale;
+      const dir = clampDirection(Number(message?.dir?.x), Number(message?.dir?.z));
+      player.inputDir.x = dir.x;
+      player.inputDir.z = dir.z;
     });
 
     this.setSimulationInterval((dt) => this.tick(dt), TICK_INTERVAL_MS);
