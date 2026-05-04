@@ -5,18 +5,26 @@ import {
   tickPlayers,
   tickEnemies,
   tickSpawner,
+  spawnDebugBurst,
   SIM_DT_S,
+  MAX_ENEMIES,
   mulberry32,
   type Rng,
   type SpawnerState,
 } from "@mp/shared";
-import type { InputMessage, PingMessage } from "@mp/shared";
+import type {
+  InputMessage,
+  PingMessage,
+  DebugSpawnMessage,
+  DebugClearEnemiesMessage,
+} from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
 import { clampDirection } from "./input.js";
 
 const TICK_INTERVAL_MS = SIM_DT_S * 1000; // 50 ms — must equal shared SIM_DT_S
 const MAX_PLAYERS = 10;
 const DEFAULT_RECONNECTION_GRACE_S = 30;
+const ALLOW_DEBUG_MESSAGES = true;     // becomes runtime config later
 
 // MP_RECONNECTION_GRACE_S overrides the grace window in seconds. Tests set
 // it to "1" so reconnect.test.ts runs in ~1.5s instead of ~31s. Anything
@@ -92,6 +100,28 @@ export class GameRoom extends Room<RoomState> {
       if (!Number.isFinite(t)) return;
       client.send("pong", { type: "pong", t });
     });
+
+    if (ALLOW_DEBUG_MESSAGES) {
+      this.onMessage<DebugSpawnMessage>("debug_spawn", (client, message) => {
+        const player = this.state.players.get(client.sessionId);
+        if (!player) return;
+
+        const requested = Number(message?.count);
+        if (!Number.isFinite(requested) || requested <= 0) return;
+        const cap = Math.min(Math.floor(requested), MAX_ENEMIES);
+
+        const kindRaw = Number(message?.kind);
+        const kind = Number.isFinite(kindRaw) && kindRaw >= 0
+          ? Math.floor(kindRaw)
+          : 0;
+
+        spawnDebugBurst(this.state, this.spawner, this.rng, player, cap, kind);
+      });
+
+      this.onMessage<DebugClearEnemiesMessage>("debug_clear_enemies", () => {
+        this.state.enemies.clear();
+      });
+    }
 
     this.setSimulationInterval(() => this.tick(), TICK_INTERVAL_MS);
   }
