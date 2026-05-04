@@ -40,6 +40,7 @@ export class Player extends Schema {
   declare y: number;
   declare z: number;
   declare inputDir: Vec2;
+  declare lastProcessedInput: number;
   constructor() {
     super();
     this.sessionId = "";
@@ -48,6 +49,7 @@ export class Player extends Schema {
     this.y = 0;
     this.z = 0;
     this.inputDir = new Vec2();
+    this.lastProcessedInput = 0;
   }
 }
 defineTypes(Player, {
@@ -57,6 +59,7 @@ defineTypes(Player, {
   y: "number",
   z: "number",
   inputDir: Vec2,
+  lastProcessedInput: "uint32",
 });
 
 export class Enemy extends Schema {

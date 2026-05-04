@@ -51,4 +51,20 @@ describe("schema encoding (regression: prototype setters must run)", () => {
     const encoder = new Encoder(state);
     expect(() => encoder.encodeAll()).not.toThrow();
   });
+
+  it("Player.lastProcessedInput defaults to 0", () => {
+    const p = new Player();
+    expect(p.lastProcessedInput).toBe(0);
+  });
+
+  it("encodes Player.lastProcessedInput as uint32 without throwing", () => {
+    const state = new RoomState();
+    const p = new Player();
+    p.sessionId = "abc";
+    p.lastProcessedInput = 42;
+    state.players.set(p.sessionId, p);
+
+    const encoder = new Encoder(state);
+    expect(() => encoder.encodeAll()).not.toThrow();
+  });
 });
