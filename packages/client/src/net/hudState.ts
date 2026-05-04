@@ -12,7 +12,6 @@ export type HudState = {
   fps: number;                 // smoothed render fps (DebugHud rAF tick)
   enemyCount: number;          // active enemies
   enemyDrawCalls: number;      // gl.info.render.calls — proxy for "instancing working"
-  lastSnapshotBytes: number;   // best-effort client-side; authoritative number is in server log
   visible: boolean;
 };
 
@@ -26,6 +25,5 @@ export const hudState: HudState = {
   fps: 0,
   enemyCount: 0,
   enemyDrawCalls: 0,
-  lastSnapshotBytes: 0,
   visible: false,
 };
