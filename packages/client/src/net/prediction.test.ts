@@ -104,4 +104,21 @@ describe("LocalPredictor", () => {
     expect(p.renderOffset.x).toBeCloseTo(PLAYER_SPEED * SIM_DT_S);
     expect(p.renderOffset.z).toBeCloseTo(0);
   });
+
+  it("renderOffset accumulates additively across multiple reconciliations", () => {
+    const p = new LocalPredictor();
+    const oneStep = PLAYER_SPEED * SIM_DT_S;
+
+    p.step({ x: 1, z: 0 }, () => {});
+    p.reconcile(0, 0, 1);
+    expect(p.renderOffset.x).toBeCloseTo(oneStep);
+
+    // After the first reconcile predictedX is 0. Step again and snap again.
+    p.step({ x: 1, z: 0 }, () => {});
+    p.reconcile(0, 0, 2);
+    // Each reconcile contributes +oneStep; total should be 2 * oneStep,
+    // NOT oneStep (which would mean the second reconcile overwrote the
+    // first instead of adding to it).
+    expect(p.renderOffset.x).toBeCloseTo(2 * oneStep);
+  });
 });
