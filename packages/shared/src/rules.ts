@@ -1,5 +1,6 @@
 import { Enemy, type Player, type RoomState } from "./schema.js";
 import {
+  ENEMY_HP,
   ENEMY_SPAWN_INTERVAL_S,
   ENEMY_SPAWN_RADIUS,
   ENEMY_SPEED,
@@ -105,7 +106,7 @@ export function tickSpawner(
     enemy.kind = 0;
     enemy.x = target.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
     enemy.z = target.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
-    enemy.hp = 1;
+    enemy.hp = ENEMY_HP;
     state.enemies.set(String(enemy.id), enemy);
 
     spawner.accumulator -= ENEMY_SPAWN_INTERVAL_S;
@@ -136,7 +137,7 @@ export function spawnDebugBurst(
     enemy.kind = kind;
     enemy.x = centerPlayer.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
     enemy.z = centerPlayer.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
-    enemy.hp = 1;
+    enemy.hp = ENEMY_HP;
     state.enemies.set(String(enemy.id), enemy);
   }
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { RoomState, Player, Enemy } from "../src/schema.js";
 import { tickPlayers, tickEnemies, tickSpawner, spawnDebugBurst, type SpawnerState } from "../src/rules.js";
-import { PLAYER_SPEED, ENEMY_SPEED, ENEMY_SPAWN_INTERVAL_S, ENEMY_SPAWN_RADIUS, MAX_ENEMIES } from "../src/constants.js";
+import { PLAYER_SPEED, ENEMY_SPEED, ENEMY_SPAWN_INTERVAL_S, ENEMY_SPAWN_RADIUS, MAX_ENEMIES, ENEMY_HP } from "../src/constants.js";
 import { mulberry32 } from "../src/rng.js";
 
 function addPlayer(state: RoomState, id: string, dirX: number, dirZ: number): Player {
@@ -174,7 +174,7 @@ describe("tickSpawner", () => {
     expect(enemy).toBeDefined();
     expect(enemy!.id).toBe(1);
     expect(enemy!.kind).toBe(0);
-    expect(enemy!.hp).toBe(1);
+    expect(enemy!.hp).toBe(ENEMY_HP);
     const r = Math.hypot(enemy!.x - p.x, enemy!.z - p.z);
     expect(r).toBeCloseTo(ENEMY_SPAWN_RADIUS, 5);
   });
@@ -273,7 +273,7 @@ describe("spawnDebugBurst", () => {
       const r = Math.hypot(e.x - p.x, e.z - p.z);
       expect(r).toBeCloseTo(ENEMY_SPAWN_RADIUS, 5);
       expect(e.kind).toBe(0);
-      expect(e.hp).toBe(1);
+      expect(e.hp).toBe(ENEMY_HP);
     });
   });
 
