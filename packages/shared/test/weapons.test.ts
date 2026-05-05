@@ -39,3 +39,21 @@ describe("statsAt", () => {
     expect(statsAt(def, NaN)).toBe(def.levels[0]);
   });
 });
+
+describe("Orbit weapon", () => {
+  it("is at index 1 and is an orbit", () => {
+    expect(WEAPON_KINDS[1]!.name).toBe("Orbit");
+    expect(WEAPON_KINDS[1]!.behavior.kind).toBe("orbit");
+  });
+
+  it("max-level orbCount fits in MAX_ORB_COUNT_EVER (asserted at module load)", async () => {
+    // The assertion in shared/index.ts runs at import time. If we got here,
+    // it passed. This test exists so a future bump that exceeds the bound
+    // produces a named test failure rather than only a vague import error.
+    const orbit = WEAPON_KINDS[1]!;
+    if (orbit.behavior.kind !== "orbit") throw new Error("WEAPON_KINDS[1] not orbit");
+    const max = Math.max(...orbit.levels.map((l) => l.orbCount));
+    const { MAX_ORB_COUNT_EVER } = await import("../src/constants.js");
+    expect(max).toBeLessThanOrEqual(MAX_ORB_COUNT_EVER);
+  });
+});
