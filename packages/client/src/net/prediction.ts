@@ -33,7 +33,7 @@ export const SMOOTHING_TAU_S = 0.1;
  * The render layer reads `predictedX/Z` (authoritative simulation value)
  * plus `lastStepTime` (for inter-step extrapolation) plus `renderOffset`
  * (a decaying visual catch-up that absorbs reconciliation snaps). See
- * AD1–AD5 in 2026-05-04-local-jitter-fix-design.md.
+ * AD1–AD6 in 2026-05-04-local-jitter-fix-design.md.
  */
 export class LocalPredictor {
   predictedX = 0;
