@@ -50,6 +50,21 @@ describe("OrbitHitCooldownStore", () => {
     expect(s.tryHit("p1", 0, 99, 1100, 500)).toBe(false); // enemy 99 untouched
   });
 
+  it("evictEnemy(2) does not falsely match enemy 12", () => {
+    // Locks the key-format invariant: keys are
+    // `${playerId}:${weaponIndex}:${enemyId}` and evictEnemy uses a
+    // `:${id}` suffix match, so enemy 2's key (...:2) is distinct from
+    // enemy 12's (...:12). A future refactor that drops the colon
+    // separator would silently reintroduce the collision; this test
+    // converts that implicit invariant into an enforced one.
+    const s = createOrbitHitCooldownStore();
+    s.tryHit("p1", 0, 2, 1000, 500);
+    s.tryHit("p1", 0, 12, 1000, 500);
+    s.evictEnemy(2);
+    expect(s.tryHit("p1", 0, 2, 1100, 500)).toBe(true);   // evicted
+    expect(s.tryHit("p1", 0, 12, 1100, 500)).toBe(false); // preserved
+  });
+
   it("sweep drops entries older than the configured max cooldown", () => {
     const s = createOrbitHitCooldownStore();
     s.tryHit("p1", 0, 42, 1000, 500);
