@@ -108,6 +108,41 @@ describe("integration: enemy spawn + movement over real ticks", () => {
   }, 10_000);
 });
 
+describe("integration: kill + gem drop end-to-end", () => {
+  it("auto-fire kills several enemies and drops gems within ~12s", async () => {
+    const client = new Client(`ws://localhost:${PORT}`);
+    type CombatRoomState = {
+      code: string;
+      enemies: { size: number };
+      gems: { size: number };
+    };
+    const room = await client.create<CombatRoomState>("game", { name: "Solo" });
+
+    await waitFor(() => room.state.code !== "" && room.state.code != null, 1000);
+
+    // Burst-spawn 20 enemies via debug. They spawn at ENEMY_SPAWN_RADIUS=30
+    // (outside TARGETING_MAX_RANGE=20) and walk inward at ENEMY_SPEED=2 u/s.
+    // First enemies enter range after ~5s; Bolt does 10 dmg/0.6s vs 30 hp.
+    room.send("debug_spawn", { type: "debug_spawn", count: 20 });
+
+    // Let the state patch propagate so we can measure the post-burst baseline.
+    await new Promise((r) => setTimeout(r, 300));
+    const countAfterBurst = room.state.enemies.size; // ≥ 20
+
+    // Wait long enough for several kills.
+    await new Promise((r) => setTimeout(r, 12_000));
+
+    // The regular spawner adds ~1 enemy/s; over 12s that's ≤12 more.
+    // If no combat kills occurred: enemies ≈ countAfterBurst + 12.
+    // Requiring enemies < countAfterBurst + 12 proves at least some were killed.
+    const maxWithoutKills = countAfterBurst + 12;
+    expect(room.state.gems.size).toBeGreaterThan(0);
+    expect(room.state.enemies.size).toBeLessThan(maxWithoutKills);
+
+    await room.leave();
+  }, 20_000);
+});
+
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (!cond()) {
