@@ -21,19 +21,21 @@ describe("LocalPredictor", () => {
 
   it("step() updates lastStepTime to the current performance.now()", () => {
     const nowSpy = vi.spyOn(performance, "now");
-    nowSpy.mockReturnValue(1000);
-    const p = new LocalPredictor();
-    expect(p.lastStepTime).toBe(1000);
+    try {
+      nowSpy.mockReturnValue(1000);
+      const p = new LocalPredictor();
+      expect(p.lastStepTime).toBe(1000);
 
-    nowSpy.mockReturnValue(1050);
-    p.step({ x: 0, z: 0 }, () => {});
-    expect(p.lastStepTime).toBe(1050);
+      nowSpy.mockReturnValue(1050);
+      p.step({ x: 0, z: 0 }, () => {});
+      expect(p.lastStepTime).toBe(1050);
 
-    nowSpy.mockReturnValue(1100);
-    p.step({ x: 0, z: 0 }, () => {});
-    expect(p.lastStepTime).toBe(1100);
-
-    nowSpy.mockRestore();
+      nowSpy.mockReturnValue(1100);
+      p.step({ x: 0, z: 0 }, () => {});
+      expect(p.lastStepTime).toBe(1100);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("reconcile against acked seq drops queue and snaps to authoritative", () => {
