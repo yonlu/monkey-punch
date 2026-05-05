@@ -1,7 +1,27 @@
 import { describe, it, expect } from "vitest";
-import { RoomState, Player, Enemy } from "../src/schema.js";
-import { tickPlayers, tickEnemies, tickSpawner, spawnDebugBurst, type SpawnerState } from "../src/rules.js";
-import { PLAYER_SPEED, ENEMY_SPEED, ENEMY_SPAWN_INTERVAL_S, ENEMY_SPAWN_RADIUS, MAX_ENEMIES, ENEMY_HP } from "../src/constants.js";
+import { RoomState, Player, Enemy, WeaponState } from "../src/schema.js";
+import {
+  tickPlayers,
+  tickEnemies,
+  tickSpawner,
+  spawnDebugBurst,
+  tickWeapons,
+  type SpawnerState,
+  type Projectile,
+  type WeaponContext,
+  type Emit,
+  type CombatEvent,
+} from "../src/rules.js";
+import {
+  PLAYER_SPEED,
+  ENEMY_SPEED,
+  ENEMY_SPAWN_INTERVAL_S,
+  ENEMY_SPAWN_RADIUS,
+  MAX_ENEMIES,
+  ENEMY_HP,
+  TARGETING_MAX_RANGE,
+} from "../src/constants.js";
+import { WEAPON_KINDS } from "../src/weapons.js";
 import { mulberry32 } from "../src/rng.js";
 
 function addPlayer(state: RoomState, id: string, dirX: number, dirZ: number): Player {
@@ -314,5 +334,160 @@ describe("spawnDebugBurst", () => {
       expect(state.enemies.get(String(id))).toBeDefined();
     }
     expect(spawner.nextEnemyId).toBe(6);
+  });
+});
+
+// --------------------- M4 combat ---------------------
+
+function attachBolt(p: Player): WeaponState {
+  const w = new WeaponState();
+  w.kind = 0;
+  w.level = 1;
+  w.cooldownRemaining = 0;
+  p.weapons.push(w);
+  return w;
+}
+
+type CapturedFire = {
+  fires: CombatEvent[];
+  projectiles: Projectile[];
+  ctx: WeaponContext;
+};
+
+function makeCapture(initialFireId = 1, fixedNowMs = 1_000_000): CapturedFire {
+  const fires: CombatEvent[] = [];
+  const projectiles: Projectile[] = [];
+  let next = initialFireId;
+  const ctx: WeaponContext = {
+    nextFireId: () => next++,
+    serverNowMs: () => fixedNowMs,
+    pushProjectile: (p) => projectiles.push(p),
+  };
+  return { fires, projectiles, ctx };
+}
+
+describe("tickWeapons", () => {
+  it("decrements cooldown by dt each tick when no enemies are present and does not fire", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    const w = attachBolt(p);
+    w.cooldownRemaining = 0.5;
+
+    const { fires, projectiles, ctx } = makeCapture();
+    const emit: Emit = (e) => fires.push(e);
+
+    tickWeapons(state, 0.05, ctx, emit);
+
+    expect(w.cooldownRemaining).toBeCloseTo(0.45);
+    expect(fires).toEqual([]);
+    expect(projectiles).toEqual([]);
+  });
+
+  it("fires once when ready and a target is in range, resets cooldown, pushes one projectile", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const w = attachBolt(p);
+    w.cooldownRemaining = 0;
+
+    addEnemy(state, 1, 5, 0); // distance 5, in range
+
+    const { fires, projectiles, ctx } = makeCapture(42, 999_888);
+    const emit: Emit = (e) => fires.push(e);
+
+    tickWeapons(state, 0.05, ctx, emit);
+
+    expect(projectiles.length).toBe(1);
+    const proj = projectiles[0]!;
+    expect(proj.fireId).toBe(42);
+    expect(proj.ownerId).toBe("p1");
+    expect(proj.weaponKind).toBe(0);
+    expect(proj.damage).toBe(WEAPON_KINDS[0]!.damage);
+    expect(proj.speed).toBe(WEAPON_KINDS[0]!.projectileSpeed);
+    expect(proj.radius).toBe(WEAPON_KINDS[0]!.projectileRadius);
+    expect(proj.lifetime).toBe(WEAPON_KINDS[0]!.projectileLifetime);
+    expect(proj.age).toBe(0);
+    expect(proj.dirX).toBeCloseTo(1);
+    expect(proj.dirZ).toBeCloseTo(0);
+    expect(proj.x).toBe(0);
+    expect(proj.z).toBe(0);
+    expect(proj.prevX).toBe(0);
+    expect(proj.prevZ).toBe(0);
+
+    expect(fires.length).toBe(1);
+    const fire = fires[0]!;
+    expect(fire.type).toBe("fire");
+    if (fire.type !== "fire") throw new Error("type guard");
+    expect(fire.fireId).toBe(42);
+    expect(fire.weaponKind).toBe(0);
+    expect(fire.ownerId).toBe("p1");
+    expect(fire.originX).toBe(0);
+    expect(fire.originZ).toBe(0);
+    expect(fire.dirX).toBeCloseTo(1);
+    expect(fire.dirZ).toBeCloseTo(0);
+    expect(fire.serverFireTimeMs).toBe(999_888);
+
+    expect(w.cooldownRemaining).toBeCloseTo(WEAPON_KINDS[0]!.cooldown);
+  });
+
+  it("clamps cooldown at 0 with no targets and stays clamped across multiple ticks (AD10)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    const w = attachBolt(p);
+    w.cooldownRemaining = 0;
+
+    const { fires, projectiles, ctx } = makeCapture();
+    const emit: Emit = (e) => fires.push(e);
+
+    tickWeapons(state, 0.05, ctx, emit);
+    tickWeapons(state, 0.05, ctx, emit);
+    tickWeapons(state, 0.05, ctx, emit);
+
+    expect(w.cooldownRemaining).toBe(0);
+    expect(fires).toEqual([]);
+    expect(projectiles).toEqual([]);
+  });
+
+  it("targets the nearest of multiple in-range enemies", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const w = attachBolt(p);
+    w.cooldownRemaining = 0;
+
+    addEnemy(state, 1, 10, 0);  // farther
+    addEnemy(state, 2, 3, 0);   // nearer
+    addEnemy(state, 3, 0, 8);   // farther on z
+
+    const { fires, projectiles, ctx } = makeCapture();
+    const emit: Emit = (e) => fires.push(e);
+
+    tickWeapons(state, 0.05, ctx, emit);
+
+    expect(projectiles.length).toBe(1);
+    const proj = projectiles[0]!;
+    // Targeted enemy id=2 at (3, 0): dir = (1, 0).
+    expect(proj.dirX).toBeCloseTo(1);
+    expect(proj.dirZ).toBeCloseTo(0);
+  });
+
+  it("ignores enemies outside TARGETING_MAX_RANGE", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const w = attachBolt(p);
+    w.cooldownRemaining = 0;
+
+    // Just outside range: distance = TARGETING_MAX_RANGE + 0.5.
+    addEnemy(state, 1, TARGETING_MAX_RANGE + 0.5, 0);
+
+    const { fires, projectiles, ctx } = makeCapture();
+    const emit: Emit = (e) => fires.push(e);
+
+    tickWeapons(state, 0.05, ctx, emit);
+
+    expect(fires).toEqual([]);
+    expect(projectiles).toEqual([]);
+    expect(w.cooldownRemaining).toBe(0); // clamped, not negative
   });
 });

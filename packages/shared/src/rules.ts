@@ -1,4 +1,4 @@
-import { Enemy, type Player, type RoomState } from "./schema.js";
+import { Enemy, type Player, type RoomState, type WeaponState } from "./schema.js";
 import {
   ENEMY_HP,
   ENEMY_SPAWN_INTERVAL_S,
@@ -6,8 +6,16 @@ import {
   ENEMY_SPEED,
   MAX_ENEMIES,
   PLAYER_SPEED,
+  TARGETING_MAX_RANGE,
 } from "./constants.js";
+import { WEAPON_KINDS } from "./weapons.js";
 import type { Rng } from "./rng.js";
+import type {
+  FireEvent,
+  HitEvent,
+  EnemyDiedEvent,
+  GemCollectedEvent,
+} from "./messages.js";
 
 export function tickPlayers(state: RoomState, dt: number): void {
   state.players.forEach((p) => {
@@ -140,4 +148,124 @@ export function spawnDebugBurst(
     enemy.hp = ENEMY_HP;
     state.enemies.set(String(enemy.id), enemy);
   }
+}
+
+// --------------------- M4 combat ---------------------
+
+export type Projectile = {
+  fireId: number;
+  ownerId: string;
+  weaponKind: number;
+  damage: number;
+  speed: number;
+  radius: number;
+  lifetime: number;
+  age: number;
+  dirX: number;          // pre-normalized
+  dirZ: number;
+  prevX: number;         // for swept-circle
+  prevZ: number;
+  x: number;
+  z: number;
+};
+
+export type CombatEvent = FireEvent | HitEvent | EnemyDiedEvent | GemCollectedEvent;
+export type Emit = (event: CombatEvent) => void;
+
+export type WeaponContext = {
+  nextFireId: () => number;
+  serverNowMs: () => number;
+  pushProjectile: (p: Projectile) => void;
+};
+
+/**
+ * For each player's weapon: tick its cooldown; if ready and an in-range
+ * target exists, pick the nearest, fire one projectile, reset the cooldown.
+ * Per AD10, a weapon at cooldown 0 with no target stays clamped at 0
+ * (does not go negative) until a target enters range.
+ *
+ * Hot loop: nearest-target selection uses squared distance (no Math.hypot
+ * per pair); one Math.sqrt per fire to normalize the direction.
+ *
+ * Determinism: RNG-free. The fire-time `Date.now()` from ctx.serverNowMs
+ * is wallclock used by clients for the closed-form projectile sim — it
+ * never affects hit/no-hit, which is decided in tickProjectiles.
+ */
+export function tickWeapons(
+  state: RoomState,
+  dt: number,
+  ctx: WeaponContext,
+  emit: Emit,
+): void {
+  const rangeSq = TARGETING_MAX_RANGE * TARGETING_MAX_RANGE;
+
+  state.players.forEach((player: Player) => {
+    player.weapons.forEach((weapon: WeaponState) => {
+      // Tick the cooldown first; clamp at 0 (AD10).
+      weapon.cooldownRemaining = Math.max(0, weapon.cooldownRemaining - dt);
+      if (weapon.cooldownRemaining > 0) return;
+
+      // Find the nearest in-range enemy (squared distance).
+      let bestSq = Infinity;
+      let bestDx = 0;
+      let bestDz = 0;
+      let hasTarget = false;
+      state.enemies.forEach((enemy: Enemy) => {
+        const dx = enemy.x - player.x;
+        const dz = enemy.z - player.z;
+        const sq = dx * dx + dz * dz;
+        if (sq <= rangeSq && sq < bestSq) {
+          bestSq = sq;
+          bestDx = dx;
+          bestDz = dz;
+          hasTarget = true;
+        }
+      });
+
+      if (!hasTarget) return; // clamp stays at 0
+
+      // Defensive: a target with squared-distance 0 (player and enemy
+      // coincident) would NaN the normalization. Skip firing for this tick;
+      // the cooldown stays at 0 and we'll fire next tick once they separate.
+      if (bestSq === 0) return;
+
+      const dist = Math.sqrt(bestSq);
+      const dirX = bestDx / dist;
+      const dirZ = bestDz / dist;
+      const kind = WEAPON_KINDS[weapon.kind]!;
+
+      const proj: Projectile = {
+        fireId: ctx.nextFireId(),
+        ownerId: player.sessionId,
+        weaponKind: weapon.kind,
+        damage: kind.damage,
+        speed: kind.projectileSpeed,
+        radius: kind.projectileRadius,
+        lifetime: kind.projectileLifetime,
+        age: 0,
+        dirX,
+        dirZ,
+        prevX: player.x,
+        prevZ: player.z,
+        x: player.x,
+        z: player.z,
+      };
+      ctx.pushProjectile(proj);
+
+      emit({
+        type: "fire",
+        fireId: proj.fireId,
+        weaponKind: weapon.kind,
+        ownerId: player.sessionId,
+        originX: player.x,
+        originZ: player.z,
+        dirX,
+        dirZ,
+        serverTick: state.tick,
+        serverFireTimeMs: ctx.serverNowMs(),
+      });
+
+      weapon.cooldownRemaining = kind.cooldown;
+    });
+  });
 }
