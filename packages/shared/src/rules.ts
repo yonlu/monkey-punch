@@ -1,9 +1,17 @@
-import { Enemy, type Player, type RoomState, type WeaponState } from "./schema.js";
+import {
+  Enemy,
+  Gem,
+  type Player,
+  type RoomState,
+  type WeaponState,
+} from "./schema.js";
 import {
   ENEMY_HP,
+  ENEMY_RADIUS,
   ENEMY_SPAWN_INTERVAL_S,
   ENEMY_SPAWN_RADIUS,
   ENEMY_SPEED,
+  GEM_VALUE,
   MAX_ENEMIES,
   PLAYER_SPEED,
   TARGETING_MAX_RANGE,
@@ -268,4 +276,119 @@ export function tickWeapons(
       weapon.cooldownRemaining = kind.cooldown;
     });
   });
+}
+
+export type ProjectileContext = {
+  nextGemId: () => number;
+};
+
+/**
+ * Integrate each projectile by `dt`, swept-circle test against each
+ * enemy, apply damage / death / gem-drop, expire by lifetime. Compacts
+ * `active` in place: write-index `w` trails read-index `r`; survivors
+ * are copied forward, then `active.length = w`.
+ *
+ * Per AD3, the swept-circle test catches the tangent case (segment
+ * passes through radius_sum even when both endpoints lie outside it).
+ *
+ * Per AD7, on a lethal hit: emit `hit` first, then schema-remove the
+ * enemy and emit `enemy_died`. Order matters for client VFX — the hit
+ * handler reads the enemy's interpolated position before the schema
+ * removal patch lands, and the death event piggybacks the position.
+ */
+export function tickProjectiles(
+  state: RoomState,
+  active: Projectile[],
+  dt: number,
+  ctx: ProjectileContext,
+  emit: Emit,
+): void {
+  let w = 0;
+  for (let r = 0; r < active.length; r++) {
+    const proj = active[r]!;
+
+    // Integrate.
+    proj.prevX = proj.x;
+    proj.prevZ = proj.z;
+    proj.x += proj.dirX * proj.speed * dt;
+    proj.z += proj.dirZ * proj.speed * dt;
+    proj.age += dt;
+
+    if (proj.age >= proj.lifetime) {
+      // Drop (do not copy forward).
+      continue;
+    }
+
+    // Swept-circle vs. each enemy in insertion order. First intersected wins.
+    const segX = proj.x - proj.prevX;
+    const segZ = proj.z - proj.prevZ;
+    const segLen2 = segX * segX + segZ * segZ;
+    const radiusSum = proj.radius + ENEMY_RADIUS;
+    const radiusSumSq = radiusSum * radiusSum;
+
+    let hitEnemy: Enemy | undefined;
+    state.enemies.forEach((enemy: Enemy) => {
+      if (hitEnemy) return; // first intersected wins; bail on rest
+
+      const toX = enemy.x - proj.prevX;
+      const toZ = enemy.z - proj.prevZ;
+
+      let u: number;
+      if (segLen2 > 0) {
+        u = (toX * segX + toZ * segZ) / segLen2;
+        if (u < 0) u = 0;
+        else if (u > 1) u = 1;
+      } else {
+        u = 0; // zero-length segment: fall back to point test at prev.
+      }
+
+      const closestX = proj.prevX + u * segX;
+      const closestZ = proj.prevZ + u * segZ;
+      const dx = enemy.x - closestX;
+      const dz = enemy.z - closestZ;
+      if (dx * dx + dz * dz <= radiusSumSq) {
+        hitEnemy = enemy;
+      }
+    });
+
+    if (hitEnemy) {
+      hitEnemy.hp -= proj.damage;
+      emit({
+        type: "hit",
+        fireId: proj.fireId,
+        enemyId: hitEnemy.id,
+        damage: proj.damage,
+        serverTick: state.tick,
+      });
+
+      if (hitEnemy.hp <= 0) {
+        const gem = new Gem();
+        gem.id = ctx.nextGemId();
+        gem.x = hitEnemy.x;
+        gem.z = hitEnemy.z;
+        gem.value = GEM_VALUE;
+        state.gems.set(String(gem.id), gem);
+
+        const deathX = hitEnemy.x;
+        const deathZ = hitEnemy.z;
+        const deathId = hitEnemy.id;
+        state.enemies.delete(String(hitEnemy.id));
+
+        emit({
+          type: "enemy_died",
+          enemyId: deathId,
+          x: deathX,
+          z: deathZ,
+        });
+      }
+      // Drop the projectile (consumed by the hit).
+      continue;
+    }
+
+    // Survives: copy forward.
+    if (w !== r) active[w] = proj;
+    w++;
+  }
+
+  active.length = w;
 }

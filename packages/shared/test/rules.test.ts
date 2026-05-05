@@ -6,9 +6,11 @@ import {
   tickSpawner,
   spawnDebugBurst,
   tickWeapons,
+  tickProjectiles,
   type SpawnerState,
   type Projectile,
   type WeaponContext,
+  type ProjectileContext,
   type Emit,
   type CombatEvent,
 } from "../src/rules.js";
@@ -19,6 +21,8 @@ import {
   ENEMY_SPAWN_RADIUS,
   MAX_ENEMIES,
   ENEMY_HP,
+  ENEMY_RADIUS,
+  GEM_VALUE,
   TARGETING_MAX_RANGE,
 } from "../src/constants.js";
 import { WEAPON_KINDS } from "../src/weapons.js";
@@ -489,5 +493,195 @@ describe("tickWeapons", () => {
     expect(fires).toEqual([]);
     expect(projectiles).toEqual([]);
     expect(w.cooldownRemaining).toBe(0); // clamped, not negative
+  });
+});
+
+function makeProjectile(overrides: Partial<Projectile>): Projectile {
+  return {
+    fireId: 1,
+    ownerId: "p1",
+    weaponKind: 0,
+    damage: 10,
+    speed: 18,
+    radius: 0.4,
+    lifetime: 0.8,
+    age: 0,
+    dirX: 1,
+    dirZ: 0,
+    prevX: 0,
+    prevZ: 0,
+    x: 0,
+    z: 0,
+    ...overrides,
+  };
+}
+
+function makeProjCtx(initialGemId = 1): { ctx: ProjectileContext; nextGem: () => number } {
+  let next = initialGemId;
+  return {
+    ctx: { nextGemId: () => next++ },
+    nextGem: () => next,
+  };
+}
+
+describe("tickProjectiles", () => {
+  it("removes a projectile that has aged past its lifetime; emits no hit", () => {
+    const state = new RoomState();
+    const proj = makeProjectile({ age: 0.79, x: 0.5, z: 0 });
+    const active: Projectile[] = [proj];
+    const fires: CombatEvent[] = [];
+    const emit: Emit = (e) => fires.push(e);
+    const { ctx } = makeProjCtx();
+
+    // dt large enough to push age >= lifetime: 0.79 + 0.05 = 0.84 >= 0.8.
+    tickProjectiles(state, active, 0.05, ctx, emit);
+
+    expect(active.length).toBe(0);
+    expect(fires).toEqual([]);
+  });
+
+  it("hits a stationary enemy head-on, emits a hit event, removes the projectile", () => {
+    const state = new RoomState();
+    const enemy = addEnemy(state, 1, 1.0, 0);
+    enemy.hp = ENEMY_HP;
+
+    const proj = makeProjectile({ x: 0, z: 0, prevX: 0, prevZ: 0 });
+    const active: Projectile[] = [proj];
+    const fires: CombatEvent[] = [];
+    const emit: Emit = (e) => fires.push(e);
+    const { ctx } = makeProjCtx();
+
+    // dt = 0.05 → next position x = 0 + 18*0.05 = 0.9. Segment endpoints
+    // (0,0)→(0.9,0). Enemy center (1.0, 0) is within radius_sum
+    // (0.4 + 0.5 = 0.9) of the segment endpoint at u=1 — distance 0.1.
+    tickProjectiles(state, active, 0.05, ctx, emit);
+
+    expect(active.length).toBe(0);
+    expect(fires.length).toBe(1);
+    const hit = fires[0]!;
+    expect(hit.type).toBe("hit");
+    if (hit.type !== "hit") throw new Error("type guard");
+    expect(hit.fireId).toBe(proj.fireId);
+    expect(hit.enemyId).toBe(1);
+    expect(hit.damage).toBe(10);
+    expect(enemy.hp).toBe(ENEMY_HP - 10);
+  });
+
+  it("catches the AD3 swept-circle tangent case where both endpoints lie outside radius_sum", () => {
+    // Setup a projectile whose segment passes within radius_sum of an enemy
+    // center, but with both endpoints OUTSIDE the radius_sum sphere. A
+    // simple end-of-step point test misses this; swept-circle catches it.
+    //
+    // tickProjectiles overwrites proj.prev{X,Z} = proj.{x,z} at the start
+    // of each tick, so we control the segment by setting the initial
+    // (x, z) (becomes prev) and tuning speed*dt to the desired step.
+    //
+    // Enemy at (0, 0), radius 0.5; projectile radius 0.4 → radiusSum 0.9.
+    // Segment from (-1, 0.5) to (1, 0.5):
+    //   both endpoints are at distance sqrt(1 + 0.25) ≈ 1.118 > 0.9.
+    //   closest point on segment to (0,0) is (0, 0.5), distance 0.5 < 0.9.
+    const state = new RoomState();
+    const enemy = addEnemy(state, 1, 0, 0);
+    enemy.hp = ENEMY_HP;
+
+    const proj = makeProjectile({
+      x: -1, z: 0.5,        // becomes prev{X,Z} after integration
+      prevX: 0, prevZ: 0,   // overwritten — value irrelevant
+      dirX: 1, dirZ: 0,
+      speed: 20,            // step = 20 * 0.1 = 2.0
+      age: 0,
+    });
+    const active: Projectile[] = [proj];
+    const fires: CombatEvent[] = [];
+    const emit: Emit = (e) => fires.push(e);
+    const { ctx } = makeProjCtx();
+
+    tickProjectiles(state, active, 0.1, ctx, emit);
+
+    expect(active.length).toBe(0);
+    expect(fires.length).toBe(1);
+    expect(fires[0]!.type).toBe("hit");
+  });
+
+  it("kills an enemy at hp <= damage: removes from state.enemies, drops a Gem, emits hit then enemy_died", () => {
+    const state = new RoomState();
+    const enemy = addEnemy(state, 7, 1.0, 0);
+    enemy.hp = 10; // exactly damage
+
+    const proj = makeProjectile({ damage: 10 });
+    const active: Projectile[] = [proj];
+    const fires: CombatEvent[] = [];
+    const emit: Emit = (e) => fires.push(e);
+    const { ctx } = makeProjCtx(99);
+
+    tickProjectiles(state, active, 0.05, ctx, emit);
+
+    // Enemy gone.
+    expect(state.enemies.has("7")).toBe(false);
+    // Gem inserted at the enemy's position with the next gem id.
+    expect(state.gems.has("99")).toBe(true);
+    const g = state.gems.get("99")!;
+    expect(g.id).toBe(99);
+    expect(g.x).toBeCloseTo(1.0);
+    expect(g.z).toBeCloseTo(0);
+    expect(g.value).toBe(GEM_VALUE);
+
+    // Event order: hit then enemy_died.
+    expect(fires.length).toBe(2);
+    expect(fires[0]!.type).toBe("hit");
+    expect(fires[1]!.type).toBe("enemy_died");
+    if (fires[1]!.type !== "enemy_died") throw new Error("type guard");
+    expect(fires[1]!.enemyId).toBe(7);
+    expect(fires[1]!.x).toBeCloseTo(1.0);
+    expect(fires[1]!.z).toBeCloseTo(0);
+  });
+
+  it("two projectiles in the same tick on the same hp=damage enemy: first kills, second misses (enemy already gone)", () => {
+    const state = new RoomState();
+    const enemy = addEnemy(state, 1, 1.0, 0);
+    enemy.hp = 10;
+
+    const a = makeProjectile({ fireId: 1, damage: 10 });
+    const b = makeProjectile({ fireId: 2, damage: 10 });
+    const active: Projectile[] = [a, b];
+    const fires: CombatEvent[] = [];
+    const emit: Emit = (e) => fires.push(e);
+    const { ctx } = makeProjCtx();
+
+    tickProjectiles(state, active, 0.05, ctx, emit);
+
+    // First kills (hit + enemy_died). Second has no enemy to hit and survives.
+    expect(state.enemies.size).toBe(0);
+    expect(state.gems.size).toBe(1);
+    expect(active.length).toBe(1);
+    expect(active[0]!.fireId).toBe(2);
+
+    expect(fires.filter((e) => e.type === "hit").length).toBe(1);
+    expect(fires.filter((e) => e.type === "enemy_died").length).toBe(1);
+  });
+
+  it("with two intersected enemies in insertion order, hits the first one and removes the projectile", () => {
+    const state = new RoomState();
+    const a = addEnemy(state, 1, 0.6, 0); // first inserted
+    a.hp = ENEMY_HP;
+    const b = addEnemy(state, 2, 0.7, 0); // second inserted, slightly farther
+    b.hp = ENEMY_HP;
+
+    const proj = makeProjectile({ x: 0, z: 0, prevX: 0, prevZ: 0 });
+    const active: Projectile[] = [proj];
+    const fires: CombatEvent[] = [];
+    const emit: Emit = (e) => fires.push(e);
+    const { ctx } = makeProjCtx();
+
+    tickProjectiles(state, active, 0.05, ctx, emit);
+
+    expect(active.length).toBe(0);
+    expect(fires.length).toBe(1);
+    const hit = fires[0]!;
+    if (hit.type !== "hit") throw new Error("type guard");
+    expect(hit.enemyId).toBe(1); // first inserted wins
+    // a took damage; b is untouched.
+    expect(a.hp).toBe(ENEMY_HP - 10);
+    expect(b.hp).toBe(ENEMY_HP);
   });
 });
