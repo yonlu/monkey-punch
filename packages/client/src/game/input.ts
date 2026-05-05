@@ -1,6 +1,6 @@
 import type { Room } from "colyseus.js";
 import type { RoomState } from "@mp/shared";
-import { LocalPredictor } from "../net/prediction.js";
+import { LocalPredictor, STEP_INTERVAL_MS } from "../net/prediction.js";
 
 const KEYS = { w: false, a: false, s: false, d: false };
 
@@ -11,8 +11,6 @@ const CODE_TO_KEY: Record<string, "w" | "a" | "s" | "d"> = {
   KeyD: "d",
 };
 
-const STEP_INTERVAL_MS = 50; // 20 Hz; must equal server TICK_INTERVAL_MS
-
 function computeDir(): { x: number; z: number } {
   let x = 0, z = 0;
   if (KEYS.w) z -= 1;
@@ -22,6 +20,20 @@ function computeDir(): { x: number; z: number } {
   const len = Math.hypot(x, z);
   if (len > 0) { x /= len; z /= len; }
   return { x, z };
+}
+
+/**
+ * Read the current keyboard direction without sending an input message or
+ * advancing the predictor. Used by the render layer to extrapolate the
+ * local player's visible position between 20Hz prediction steps using
+ * the freshest possible input — see AD2 in
+ * 2026-05-04-local-jitter-fix-design.md.
+ *
+ * Allocates a fresh object per call (60 small allocations/sec at 60fps;
+ * negligible). Don't store the returned reference; treat as read-once.
+ */
+export function getLiveInputDir(): { x: number; z: number } {
+  return computeDir();
 }
 
 /**
