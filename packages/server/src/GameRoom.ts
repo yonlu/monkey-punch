@@ -13,6 +13,7 @@ import {
   PROJECTILE_MAX_CAPACITY,
   SIM_DT_S,
   MAX_ENEMIES,
+  WEAPON_KINDS,
   mulberry32,
   type Rng,
   type SpawnerState,
@@ -30,6 +31,11 @@ import type {
 } from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
 import { clampDirection } from "./input.js";
+import {
+  createOrbitHitCooldownStore,
+  maxOrbitHitCooldownMs,
+  type OrbitHitCooldownStore,
+} from "./orbitHitCooldown.js";
 
 const TICK_INTERVAL_MS = SIM_DT_S * 1000; // 50 ms — must equal shared SIM_DT_S
 const MAX_PLAYERS = 10;
@@ -70,6 +76,9 @@ export class GameRoom extends Room<RoomState> {
   private weaponCtx!: WeaponContext;
   private projectileCtx!: ProjectileContext;
   private projectileCapacityWarned = false;
+  private orbitHitCooldown!: OrbitHitCooldownStore;
+  private maxOrbitHitCooldownMs!: number;
+  private cooldownSweepCounter = 0;
 
   private snapshotLogTimer: NodeJS.Timeout | null = null;
   private patchByteCount = 0;
@@ -91,6 +100,16 @@ export class GameRoom extends Room<RoomState> {
     console.log(`[room ${code}] created seed=${state.seed}`);
     this.setState(state);
     this.rng = mulberry32(state.seed);
+    this.orbitHitCooldown = createOrbitHitCooldownStore();
+    // Cast: maxOrbitHitCooldownMs accepts a structural shape with optional
+    // `hitCooldownPerEnemyMs`, but WEAPON_KINDS is a discriminated union
+    // where ProjectileLevel has no such field at all — TS rejects the
+    // weak-type assignment. The helper's body filters to orbit defs only,
+    // so the cast is sound.
+    this.maxOrbitHitCooldownMs = maxOrbitHitCooldownMs(
+      WEAPON_KINDS as Parameters<typeof maxOrbitHitCooldownMs>[0],
+    );
+
     this.weaponCtx = {
       nextFireId: () => this.nextFireId++,
       serverNowMs: () => Date.now(),
@@ -106,8 +125,13 @@ export class GameRoom extends Room<RoomState> {
         }
         this.activeProjectiles.push(p);
       },
+      nextGemId: () => this.nextGemId++,
+      orbitHitCooldown: this.orbitHitCooldown,
     };
-    this.projectileCtx = { nextGemId: () => this.nextGemId++ };
+    this.projectileCtx = {
+      nextGemId: () => this.nextGemId++,
+      orbitHitCooldown: this.orbitHitCooldown,
+    };
 
     // The matchmaker's filterBy(["code"]) matches against the room listing's
     // top-level fields, which Colyseus initializes from the CREATING client's
@@ -199,6 +223,7 @@ export class GameRoom extends Room<RoomState> {
 
     if (consented) {
       this.state.players.delete(client.sessionId);
+      this.orbitHitCooldown.evictPlayer(client.sessionId);
       return;
     }
 
@@ -211,6 +236,7 @@ export class GameRoom extends Room<RoomState> {
         `[room ${this.state.code}] reconnect grace ended for ${client.sessionId}: ${err === false ? "timeout" : err}`,
       );
       this.state.players.delete(client.sessionId);
+      this.orbitHitCooldown.evictPlayer(client.sessionId);
     }
   }
 
@@ -229,6 +255,12 @@ export class GameRoom extends Room<RoomState> {
     tickProjectiles(this.state, this.activeProjectiles, SIM_DT_S, this.projectileCtx, emit);
     tickGems(this.state, emit);
     tickSpawner(this.state, this.spawner, SIM_DT_S, this.rng);
+
+    this.cooldownSweepCounter += 1;
+    if (this.cooldownSweepCounter >= 100) {
+      this.cooldownSweepCounter = 0;
+      this.orbitHitCooldown.sweep(Date.now(), this.maxOrbitHitCooldownMs);
+    }
   }
 
   private installSnapshotLogger(): void {
