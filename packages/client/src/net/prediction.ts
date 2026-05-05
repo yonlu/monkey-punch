@@ -89,10 +89,18 @@ export class LocalPredictor {
       nextZ += u.dir.z * PLAYER_SPEED * SIM_DT_S;
     }
 
-    const dx = nextX - this.predictedX;
-    const dz = nextZ - this.predictedZ;
+    const prevX = this.predictedX;
+    const prevZ = this.predictedZ;
+    const dx = nextX - prevX;
+    const dz = nextZ - prevZ;
     this.lastReconErr = Math.hypot(dx, dz);
     this.predictedX = nextX;
     this.predictedZ = nextZ;
+
+    // Visual catch-up: keep the rendered cube where it WAS, then let the
+    // render layer's exponential decay walk the offset toward zero. See
+    // AD4 in 2026-05-04-local-jitter-fix-design.md.
+    this.renderOffset.x += prevX - nextX;
+    this.renderOffset.z += prevZ - nextZ;
   }
 }
