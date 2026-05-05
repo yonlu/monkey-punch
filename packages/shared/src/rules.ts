@@ -1,12 +1,30 @@
-import { Enemy, type Player, type RoomState } from "./schema.js";
 import {
+  Enemy,
+  Gem,
+  type Player,
+  type RoomState,
+  type WeaponState,
+} from "./schema.js";
+import {
+  ENEMY_HP,
+  ENEMY_RADIUS,
   ENEMY_SPAWN_INTERVAL_S,
   ENEMY_SPAWN_RADIUS,
   ENEMY_SPEED,
+  GEM_PICKUP_RADIUS,
+  GEM_VALUE,
   MAX_ENEMIES,
   PLAYER_SPEED,
+  TARGETING_MAX_RANGE,
 } from "./constants.js";
+import { WEAPON_KINDS } from "./weapons.js";
 import type { Rng } from "./rng.js";
+import type {
+  FireEvent,
+  HitEvent,
+  EnemyDiedEvent,
+  GemCollectedEvent,
+} from "./messages.js";
 
 export function tickPlayers(state: RoomState, dt: number): void {
   state.players.forEach((p) => {
@@ -105,7 +123,7 @@ export function tickSpawner(
     enemy.kind = 0;
     enemy.x = target.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
     enemy.z = target.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
-    enemy.hp = 1;
+    enemy.hp = ENEMY_HP;
     state.enemies.set(String(enemy.id), enemy);
 
     spawner.accumulator -= ENEMY_SPAWN_INTERVAL_S;
@@ -136,7 +154,271 @@ export function spawnDebugBurst(
     enemy.kind = kind;
     enemy.x = centerPlayer.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
     enemy.z = centerPlayer.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
-    enemy.hp = 1;
+    enemy.hp = ENEMY_HP;
     state.enemies.set(String(enemy.id), enemy);
   }
+}
+
+// --------------------- M4 combat ---------------------
+
+export type Projectile = {
+  fireId: number;
+  ownerId: string;
+  weaponKind: number;
+  damage: number;
+  speed: number;
+  radius: number;
+  lifetime: number;
+  age: number;
+  dirX: number;          // pre-normalized
+  dirZ: number;
+  prevX: number;         // for swept-circle
+  prevZ: number;
+  x: number;
+  z: number;
+};
+
+export type CombatEvent = FireEvent | HitEvent | EnemyDiedEvent | GemCollectedEvent;
+export type Emit = (event: CombatEvent) => void;
+
+export type WeaponContext = {
+  nextFireId: () => number;
+  serverNowMs: () => number;
+  pushProjectile: (p: Projectile) => void;
+};
+
+/**
+ * For each player's weapon: tick its cooldown; if ready and an in-range
+ * target exists, pick the nearest, fire one projectile, reset the cooldown.
+ * Per AD10, a weapon at cooldown 0 with no target stays clamped at 0
+ * (does not go negative) until a target enters range.
+ *
+ * Hot loop: nearest-target selection uses squared distance (no Math.hypot
+ * per pair); one Math.sqrt per fire to normalize the direction.
+ *
+ * Determinism: RNG-free. The fire-time `Date.now()` from ctx.serverNowMs
+ * is wallclock used by clients for the closed-form projectile sim — it
+ * never affects hit/no-hit, which is decided in tickProjectiles.
+ */
+export function tickWeapons(
+  state: RoomState,
+  dt: number,
+  ctx: WeaponContext,
+  emit: Emit,
+): void {
+  const rangeSq = TARGETING_MAX_RANGE * TARGETING_MAX_RANGE;
+
+  state.players.forEach((player: Player) => {
+    player.weapons.forEach((weapon: WeaponState) => {
+      // Tick the cooldown first; clamp at 0 (AD10).
+      weapon.cooldownRemaining = Math.max(0, weapon.cooldownRemaining - dt);
+      if (weapon.cooldownRemaining > 0) return;
+
+      // Find the nearest in-range enemy (squared distance).
+      let bestSq = Infinity;
+      let bestDx = 0;
+      let bestDz = 0;
+      let hasTarget = false;
+      state.enemies.forEach((enemy: Enemy) => {
+        const dx = enemy.x - player.x;
+        const dz = enemy.z - player.z;
+        const sq = dx * dx + dz * dz;
+        if (sq <= rangeSq && sq < bestSq) {
+          bestSq = sq;
+          bestDx = dx;
+          bestDz = dz;
+          hasTarget = true;
+        }
+      });
+
+      if (!hasTarget) return; // clamp stays at 0
+
+      // Defensive: a target with squared-distance 0 (player and enemy
+      // coincident) would NaN the normalization. Skip firing for this tick;
+      // the cooldown stays at 0 and we'll fire next tick once they separate.
+      if (bestSq === 0) return;
+
+      const dist = Math.sqrt(bestSq);
+      const dirX = bestDx / dist;
+      const dirZ = bestDz / dist;
+      const kind = WEAPON_KINDS[weapon.kind]!;
+
+      const proj: Projectile = {
+        fireId: ctx.nextFireId(),
+        ownerId: player.sessionId,
+        weaponKind: weapon.kind,
+        damage: kind.damage,
+        speed: kind.projectileSpeed,
+        radius: kind.projectileRadius,
+        lifetime: kind.projectileLifetime,
+        age: 0,
+        dirX,
+        dirZ,
+        prevX: player.x,
+        prevZ: player.z,
+        x: player.x,
+        z: player.z,
+      };
+      ctx.pushProjectile(proj);
+
+      emit({
+        type: "fire",
+        fireId: proj.fireId,
+        weaponKind: weapon.kind,
+        ownerId: player.sessionId,
+        originX: player.x,
+        originZ: player.z,
+        dirX,
+        dirZ,
+        serverTick: state.tick,
+        serverFireTimeMs: ctx.serverNowMs(),
+      });
+
+      weapon.cooldownRemaining = kind.cooldown;
+    });
+  });
+}
+
+export type ProjectileContext = {
+  nextGemId: () => number;
+};
+
+/**
+ * Integrate each projectile by `dt`, swept-circle test against each
+ * enemy, apply damage / death / gem-drop, expire by lifetime. Compacts
+ * `active` in place: write-index `w` trails read-index `r`; survivors
+ * are copied forward, then `active.length = w`.
+ *
+ * Per AD3, the swept-circle test catches the tangent case (segment
+ * passes through radius_sum even when both endpoints lie outside it).
+ *
+ * Per AD7, on a lethal hit: emit `hit` first, then schema-remove the
+ * enemy and emit `enemy_died`. Order matters for client VFX — the hit
+ * handler reads the enemy's interpolated position before the schema
+ * removal patch lands, and the death event piggybacks the position.
+ */
+export function tickProjectiles(
+  state: RoomState,
+  active: Projectile[],
+  dt: number,
+  ctx: ProjectileContext,
+  emit: Emit,
+): void {
+  let w = 0;
+  for (let r = 0; r < active.length; r++) {
+    const proj = active[r]!;
+
+    // Integrate.
+    proj.prevX = proj.x;
+    proj.prevZ = proj.z;
+    proj.x += proj.dirX * proj.speed * dt;
+    proj.z += proj.dirZ * proj.speed * dt;
+    proj.age += dt;
+
+    if (proj.age >= proj.lifetime) {
+      // Drop (do not copy forward).
+      continue;
+    }
+
+    // Swept-circle vs. each enemy in insertion order. First intersected wins.
+    const segX = proj.x - proj.prevX;
+    const segZ = proj.z - proj.prevZ;
+    const segLen2 = segX * segX + segZ * segZ;
+    const radiusSum = proj.radius + ENEMY_RADIUS;
+    const radiusSumSq = radiusSum * radiusSum;
+
+    let hitEnemy: Enemy | undefined;
+    state.enemies.forEach((enemy: Enemy) => {
+      if (hitEnemy) return; // first intersected wins; bail on rest
+
+      const toX = enemy.x - proj.prevX;
+      const toZ = enemy.z - proj.prevZ;
+
+      let u: number;
+      if (segLen2 > 0) {
+        u = (toX * segX + toZ * segZ) / segLen2;
+        if (u < 0) u = 0;
+        else if (u > 1) u = 1;
+      } else {
+        u = 0; // zero-length segment: fall back to point test at prev.
+      }
+
+      const closestX = proj.prevX + u * segX;
+      const closestZ = proj.prevZ + u * segZ;
+      const dx = enemy.x - closestX;
+      const dz = enemy.z - closestZ;
+      if (dx * dx + dz * dz <= radiusSumSq) {
+        hitEnemy = enemy;
+      }
+    });
+
+    if (hitEnemy) {
+      hitEnemy.hp -= proj.damage;
+      emit({
+        type: "hit",
+        fireId: proj.fireId,
+        enemyId: hitEnemy.id,
+        damage: proj.damage,
+        serverTick: state.tick,
+      });
+
+      if (hitEnemy.hp <= 0) {
+        const gem = new Gem();
+        gem.id = ctx.nextGemId();
+        gem.x = hitEnemy.x;
+        gem.z = hitEnemy.z;
+        gem.value = GEM_VALUE;
+        state.gems.set(String(gem.id), gem);
+
+        const deathX = hitEnemy.x;
+        const deathZ = hitEnemy.z;
+        const deathId = hitEnemy.id;
+        state.enemies.delete(String(hitEnemy.id));
+
+        emit({
+          type: "enemy_died",
+          enemyId: deathId,
+          x: deathX,
+          z: deathZ,
+        });
+      }
+      // Drop the projectile (consumed by the hit).
+      continue;
+    }
+
+    // Survives: copy forward.
+    if (w !== r) active[w] = proj;
+    w++;
+  }
+
+  active.length = w;
+}
+
+/**
+ * For each gem, the first player (in `state.players` insertion order)
+ * within GEM_PICKUP_RADIUS² collects it: increments xp, removes the gem
+ * from state, emits gem_collected. Per AD8 — deterministic and
+ * dependency-free.
+ */
+export function tickGems(state: RoomState, emit: Emit): void {
+  const radiusSq = GEM_PICKUP_RADIUS * GEM_PICKUP_RADIUS;
+  state.gems.forEach((gem: Gem, key: string) => {
+    let collector: Player | undefined;
+    state.players.forEach((p: Player) => {
+      if (collector) return;
+      const dx = p.x - gem.x;
+      const dz = p.z - gem.z;
+      if (dx * dx + dz * dz <= radiusSq) collector = p;
+    });
+    if (!collector) return;
+
+    collector.xp += gem.value;
+    state.gems.delete(key);
+    emit({
+      type: "gem_collected",
+      gemId: gem.id,
+      playerId: collector.sessionId,
+      value: gem.value,
+    });
+  });
 }

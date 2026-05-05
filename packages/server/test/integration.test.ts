@@ -108,6 +108,171 @@ describe("integration: enemy spawn + movement over real ticks", () => {
   }, 10_000);
 });
 
+describe("integration: kill + gem drop end-to-end", () => {
+  it("auto-fire kills several enemies and drops gems within ~12s", async () => {
+    const client = new Client(`ws://localhost:${PORT}`);
+    type CombatRoomState = {
+      code: string;
+      enemies: { size: number };
+      gems: { size: number };
+    };
+    const room = await client.create<CombatRoomState>("game", { name: "Solo" });
+
+    await waitFor(() => room.state.code !== "" && room.state.code != null, 1000);
+
+    // Burst-spawn 20 enemies via debug. They spawn at ENEMY_SPAWN_RADIUS=30
+    // (outside TARGETING_MAX_RANGE=20) and walk inward at ENEMY_SPEED=2 u/s.
+    // First enemies enter range after ~5s; Bolt does 10 dmg/0.6s vs 30 hp.
+    room.send("debug_spawn", { type: "debug_spawn", count: 20 });
+
+    // Let the state patch propagate so we can measure the post-burst baseline.
+    await new Promise((r) => setTimeout(r, 300));
+    const countAfterBurst = room.state.enemies.size; // ≥ 20
+
+    // Wait long enough for several kills.
+    await new Promise((r) => setTimeout(r, 12_000));
+
+    // The regular spawner adds ~1 enemy/s; over 12s that's ≤12 more.
+    // If no combat kills occurred: enemies ≈ countAfterBurst + 12.
+    // Requiring enemies < countAfterBurst + 12 proves at least some were killed.
+    const maxWithoutKills = countAfterBurst + 12;
+    expect(room.state.gems.size).toBeGreaterThan(0);
+    expect(room.state.enemies.size).toBeLessThan(maxWithoutKills);
+
+    await room.leave();
+  }, 20_000);
+});
+
+describe("integration: XP gain on gem pickup end-to-end", () => {
+  it("player walks to a gem and picks it up; xp increments and gem is gone", async () => {
+    const client = new Client(`ws://localhost:${PORT}`);
+    type RoomShape = {
+      code: string;
+      enemies: { size: number };
+      gems: {
+        size: number;
+        forEach: (cb: (g: { id: number; x: number; z: number }, k: string) => void) => void;
+        has: (k: string) => boolean;
+      };
+      players: { get: (sid: string) => { xp: number; x: number; z: number } | undefined };
+    };
+    const room = await client.create<RoomShape>("game", { name: "Solo" });
+    await waitFor(() => room.state.code !== "" && room.state.code != null, 1000);
+
+    // Get a gem on the ground.
+    room.send("debug_spawn", { type: "debug_spawn", count: 20 });
+    await waitFor(() => room.state.gems.size > 0, 15_000);
+
+    // Pick the first gem; capture its position and id.
+    let target: { id: number; x: number; z: number } | null = null;
+    room.state.gems.forEach((g) => {
+      if (target == null) target = { id: g.id, x: g.x, z: g.z };
+    });
+    if (!target) throw new Error("expected at least one gem");
+    const targetGem = target as { id: number; x: number; z: number };
+
+    // Walk the player toward the gem at full speed by sending input
+    // messages every ~50ms. Use the player's current position (from
+    // room.state, slightly stale but fine — the gem isn't moving).
+    let seq = 1;
+    let stopWalking = false;
+    const walker = setInterval(() => {
+      if (stopWalking) return;
+      const player = room.state.players.get(room.sessionId);
+      if (!player) return;
+      const dx = targetGem.x - player.x;
+      const dz = targetGem.z - player.z;
+      const len = Math.hypot(dx, dz) || 1;
+      room.send("input", {
+        type: "input",
+        seq: seq++,
+        dir: { x: dx / len, z: dz / len },
+      });
+    }, 50);
+
+    try {
+      // Wait for pickup (or fail): both xp > 0 and gem removed arrive in
+      // the same server patch, but poll both to be safe against partial
+      // delivery ordering in the WebSocket framing.
+      await waitFor(() => {
+        const player = room.state.players.get(room.sessionId);
+        return (
+          !!player &&
+          player.xp > 0 &&
+          !room.state.gems.has(String(targetGem.id))
+        );
+      }, 10_000);
+    } finally {
+      stopWalking = true;
+      clearInterval(walker);
+    }
+
+    const player = room.state.players.get(room.sessionId);
+    expect(player).toBeDefined();
+    expect(player!.xp).toBeGreaterThan(0);
+    expect(room.state.gems.has(String(targetGem.id))).toBe(false);
+
+    await room.leave();
+  }, 30_000);
+});
+
+describe("integration: cross-client fire event determinism", () => {
+  it("two clients see bit-identical FireEvent payloads for shared fireIds", async () => {
+    const a = new Client(`ws://localhost:${PORT}`);
+    const b = new Client(`ws://localhost:${PORT}`);
+
+    type RoomShape = { code: string };
+    const roomA = await a.create<RoomShape>("game", { name: "Alice" });
+    await waitFor(() => roomA.state.code !== "" && roomA.state.code != null, 1000);
+
+    const roomB = await b.join<RoomShape>("game", { code: roomA.state.code, name: "Bob" });
+
+    type FirePayload = {
+      fireId: number;
+      originX: number;
+      originZ: number;
+      dirX: number;
+      dirZ: number;
+      serverFireTimeMs: number;
+      ownerId: string;
+      weaponKind: number;
+    };
+    const firesA = new Map<number, FirePayload>();
+    const firesB = new Map<number, FirePayload>();
+
+    roomA.onMessage("fire", (msg: FirePayload) => firesA.set(msg.fireId, msg));
+    roomB.onMessage("fire", (msg: FirePayload) => firesB.set(msg.fireId, msg));
+
+    // Burst-spawn enemies so auto-fire actually fires within the test
+    // window. (With no enemies, no fire events occur and the test passes
+    // vacuously — bad. We need at least one shared fireId.)
+    roomA.send("debug_spawn", { type: "debug_spawn", count: 20 });
+
+    // Wait ~10s — long enough for enemies to walk in and combat to occur.
+    await new Promise((r) => setTimeout(r, 10_000));
+
+    // Find the intersection of fireIds seen by both.
+    const shared: number[] = [];
+    firesA.forEach((_, id) => { if (firesB.has(id)) shared.push(id); });
+    expect(shared.length).toBeGreaterThan(0);
+
+    for (const id of shared) {
+      const ea = firesA.get(id)!;
+      const eb = firesB.get(id)!;
+      expect(ea.originX).toBe(eb.originX);
+      expect(ea.originZ).toBe(eb.originZ);
+      expect(ea.dirX).toBe(eb.dirX);
+      expect(ea.dirZ).toBe(eb.dirZ);
+      expect(ea.serverFireTimeMs).toBe(eb.serverFireTimeMs);
+      expect(ea.ownerId).toBe(eb.ownerId);
+      expect(ea.weaponKind).toBe(eb.weaponKind);
+    }
+
+    await roomB.leave();
+    await roomA.leave();
+  }, 25_000);
+});
+
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (!cond()) {

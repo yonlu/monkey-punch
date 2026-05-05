@@ -55,6 +55,9 @@ export function DebugHud() {
     `recon err  ${hudState.reconErr.toFixed(3)} u`,
     `enemies    ${hudState.enemyCount}`,
     `draw calls ${hudState.enemyDrawCalls}`,
+    `srv offset ${hudState.serverTimeOffsetMs.toFixed(0)} ms`,
+    `projectiles ${hudState.projectileCount}`,
+    `xp / cd    ${hudState.xp} / ${hudState.cooldownFrac.toFixed(2)}`,
   ];
   return <div style={HUD_STYLE}>{lines.join("\n")}</div>;
 }

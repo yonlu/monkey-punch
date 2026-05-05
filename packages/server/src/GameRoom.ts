@@ -1,16 +1,26 @@
 import { Room, Client } from "colyseus";
 import {
   Player,
+  WeaponState,
   RoomState,
   tickPlayers,
   tickEnemies,
+  tickWeapons,
+  tickProjectiles,
+  tickGems,
   tickSpawner,
   spawnDebugBurst,
+  PROJECTILE_MAX_CAPACITY,
   SIM_DT_S,
   MAX_ENEMIES,
   mulberry32,
   type Rng,
   type SpawnerState,
+  type Projectile,
+  type WeaponContext,
+  type ProjectileContext,
+  type Emit,
+  type CombatEvent,
 } from "@mp/shared";
 import type {
   InputMessage,
@@ -53,6 +63,13 @@ export class GameRoom extends Room<RoomState> {
   // (esbuild emitting Object.defineProperty over @colyseus/schema's
   // prototype setters) only affects Schema subclasses.
   private spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+  private activeProjectiles: Projectile[] = [];
+  private nextFireId = 1;
+  private nextGemId = 1;
+  // Pre-built once in onCreate; closures capture `this` once.
+  private weaponCtx!: WeaponContext;
+  private projectileCtx!: ProjectileContext;
+  private projectileCapacityWarned = false;
 
   private snapshotLogTimer: NodeJS.Timeout | null = null;
   private patchByteCount = 0;
@@ -74,6 +91,23 @@ export class GameRoom extends Room<RoomState> {
     console.log(`[room ${code}] created seed=${state.seed}`);
     this.setState(state);
     this.rng = mulberry32(state.seed);
+    this.weaponCtx = {
+      nextFireId: () => this.nextFireId++,
+      serverNowMs: () => Date.now(),
+      pushProjectile: (p) => {
+        if (this.activeProjectiles.length >= PROJECTILE_MAX_CAPACITY) {
+          if (!this.projectileCapacityWarned) {
+            this.projectileCapacityWarned = true;
+            console.warn(
+              `[room ${this.state.code}] activeProjectiles reached PROJECTILE_MAX_CAPACITY=${PROJECTILE_MAX_CAPACITY} — dropping new projectile`,
+            );
+          }
+          return;
+        }
+        this.activeProjectiles.push(p);
+      },
+    };
+    this.projectileCtx = { nextGemId: () => this.nextGemId++ };
 
     // The matchmaker's filterBy(["code"]) matches against the room listing's
     // top-level fields, which Colyseus initializes from the CREATING client's
@@ -104,7 +138,7 @@ export class GameRoom extends Room<RoomState> {
     this.onMessage<PingMessage>("ping", (client, message) => {
       const t = Number(message?.t);
       if (!Number.isFinite(t)) return;
-      client.send("pong", { type: "pong", t });
+      client.send("pong", { type: "pong", t, serverNow: Date.now() });
     });
 
     if (ALLOW_DEBUG_MESSAGES) {
@@ -144,6 +178,13 @@ export class GameRoom extends Room<RoomState> {
     player.x = 0;
     player.y = 0;
     player.z = 0;
+
+    const bolt = new WeaponState();
+    bolt.kind = 0;
+    bolt.level = 1;
+    bolt.cooldownRemaining = 0; // AD10: first shot is immediate
+    player.weapons.push(bolt);
+
     this.state.players.set(client.sessionId, player);
   }
 
@@ -179,8 +220,14 @@ export class GameRoom extends Room<RoomState> {
 
   private tick(): void {
     this.state.tick += 1;
+    const emit: Emit = (e: CombatEvent) => this.broadcast(e.type, e);
+
+    // AD6: players → enemies → weapons → projectiles → gems → spawner.
     tickPlayers(this.state, SIM_DT_S);
     tickEnemies(this.state, SIM_DT_S);
+    tickWeapons(this.state, SIM_DT_S, this.weaponCtx, emit);
+    tickProjectiles(this.state, this.activeProjectiles, SIM_DT_S, this.projectileCtx, emit);
+    tickGems(this.state, emit);
     tickSpawner(this.state, this.spawner, SIM_DT_S, this.rng);
   }
 

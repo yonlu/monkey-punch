@@ -104,3 +104,36 @@ Notes:
 - Reconnect mid-spawn verified: tab A dropped to Offline for ~5s with ~100
   enemies on screen, restored cleanly with no duplicates and same enemy ids
   as tab B.
+
+## Manual perf test (M4)
+
+**TODO** — run after `pnpm dev` with two connected Chrome tabs. See
+[docs/superpowers/specs/2026-05-04-m4-first-combat-design.md](docs/superpowers/specs/2026-05-04-m4-first-combat-design.md)
+§Verification and §Performance check for the procedure.
+
+| Enemies | Client FPS | Server tick | Patch bytes/tick | Full-state bytes | Peak projectiles | srv offset |
+|--------:|-----------:|------------:|-----------------:|-----------------:|-----------------:|-----------:|
+| 0       | TBD        | TBD         | TBD              | TBD              | 0                | TBD        |
+| 200     | TBD        | TBD         | TBD              | TBD              | TBD              | TBD        |
+| 300     | TBD        | TBD         | TBD              | TBD              | TBD              | TBD        |
+
+Notes (to fill in):
+- VFX behavior at 200/300 enemies (any visible drop / GC stutter / hit-flash misalignment?).
+- `srv offset` stability over 30s — should stay small (<10ms on localhost).
+- Cross-client `fire`-event determinism on Fast 3G (single-digit ms drift expected; magnitude under heavy throttle).
+- Whether `Patch bytes/tick` was `n/a` because Colyseus 0.16's `broadcastPatch()` returns hasChanges (matches the M3 note).
+
+**Stop conditions** (if hit during the perf test, report — don't optimize blindly):
+- Per-tick patch bytes > 50 KB at 200 enemies.
+- Client FPS drops below 60 at 200 enemies.
+
+### Automated test summary
+
+After all M4 tasks (1–21) committed:
+
+- `pnpm typecheck` — clean
+- `pnpm --filter @mp/shared test` — 52/52 (rules + schema + rng + 14 new combat tests)
+- `pnpm --filter @mp/client test` — 14/14 (prediction + ServerTime)
+- `pnpm --filter @mp/server test` — 20/20 (input + joinCode + reconnect + sync + 5 integration: existing M3 enemy-spawn, kill+gem drop, XP gain, cross-client fire determinism)
+
+The cross-client `fire` determinism integration test is the regression for AD1 — every shared `fireId` between two clients carries bit-identical `originX/Z`, `dirX/Z`, `serverFireTimeMs`, `ownerId`, `weaponKind`.

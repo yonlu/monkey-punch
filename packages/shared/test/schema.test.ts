@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Encoder } from "@colyseus/schema";
-import { Enemy, Player, RoomState, Vec2 } from "../src/schema.js";
+import { Enemy, Gem, Player, RoomState, Vec2, WeaponState } from "../src/schema.js";
 
 // These tests exercise the Colyseus encoder against our schema. The encoder
 // path is what the server runs when a client connects — a regression here
@@ -115,6 +115,102 @@ describe("Enemy schema", () => {
       e.hp = 1;
       state.enemies.set(String(i), e);
     }
+    const encoder = new Encoder(state);
+    expect(() => encoder.encodeAll()).not.toThrow();
+  });
+});
+
+describe("WeaponState schema", () => {
+  it("WeaponState defaults from constructor are zero/zero/zero", () => {
+    const w = new WeaponState();
+    expect(w.kind).toBe(0);
+    expect(w.level).toBe(0);
+    expect(w.cooldownRemaining).toBe(0);
+  });
+
+  it("encodes a populated WeaponState inside Player.weapons without throwing", () => {
+    const state = new RoomState();
+    const p = new Player();
+    p.sessionId = "abc";
+
+    const w = new WeaponState();
+    w.kind = 0;
+    w.level = 1;
+    w.cooldownRemaining = 0.42;
+    p.weapons.push(w);
+    state.players.set(p.sessionId, p);
+
+    const encoder = new Encoder(state);
+    expect(() => encoder.encodeAll()).not.toThrow();
+  });
+
+  it("encodes two WeaponState entries on the same Player (forward-compat for M5)", () => {
+    const state = new RoomState();
+    const p = new Player();
+    p.sessionId = "abc";
+
+    const a = new WeaponState();
+    a.kind = 0; a.level = 1; a.cooldownRemaining = 0;
+    p.weapons.push(a);
+
+    const b = new WeaponState();
+    b.kind = 1; b.level = 2; b.cooldownRemaining = 0.1;
+    p.weapons.push(b);
+
+    state.players.set(p.sessionId, p);
+
+    const encoder = new Encoder(state);
+    expect(() => encoder.encodeAll()).not.toThrow();
+    expect(p.weapons.length).toBe(2);
+  });
+});
+
+describe("Gem schema", () => {
+  it("sets $childType on RoomState.gems after construction", () => {
+    const state = new RoomState();
+    expect(
+      (state.gems as unknown as Record<string, unknown>)["~childType"],
+    ).toBe(Gem);
+  });
+
+  it("Gem field defaults from constructor are zero", () => {
+    const g = new Gem();
+    expect(g.id).toBe(0);
+    expect(g.x).toBe(0);
+    expect(g.z).toBe(0);
+    expect(g.value).toBe(0);
+  });
+
+  it("encodes a populated RoomState.gems map without throwing", () => {
+    const state = new RoomState();
+    for (let i = 1; i <= 50; i++) {
+      const g = new Gem();
+      g.id = i;
+      g.x = i * 0.1;
+      g.z = -i * 0.1;
+      g.value = 1;
+      state.gems.set(String(i), g);
+    }
+    const encoder = new Encoder(state);
+    expect(() => encoder.encodeAll()).not.toThrow();
+  });
+});
+
+describe("Player.xp / Player.level round-trip", () => {
+  it("Player.xp and Player.level default to 0 / 1", () => {
+    const p = new Player();
+    expect(p.xp).toBe(0);
+    expect(p.level).toBe(1);
+  });
+
+  it("encodes Player.xp and Player.level after mutation", () => {
+    const state = new RoomState();
+    const p = new Player();
+    p.sessionId = "abc";
+    p.xp = 99;
+    p.level = 1;
+    state.players.set(p.sessionId, p);
+
     const encoder = new Encoder(state);
     expect(() => encoder.encodeAll()).not.toThrow();
   });
