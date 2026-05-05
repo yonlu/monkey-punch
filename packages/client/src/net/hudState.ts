@@ -12,6 +12,11 @@ export type HudState = {
   fps: number;                 // smoothed render fps (DebugHud rAF tick)
   enemyCount: number;          // active enemies
   enemyDrawCalls: number;      // gl.info.render.calls — proxy for "instancing working"
+  // M4 additions:
+  xp: number;                  // local player only (mirrored from state.players[me].xp)
+  cooldownFrac: number;        // local player; 0..1 (1 = ready, 0 = just fired)
+  serverTimeOffsetMs: number;  // debug
+  projectileCount: number;     // active projectiles this frame (from ProjectileSwarm)
   visible: boolean;
 };
 
@@ -25,5 +30,9 @@ export const hudState: HudState = {
   fps: 0,
   enemyCount: 0,
   enemyDrawCalls: 0,
+  xp: 0,
+  cooldownFrac: 1,
+  serverTimeOffsetMs: 0,
+  projectileCount: 0,
   visible: false,
 };
