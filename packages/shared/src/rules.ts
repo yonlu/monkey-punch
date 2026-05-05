@@ -16,8 +16,9 @@ import {
   MAX_ENEMIES,
   PLAYER_SPEED,
   TARGETING_MAX_RANGE,
+  TICK_RATE,
 } from "./constants.js";
-import { WEAPON_KINDS, statsAt, isProjectileWeapon, type WeaponDef } from "./weapons.js";
+import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, type WeaponDef } from "./weapons.js";
 import type { Rng } from "./rng.js";
 import type {
   FireEvent,
@@ -181,10 +182,23 @@ export type Projectile = {
 export type CombatEvent = FireEvent | HitEvent | EnemyDiedEvent | GemCollectedEvent;
 export type Emit = (event: CombatEvent) => void;
 
+/**
+ * Server-supplied per-(player, weaponIndex, enemy) hit cooldown for orbit
+ * weapons. Structural — the concrete implementation lives in
+ * server/src/orbitHitCooldown.ts and satisfies this shape. Defined here
+ * (not in a separate shared file) because tickWeapons is the only consumer.
+ */
+export interface OrbitHitCooldownLike {
+  tryHit(playerId: string, weaponIndex: number, enemyId: number, nowMs: number, cooldownMs: number): boolean;
+  evictEnemy(enemyId: number): void;
+}
+
 export type WeaponContext = {
   nextFireId: () => number;
   serverNowMs: () => number;
   pushProjectile: (p: Projectile) => void;
+  nextGemId: () => number;
+  orbitHitCooldown: OrbitHitCooldownLike;
 };
 
 /**
@@ -294,9 +308,72 @@ export function tickWeapons(
           break;
         }
         case "orbit": {
-          // Orbit arm lands in Phase 3 (separate commit). For now, no-op so
-          // a stale Orbit weapon would be benign. With this case explicit,
-          // adding the Phase 3 body is a localized edit.
+          if (!isOrbitWeapon(def)) return; // narrowing only — case already gates this
+          const stats = statsAt(def, weapon.level);
+          const tickTime = state.tick / TICK_RATE;
+          const radiusSum = stats.hitRadius + ENEMY_RADIUS;
+          const radiusSumSq = radiusSum * radiusSum;
+          const nowMs = ctx.serverNowMs();
+
+          // Resolve the index of `weapon` within `player.weapons`. ArraySchema.indexOf
+          // exists; weapons are only pushed (never reordered), so the index is stable.
+          const weaponIndex = player.weapons.indexOf(weapon);
+
+          for (let i = 0; i < stats.orbCount; i++) {
+            const angle = tickTime * stats.orbAngularSpeed + i * (2 * Math.PI / stats.orbCount);
+            const orbX = player.x + Math.cos(angle) * stats.orbRadius;
+            const orbZ = player.z + Math.sin(angle) * stats.orbRadius;
+
+            // Point-circle vs each enemy. Per AD8: arc per tick at current angular
+            // speeds is small enough that swept-arc isn't needed. Collect hits in a
+            // temporary list because mutating state.enemies during a forEach causes
+            // visit order to drift.
+            const toHit: Enemy[] = [];
+            state.enemies.forEach((enemy: Enemy) => {
+              const dx = enemy.x - orbX;
+              const dz = enemy.z - orbZ;
+              if (dx * dx + dz * dz <= radiusSumSq) toHit.push(enemy);
+            });
+
+            for (const enemy of toHit) {
+              if (!ctx.orbitHitCooldown.tryHit(player.sessionId, weaponIndex, enemy.id, nowMs, stats.hitCooldownPerEnemyMs)) {
+                continue;
+              }
+              enemy.hp -= stats.damage;
+
+              // fireId=0 sentinel — orbit hits don't correlate to a fire event.
+              // M4 starts nextFireId at 1, so 0 is unambiguously "non-projectile".
+              emit({
+                type: "hit",
+                fireId: 0,
+                enemyId: enemy.id,
+                damage: stats.damage,
+                serverTick: state.tick,
+              });
+
+              if (enemy.hp <= 0) {
+                const gem = new Gem();
+                gem.id = ctx.nextGemId();
+                gem.x = enemy.x;
+                gem.z = enemy.z;
+                gem.value = GEM_VALUE;
+                state.gems.set(String(gem.id), gem);
+
+                const deathX = enemy.x;
+                const deathZ = enemy.z;
+                const deathId = enemy.id;
+                state.enemies.delete(String(enemy.id));
+                ctx.orbitHitCooldown.evictEnemy(deathId);
+
+                emit({
+                  type: "enemy_died",
+                  enemyId: deathId,
+                  x: deathX,
+                  z: deathZ,
+                });
+              }
+            }
+          }
           break;
         }
         default: {
@@ -314,6 +391,7 @@ export function tickWeapons(
 
 export type ProjectileContext = {
   nextGemId: () => number;
+  orbitHitCooldown: OrbitHitCooldownLike;
 };
 
 /**
@@ -407,6 +485,7 @@ export function tickProjectiles(
         const deathZ = hitEnemy.z;
         const deathId = hitEnemy.id;
         state.enemies.delete(String(hitEnemy.id));
+        ctx.orbitHitCooldown.evictEnemy(deathId);
 
         emit({
           type: "enemy_died",

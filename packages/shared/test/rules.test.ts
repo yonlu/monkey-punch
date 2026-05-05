@@ -364,10 +364,13 @@ function makeCapture(initialFireId = 1, fixedNowMs = 1_000_000): CapturedFire {
   const fires: CombatEvent[] = [];
   const projectiles: Projectile[] = [];
   let next = initialFireId;
+  let nextGem = 1;
   const ctx: WeaponContext = {
     nextFireId: () => next++,
     serverNowMs: () => fixedNowMs,
     pushProjectile: (p) => projectiles.push(p),
+    nextGemId: () => nextGem++,
+    orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
   };
   return { fires, projectiles, ctx };
 }
@@ -530,7 +533,10 @@ function makeProjectile(overrides: Partial<Projectile>): Projectile {
 function makeProjCtx(initialGemId = 1): { ctx: ProjectileContext; nextGem: () => number } {
   let next = initialGemId;
   return {
-    ctx: { nextGemId: () => next++ },
+    ctx: {
+      nextGemId: () => next++,
+      orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+    },
     nextGem: () => next,
   };
 }
@@ -765,5 +771,130 @@ describe("tickGems", () => {
     const ev = events[0]!;
     if (ev.type !== "gem_collected") throw new Error("type guard");
     expect(ev.playerId).toBe("first");
+  });
+});
+
+// --------------------- M5 orbit arm ---------------------
+
+function makeOrbitCooldownStub() {
+  const hits: Array<[string, number, number]> = [];
+  return {
+    tryHit: (pid: string, wi: number, eid: number, _now: number, _cd: number) => {
+      hits.push([pid, wi, eid]);
+      return true;
+    },
+    evictEnemy: (_id: number) => {},
+    hits,
+  };
+}
+
+function makeWeaponCtx(opts?: {
+  nextFireId?: () => number;
+  nowMs?: number;
+  pushProjectile?: (p: Projectile) => void;
+  nextGemId?: () => number;
+  orbitHitCooldown?: { tryHit: (...args: any[]) => boolean; evictEnemy: (id: number) => void };
+}): WeaponContext {
+  return {
+    nextFireId: opts?.nextFireId ?? (() => 1),
+    serverNowMs: () => opts?.nowMs ?? 0,
+    pushProjectile: opts?.pushProjectile ?? (() => {}),
+    nextGemId: opts?.nextGemId ?? (() => 1),
+    orbitHitCooldown: opts?.orbitHitCooldown ?? { tryHit: () => true, evictEnemy: () => {} },
+  };
+}
+
+describe("tickWeapons orbit arm", () => {
+  it("hits an enemy at orb radius on the first tick", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+
+    const orbit = new WeaponState();
+    orbit.kind = 1; // index of Orbit in WEAPON_KINDS
+    orbit.level = 1;
+    orbit.cooldownRemaining = 0;
+    p.weapons.push(orbit);
+
+    // Place an enemy at the L1 orb radius on the +X axis.
+    // L1 orbCount=2, orbRadius=2.0, orbAngularSpeed=2.4 rad/s.
+    // At state.tick=0 the angles are 0 and π; orb 0 sits at (2.0, 0).
+    const e = addEnemy(state, 1, 2.0, 0);
+    e.hp = 100;
+
+    const cd = makeOrbitCooldownStub();
+    const events: CombatEvent[] = [];
+    const ctx = makeWeaponCtx({ orbitHitCooldown: cd });
+
+    state.tick = 0;
+    tickWeapons(state, 0.05, ctx, (ev) => events.push(ev));
+
+    // Enemy took 6 damage (Orbit L1 damage). One hit event was emitted.
+    expect(e.hp).toBe(94);
+    const hitEvents = events.filter((e) => e.type === "hit");
+    expect(hitEvents.length).toBe(1);
+    expect(cd.hits.length).toBe(1);
+  });
+
+  it("does not double-hit within the per-enemy cooldown window", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    const orbit = new WeaponState();
+    orbit.kind = 1;
+    orbit.level = 1;
+    p.weapons.push(orbit);
+
+    const e = addEnemy(state, 1, 2.0, 0);
+    e.hp = 100;
+
+    // Stub returns false the second time (simulating a still-cooling-down hit).
+    let n = 0;
+    const cd = {
+      tryHit: () => {
+        n += 1;
+        return n === 1;
+      },
+      evictEnemy: () => {},
+    };
+    const events: CombatEvent[] = [];
+    const ctx = makeWeaponCtx({ orbitHitCooldown: cd });
+
+    state.tick = 0;
+    tickWeapons(state, 0.05, ctx, (ev) => events.push(ev));
+    state.tick = 1;
+    tickWeapons(state, 0.05, ctx, (ev) => events.push(ev));
+
+    // Two ticks but only one hit landed (the second tryHit returned false).
+    expect(e.hp).toBe(94);
+    expect(events.filter((e) => e.type === "hit").length).toBe(1);
+  });
+
+  it("on lethal hit: emits enemy_died, drops a gem, removes the enemy, evicts cooldown entry", () => {
+    const state = new RoomState();
+    addPlayer(state, "p1", 0, 0);
+    const p = state.players.get("p1")!;
+    const orbit = new WeaponState();
+    orbit.kind = 1;
+    orbit.level = 1;
+    p.weapons.push(orbit);
+
+    const e = addEnemy(state, 7, 2.0, 0);
+    e.hp = 1; // lethal in one hit
+
+    let evictedId = -1;
+    const cd = {
+      tryHit: () => true,
+      evictEnemy: (id: number) => { evictedId = id; },
+    };
+    const events: CombatEvent[] = [];
+    const ctx = makeWeaponCtx({ orbitHitCooldown: cd });
+
+    state.tick = 0;
+    tickWeapons(state, 0.05, ctx, (ev) => events.push(ev));
+
+    expect(state.enemies.has("7")).toBe(false);
+    expect(state.gems.size).toBe(1);
+    expect(events.some((e) => e.type === "enemy_died" && e.enemyId === 7)).toBe(true);
+    expect(evictedId).toBe(7);
   });
 });
