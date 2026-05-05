@@ -66,19 +66,23 @@ export function createOrbitHitCooldownStore(): OrbitHitCooldownStore {
   };
 }
 
+import { isOrbitWeapon, type WeaponDef } from "@mp/shared";
+
 /**
  * Compute the longest hit-cooldown across all orbit-behavior weapon levels
  * in WEAPON_KINDS. Used as the `maxCooldownMs` argument to sweep().
+ *
+ * Note: `isOrbitWeapon(def)` is used (rather than `def.behavior.kind ===
+ * "orbit"`) because TS doesn't narrow `def.levels` to `OrbitLevel[]` through
+ * a nested discriminator when used as a generic-bound type. Same pattern as
+ * `tickWeapons` in `shared/rules.ts`.
  */
-export function maxOrbitHitCooldownMs(
-  weaponKinds: readonly { behavior: { kind: string }; levels: ReadonlyArray<{ hitCooldownPerEnemyMs?: number }> }[],
-): number {
+export function maxOrbitHitCooldownMs(weaponKinds: readonly WeaponDef[]): number {
   let max = 0;
   for (const def of weaponKinds) {
-    if (def.behavior.kind !== "orbit") continue;
+    if (!isOrbitWeapon(def)) continue;
     for (const lvl of def.levels) {
-      const c = lvl.hitCooldownPerEnemyMs ?? 0;
-      if (c > max) max = c;
+      if (lvl.hitCooldownPerEnemyMs > max) max = lvl.hitCooldownPerEnemyMs;
     }
   }
   return max;

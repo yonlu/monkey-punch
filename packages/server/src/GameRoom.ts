@@ -101,14 +101,7 @@ export class GameRoom extends Room<RoomState> {
     this.setState(state);
     this.rng = mulberry32(state.seed);
     this.orbitHitCooldown = createOrbitHitCooldownStore();
-    // Cast: maxOrbitHitCooldownMs accepts a structural shape with optional
-    // `hitCooldownPerEnemyMs`, but WEAPON_KINDS is a discriminated union
-    // where ProjectileLevel has no such field at all — TS rejects the
-    // weak-type assignment. The helper's body filters to orbit defs only,
-    // so the cast is sound.
-    this.maxOrbitHitCooldownMs = maxOrbitHitCooldownMs(
-      WEAPON_KINDS as Parameters<typeof maxOrbitHitCooldownMs>[0],
-    );
+    this.maxOrbitHitCooldownMs = maxOrbitHitCooldownMs(WEAPON_KINDS);
 
     this.weaponCtx = {
       nextFireId: () => this.nextFireId++,
