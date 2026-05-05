@@ -143,6 +143,79 @@ describe("integration: kill + gem drop end-to-end", () => {
   }, 20_000);
 });
 
+describe("integration: XP gain on gem pickup end-to-end", () => {
+  it("player walks to a gem and picks it up; xp increments and gem is gone", async () => {
+    const client = new Client(`ws://localhost:${PORT}`);
+    type RoomShape = {
+      code: string;
+      enemies: { size: number };
+      gems: {
+        size: number;
+        forEach: (cb: (g: { id: number; x: number; z: number }, k: string) => void) => void;
+        has: (k: string) => boolean;
+      };
+      players: { get: (sid: string) => { xp: number; x: number; z: number } | undefined };
+    };
+    const room = await client.create<RoomShape>("game", { name: "Solo" });
+    await waitFor(() => room.state.code !== "" && room.state.code != null, 1000);
+
+    // Get a gem on the ground.
+    room.send("debug_spawn", { type: "debug_spawn", count: 20 });
+    await waitFor(() => room.state.gems.size > 0, 15_000);
+
+    // Pick the first gem; capture its position and id.
+    let target: { id: number; x: number; z: number } | null = null;
+    room.state.gems.forEach((g) => {
+      if (target == null) target = { id: g.id, x: g.x, z: g.z };
+    });
+    if (!target) throw new Error("expected at least one gem");
+    const targetGem = target as { id: number; x: number; z: number };
+
+    // Walk the player toward the gem at full speed by sending input
+    // messages every ~50ms. Use the player's current position (from
+    // room.state, slightly stale but fine — the gem isn't moving).
+    let seq = 1;
+    let stopWalking = false;
+    const walker = setInterval(() => {
+      if (stopWalking) return;
+      const player = room.state.players.get(room.sessionId);
+      if (!player) return;
+      const dx = targetGem.x - player.x;
+      const dz = targetGem.z - player.z;
+      const len = Math.hypot(dx, dz) || 1;
+      room.send("input", {
+        type: "input",
+        seq: seq++,
+        dir: { x: dx / len, z: dz / len },
+      });
+    }, 50);
+
+    try {
+      // Wait for pickup (or fail): both xp > 0 and gem removed arrive in
+      // the same server patch, but poll both to be safe against partial
+      // delivery ordering in the WebSocket framing.
+      await waitFor(() => {
+        const player = room.state.players.get(room.sessionId);
+        return (
+          !!player &&
+          player.xp > 0 &&
+          !room.state.gems.has(String(targetGem.id))
+        );
+      }, 10_000);
+    } finally {
+      stopWalking = true;
+      clearInterval(walker);
+    }
+
+    const player = room.state.players.get(room.sessionId);
+    expect(player).toBeDefined();
+    expect(player!.xp).toBeGreaterThan(0);
+    expect(room.state.gems.has(String(targetGem.id))).toBe(false);
+
+    await room.leave();
+  }, 30_000);
+});
+
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (!cond()) {
