@@ -17,7 +17,7 @@ import {
   PLAYER_SPEED,
   TARGETING_MAX_RANGE,
 } from "./constants.js";
-import { WEAPON_KINDS } from "./weapons.js";
+import { WEAPON_KINDS, statsAt, isProjectileWeapon, type WeaponDef } from "./weapons.js";
 import type { Rng } from "./rng.js";
 import type {
   FireEvent,
@@ -210,71 +210,79 @@ export function tickWeapons(
 
   state.players.forEach((player: Player) => {
     player.weapons.forEach((weapon: WeaponState) => {
-      // Tick the cooldown first; clamp at 0 (AD10).
-      weapon.cooldownRemaining = Math.max(0, weapon.cooldownRemaining - dt);
-      if (weapon.cooldownRemaining > 0) return;
+      const def: WeaponDef | undefined = WEAPON_KINDS[weapon.kind];
+      if (!def) return; // unknown kind — skip silently
 
-      // Find the nearest in-range enemy (squared distance).
-      let bestSq = Infinity;
-      let bestDx = 0;
-      let bestDz = 0;
-      let hasTarget = false;
-      state.enemies.forEach((enemy: Enemy) => {
-        const dx = enemy.x - player.x;
-        const dz = enemy.z - player.z;
-        const sq = dx * dx + dz * dz;
-        if (sq <= rangeSq && sq < bestSq) {
-          bestSq = sq;
-          bestDx = dx;
-          bestDz = dz;
-          hasTarget = true;
-        }
-      });
+      // Dispatch on behavior.kind. TS doesn't narrow the outer `def` through
+      // nested discriminator access, so we use the user-defined predicates
+      // (isProjectileWeapon / isOrbitWeapon) — that flows narrowing into
+      // statsAt's generic inference.
+      if (isProjectileWeapon(def)) {
+        const stats = statsAt(def, weapon.level);
 
-      if (!hasTarget) return; // clamp stays at 0
+        weapon.cooldownRemaining = Math.max(0, weapon.cooldownRemaining - dt);
+        if (weapon.cooldownRemaining > 0) return;
 
-      // Defensive: a target with squared-distance 0 (player and enemy
-      // coincident) would NaN the normalization. Skip firing for this tick;
-      // the cooldown stays at 0 and we'll fire next tick once they separate.
-      if (bestSq === 0) return;
+        let bestSq = Infinity;
+        let bestDx = 0;
+        let bestDz = 0;
+        let hasTarget = false;
+        state.enemies.forEach((enemy: Enemy) => {
+          const dx = enemy.x - player.x;
+          const dz = enemy.z - player.z;
+          const sq = dx * dx + dz * dz;
+          if (sq <= rangeSq && sq < bestSq) {
+            bestSq = sq;
+            bestDx = dx;
+            bestDz = dz;
+            hasTarget = true;
+          }
+        });
+        if (!hasTarget) return;
+        if (bestSq === 0) return;
 
-      const dist = Math.sqrt(bestSq);
-      const dirX = bestDx / dist;
-      const dirZ = bestDz / dist;
-      const kind = WEAPON_KINDS[weapon.kind]!;
+        const dist = Math.sqrt(bestSq);
+        const dirX = bestDx / dist;
+        const dirZ = bestDz / dist;
 
-      const proj: Projectile = {
-        fireId: ctx.nextFireId(),
-        ownerId: player.sessionId,
-        weaponKind: weapon.kind,
-        damage: kind.damage,
-        speed: kind.projectileSpeed,
-        radius: kind.projectileRadius,
-        lifetime: kind.projectileLifetime,
-        age: 0,
-        dirX,
-        dirZ,
-        prevX: player.x,
-        prevZ: player.z,
-        x: player.x,
-        z: player.z,
-      };
-      ctx.pushProjectile(proj);
+        const proj: Projectile = {
+          fireId: ctx.nextFireId(),
+          ownerId: player.sessionId,
+          weaponKind: weapon.kind,
+          damage: stats.damage,
+          speed: stats.projectileSpeed,
+          radius: stats.hitRadius,
+          lifetime: stats.projectileLifetime,
+          age: 0,
+          dirX,
+          dirZ,
+          prevX: player.x,
+          prevZ: player.z,
+          x: player.x,
+          z: player.z,
+        };
+        ctx.pushProjectile(proj);
 
-      emit({
-        type: "fire",
-        fireId: proj.fireId,
-        weaponKind: weapon.kind,
-        ownerId: player.sessionId,
-        originX: player.x,
-        originZ: player.z,
-        dirX,
-        dirZ,
-        serverTick: state.tick,
-        serverFireTimeMs: ctx.serverNowMs(),
-      });
+        emit({
+          type: "fire",
+          fireId: proj.fireId,
+          weaponKind: weapon.kind,
+          ownerId: player.sessionId,
+          originX: player.x,
+          originZ: player.z,
+          dirX,
+          dirZ,
+          serverTick: state.tick,
+          serverFireTimeMs: ctx.serverNowMs(),
+        });
 
-      weapon.cooldownRemaining = kind.cooldown;
+        weapon.cooldownRemaining = stats.cooldown;
+        return;
+      }
+
+      // Orbit arm lands in Phase 3. For now, no-op so Bolt-only games still
+      // tick clean if a stale Orbit weapon ever appears (it can't yet — no
+      // row in WEAPON_KINDS — but the dispatch is exhaustive).
     });
   });
 }

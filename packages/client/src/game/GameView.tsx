@@ -12,7 +12,7 @@ import type {
   PongMessage,
   RoomState,
 } from "@mp/shared";
-import { WEAPON_KINDS } from "@mp/shared";
+import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "@mp/shared";
 import { Ground } from "./Ground.js";
 import { PlayerCube } from "./PlayerCube.js";
 import { EnemySwarm } from "./EnemySwarm.js";
@@ -94,9 +94,13 @@ export function GameView({
           hudState.xp = player.xp;
           const w = player.weapons[0];
           if (w) {
-            const kind = WEAPON_KINDS[w.kind];
-            const total = kind?.cooldown ?? 1;
-            hudState.cooldownFrac = 1 - Math.max(0, Math.min(1, w.cooldownRemaining / total));
+            const def = WEAPON_KINDS[w.kind];
+            if (def && isProjectileWeapon(def)) {
+              const stats = statsAt(def, w.level);
+              hudState.cooldownFrac = 1 - Math.max(0, Math.min(1, w.cooldownRemaining / stats.cooldown));
+            } else {
+              hudState.cooldownFrac = 1;
+            }
           }
         } else {
           buf!.push({ t: performance.now(), x: player.x, z: player.z });
@@ -207,8 +211,11 @@ export function GameView({
       // a backstop, but the per-fire timer is the primary driver and fires
       // the moment the projectile expires — so the visible count drops in
       // lockstep with reality.
-      const kind = WEAPON_KINDS[msg.weaponKind];
-      const lifetimeMs = kind ? kind.projectileLifetime * 1000 : 800;
+      const def = WEAPON_KINDS[msg.weaponKind];
+      const lifetimeMs =
+        def && isProjectileWeapon(def)
+          ? statsAt(def, 1).projectileLifetime * 1000
+          : 800;
       const timer = setTimeout(() => {
         fires.delete(msg.fireId);
         fireTimers.delete(msg.fireId);

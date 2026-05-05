@@ -27,7 +27,7 @@ import {
   GEM_PICKUP_RADIUS,
   TARGETING_MAX_RANGE,
 } from "../src/constants.js";
-import { WEAPON_KINDS } from "../src/weapons.js";
+import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "../src/weapons.js";
 import { mulberry32 } from "../src/rng.js";
 
 function addPlayer(state: RoomState, id: string, dirX: number, dirZ: number): Player {
@@ -408,10 +408,15 @@ describe("tickWeapons", () => {
     expect(proj.fireId).toBe(42);
     expect(proj.ownerId).toBe("p1");
     expect(proj.weaponKind).toBe(0);
-    expect(proj.damage).toBe(WEAPON_KINDS[0]!.damage);
-    expect(proj.speed).toBe(WEAPON_KINDS[0]!.projectileSpeed);
-    expect(proj.radius).toBe(WEAPON_KINDS[0]!.projectileRadius);
-    expect(proj.lifetime).toBe(WEAPON_KINDS[0]!.projectileLifetime);
+    {
+      const def = WEAPON_KINDS[0]!;
+      if (!isProjectileWeapon(def)) throw new Error("expected projectile");
+      const stats = statsAt(def, 1);
+      expect(proj.damage).toBe(stats.damage);
+      expect(proj.speed).toBe(stats.projectileSpeed);
+      expect(proj.radius).toBe(stats.hitRadius);
+      expect(proj.lifetime).toBe(stats.projectileLifetime);
+    }
     expect(proj.age).toBe(0);
     expect(proj.dirX).toBeCloseTo(1);
     expect(proj.dirZ).toBeCloseTo(0);
@@ -433,7 +438,11 @@ describe("tickWeapons", () => {
     expect(fire.dirZ).toBeCloseTo(0);
     expect(fire.serverFireTimeMs).toBe(999_888);
 
-    expect(w.cooldownRemaining).toBeCloseTo(WEAPON_KINDS[0]!.cooldown);
+    {
+      const def = WEAPON_KINDS[0]!;
+      if (!isProjectileWeapon(def)) throw new Error("expected projectile");
+      expect(w.cooldownRemaining).toBeCloseTo(statsAt(def, 1).cooldown);
+    }
   });
 
   it("clamps cooldown at 0 with no targets and stays clamped across multiple ticks (AD10)", () => {
