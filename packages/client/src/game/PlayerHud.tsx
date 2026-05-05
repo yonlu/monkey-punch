@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import type { Room } from "colyseus.js";
-import { getStateCallbacks } from "colyseus.js";
 import type { Player, RoomState, WeaponState } from "@mp/shared";
 import { WEAPON_KINDS } from "@mp/shared";
 
@@ -54,12 +53,6 @@ export function PlayerHud({ room }: PlayerHudProps) {
       if (raf.current != null) cancelAnimationFrame(raf.current);
     };
   }, []);
-
-  // We don't drive lifecycle off getStateCallbacks here — but ensure that
-  // the initial state has been received before reading. (room.state is a
-  // populated Schema instance once any patch has arrived.)
-  const _$ = getStateCallbacks(room); // no-op here; ensures the schema callbacks are mounted by now.
-  void _$;
 
   const rows: string[] = [];
   room.state.players.forEach((p: Player) => {
