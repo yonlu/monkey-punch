@@ -1,4 +1,4 @@
-import { Schema, MapSchema, defineTypes } from "@colyseus/schema";
+import { Schema, MapSchema, ArraySchema, defineTypes } from "@colyseus/schema";
 
 // IMPORTANT: schema fields are declared with `declare` (type-only) and assigned
 // in the constructor body. Class field INITIALIZERS (`x = 0`) compile differently
@@ -33,6 +33,23 @@ defineTypes(Vec2, {
   z: "number",
 });
 
+export class WeaponState extends Schema {
+  declare kind: number;
+  declare level: number;
+  declare cooldownRemaining: number;
+  constructor() {
+    super();
+    this.kind = 0;
+    this.level = 0;
+    this.cooldownRemaining = 0;
+  }
+}
+defineTypes(WeaponState, {
+  kind: "uint8",
+  level: "uint8",
+  cooldownRemaining: "number",
+});
+
 export class Player extends Schema {
   declare sessionId: string;
   declare name: string;
@@ -41,6 +58,9 @@ export class Player extends Schema {
   declare z: number;
   declare inputDir: Vec2;
   declare lastProcessedInput: number;
+  declare xp: number;
+  declare level: number;
+  declare weapons: ArraySchema<WeaponState>;
   constructor() {
     super();
     this.sessionId = "";
@@ -50,6 +70,9 @@ export class Player extends Schema {
     this.z = 0;
     this.inputDir = new Vec2();
     this.lastProcessedInput = 0;
+    this.xp = 0;
+    this.level = 1;
+    this.weapons = new ArraySchema<WeaponState>();
   }
 }
 defineTypes(Player, {
@@ -60,6 +83,9 @@ defineTypes(Player, {
   z: "number",
   inputDir: Vec2,
   lastProcessedInput: "uint32",
+  xp: "uint32",
+  level: "uint8",
+  weapons: [WeaponState],
 });
 
 export class Enemy extends Schema {
@@ -85,12 +111,33 @@ defineTypes(Enemy, {
   hp: "uint16",
 });
 
+export class Gem extends Schema {
+  declare id: number;
+  declare x: number;
+  declare z: number;
+  declare value: number;
+  constructor() {
+    super();
+    this.id = 0;
+    this.x = 0;
+    this.z = 0;
+    this.value = 0;
+  }
+}
+defineTypes(Gem, {
+  id: "uint32",
+  x: "number",
+  z: "number",
+  value: "uint16",
+});
+
 export class RoomState extends Schema {
   declare code: string;
   declare seed: number;
   declare tick: number;
   declare players: MapSchema<Player>;
   declare enemies: MapSchema<Enemy>;
+  declare gems: MapSchema<Gem>;
   constructor() {
     super();
     this.code = "";
@@ -98,6 +145,7 @@ export class RoomState extends Schema {
     this.tick = 0;
     this.players = new MapSchema<Player>();
     this.enemies = new MapSchema<Enemy>();
+    this.gems = new MapSchema<Gem>();
   }
 }
 defineTypes(RoomState, {
@@ -106,4 +154,5 @@ defineTypes(RoomState, {
   tick: "uint32",
   players: { map: Player },
   enemies: { map: Enemy },
+  gems: { map: Gem },
 });
