@@ -2,11 +2,26 @@ import { Canvas } from "@react-three/fiber";
 import { useEffect, useMemo, useState } from "react";
 import type { Room } from "colyseus.js";
 import { getStateCallbacks } from "colyseus.js";
-import type { Enemy, Player, RoomState } from "@mp/shared";
+import type {
+  Enemy,
+  EnemyDiedEvent,
+  FireEvent,
+  GemCollectedEvent,
+  HitEvent,
+  Player,
+  PongMessage,
+  RoomState,
+} from "@mp/shared";
+import { WEAPON_KINDS } from "@mp/shared";
 import { Ground } from "./Ground.js";
 import { PlayerCube } from "./PlayerCube.js";
 import { EnemySwarm } from "./EnemySwarm.js";
+import { ProjectileSwarm } from "./ProjectileSwarm.js";
+import { GemSwarm } from "./GemSwarm.js";
+import { PlayerHud } from "./PlayerHud.js";
+import { useCombatVfxRef } from "./CombatVfx.js";
 import { SnapshotBuffer } from "../net/snapshots.js";
+import { ServerTime } from "../net/serverTime.js";
 import { attachInput } from "./input.js";
 import { LocalPredictor } from "../net/prediction.js";
 import { hudState } from "../net/hudState.js";
@@ -33,6 +48,9 @@ export function GameView({
 
   const buffers = useMemo(() => new Map<string, SnapshotBuffer>(), []);
   const predictor = useMemo(() => new LocalPredictor(), []);
+  const serverTime = useMemo(() => new ServerTime(), []);
+  const fires = useMemo(() => new Map<number, FireEvent>(), []);
+  const { api: vfx, component: vfxJsx } = useCombatVfxRef();
 
   useEffect(() => {
     const detachInput = attachInput(room, predictor);
@@ -73,6 +91,13 @@ export function GameView({
         if (sessionId === room.sessionId) {
           predictor.reconcile(player.x, player.z, player.lastProcessedInput);
           hudState.reconErr = predictor.lastReconErr;
+          hudState.xp = player.xp;
+          const w = player.weapons[0];
+          if (w) {
+            const kind = WEAPON_KINDS[w.kind];
+            const total = kind?.cooldown ?? 1;
+            hudState.cooldownFrac = 1 - Math.max(0, Math.min(1, w.cooldownRemaining / total));
+          }
         } else {
           buf!.push({ t: performance.now(), x: player.x, z: player.z });
         }
@@ -161,10 +186,67 @@ export function GameView({
     room.onLeave(leaveHandler);
 
     // Ping/pong RTT for the HUD.
-    const offPong = room.onMessage("pong", (msg: { t: number }) => {
-      const rtt = Date.now() - Number(msg.t);
-      hudState.pingMs = hudState.pingMs === 0 ? rtt : hudState.pingMs * 0.8 + rtt * 0.2;
+    const offPong = room.onMessage("pong", (msg: PongMessage) => {
+      const t = Number(msg?.t);
+      const rtt = Date.now() - t;
+      if (Number.isFinite(rtt)) {
+        hudState.pingMs = hudState.pingMs === 0 ? rtt : hudState.pingMs * 0.8 + rtt * 0.2;
+      }
+      const sn = Number(msg?.serverNow);
+      if (Number.isFinite(sn) && Number.isFinite(rtt)) {
+        serverTime.observe(sn, rtt / 2);
+        hudState.serverTimeOffsetMs = serverTime.offsetMs;
+      }
     });
+    // Fire-and-hit event protocol — see CLAUDE.md rule 12.
+    const fireTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+    const offFire = room.onMessage("fire", (msg: FireEvent) => {
+      fires.set(msg.fireId, msg);
+      // Schedule cleanup at lifetime + a small grace; ProjectileSwarm has
+      // a backstop, but the per-fire timer is the primary driver and fires
+      // the moment the projectile expires — so the visible count drops in
+      // lockstep with reality.
+      const kind = WEAPON_KINDS[msg.weaponKind];
+      const lifetimeMs = kind ? kind.projectileLifetime * 1000 : 800;
+      const timer = setTimeout(() => {
+        fires.delete(msg.fireId);
+        fireTimers.delete(msg.fireId);
+      }, lifetimeMs + 50);
+      fireTimers.set(msg.fireId, timer);
+    });
+
+    const offHit = room.onMessage("hit", (msg: HitEvent) => {
+      fires.delete(msg.fireId);
+      const t = fireTimers.get(msg.fireId);
+      if (t) {
+        clearTimeout(t);
+        fireTimers.delete(msg.fireId);
+      }
+      // Hit flash at the rendered enemy position — same time-base as the
+      // projectile (interpDelayMs behind realtime), so the flash lands where
+      // the projectile despawns.
+      const buf = enemyBuffers.get(msg.enemyId);
+      const sample = buf?.sample(performance.now() - hudState.interpDelayMs);
+      if (sample) vfx.pushHit(sample.x, sample.z);
+    });
+
+    const offDied = room.onMessage("enemy_died", (msg: EnemyDiedEvent) => {
+      vfx.pushDeath(msg.x, msg.z);
+    });
+
+    const offCollected = room.onMessage("gem_collected", (msg: GemCollectedEvent) => {
+      // Pickup pulse at the collecting player's rendered position. For the
+      // local player, use the predictor's predicted position; for remote
+      // players, use the interpolated buffer.
+      if (msg.playerId === room.sessionId) {
+        vfx.pushPickup(predictor.predictedX, predictor.predictedZ);
+      } else {
+        const sample = buffers.get(msg.playerId)?.sample(performance.now() - hudState.interpDelayMs);
+        if (sample) vfx.pushPickup(sample.x, sample.z);
+      }
+    });
+
     const pingTimer = window.setInterval(() => {
       room.send("ping", { type: "ping", t: Date.now() });
     }, 1000);
@@ -206,11 +288,18 @@ export function GameView({
       perEnemyDisposers.clear();
       enemyBuffers.clear();
       offPong();
+      offFire();
+      offHit();
+      offDied();
+      offCollected();
+      fireTimers.forEach((t) => clearTimeout(t));
+      fireTimers.clear();
+      fires.clear();
       window.clearInterval(pingTimer);
       window.removeEventListener("keydown", keyHandler);
       detachInput();
     };
-  }, [room, buffers, predictor, enemyBuffers, onUnexpectedLeave]);
+  }, [room, buffers, predictor, enemyBuffers, serverTime, fires, vfx, onUnexpectedLeave]);
 
   return (
     <div style={{ position: "relative", width: "100vw", height: "100vh" }}>
@@ -233,7 +322,11 @@ export function GameView({
           />
         ))}
         <EnemySwarm enemyIds={enemyIds} buffers={enemyBuffers} />
+        <ProjectileSwarm fires={fires} serverTime={serverTime} />
+        <GemSwarm room={room} />
+        {vfxJsx}
       </Canvas>
+      <PlayerHud room={room} />
       <DebugHud />
     </div>
   );
