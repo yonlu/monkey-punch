@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { RoomState, Player, Enemy, WeaponState } from "../src/schema.js";
+import { RoomState, Player, Enemy, WeaponState, Gem } from "../src/schema.js";
 import {
   tickPlayers,
   tickEnemies,
@@ -7,6 +7,7 @@ import {
   spawnDebugBurst,
   tickWeapons,
   tickProjectiles,
+  tickGems,
   type SpawnerState,
   type Projectile,
   type WeaponContext,
@@ -23,6 +24,7 @@ import {
   ENEMY_HP,
   ENEMY_RADIUS,
   GEM_VALUE,
+  GEM_PICKUP_RADIUS,
   TARGETING_MAX_RANGE,
 } from "../src/constants.js";
 import { WEAPON_KINDS } from "../src/weapons.js";
@@ -683,5 +685,76 @@ describe("tickProjectiles", () => {
     // a took damage; b is untouched.
     expect(a.hp).toBe(ENEMY_HP - 10);
     expect(b.hp).toBe(ENEMY_HP);
+  });
+});
+
+function addGem(state: RoomState, id: number, x: number, z: number, value = GEM_VALUE): Gem {
+  const g = new Gem();
+  g.id = id;
+  g.x = x;
+  g.z = z;
+  g.value = value;
+  state.gems.set(String(id), g);
+  return g;
+}
+
+describe("tickGems", () => {
+  it("collects a gem when a player is within GEM_PICKUP_RADIUS", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    addGem(state, 1, 0, 0, 5);
+
+    const events: CombatEvent[] = [];
+    const emit: Emit = (e) => events.push(e);
+
+    tickGems(state, emit);
+
+    expect(state.gems.size).toBe(0);
+    expect(p.xp).toBe(5);
+    expect(events.length).toBe(1);
+    const ev = events[0]!;
+    if (ev.type !== "gem_collected") throw new Error("type guard");
+    expect(ev.gemId).toBe(1);
+    expect(ev.playerId).toBe("p1");
+    expect(ev.value).toBe(5);
+  });
+
+  it("does not collect a gem outside the pickup radius", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    addGem(state, 1, GEM_PICKUP_RADIUS + 0.1, 0);
+
+    const events: CombatEvent[] = [];
+    const emit: Emit = (e) => events.push(e);
+
+    tickGems(state, emit);
+
+    expect(state.gems.size).toBe(1);
+    expect(p.xp).toBe(0);
+    expect(events).toEqual([]);
+  });
+
+  it("with two players in range, the first inserted wins (AD8)", () => {
+    const state = new RoomState();
+    const first = addPlayer(state, "first", 0, 0);
+    first.x = 0; first.z = 0;
+    const second = addPlayer(state, "second", 0, 0);
+    second.x = 0.1; second.z = 0;
+    addGem(state, 1, 0, 0);
+
+    const events: CombatEvent[] = [];
+    const emit: Emit = (e) => events.push(e);
+
+    tickGems(state, emit);
+
+    expect(state.gems.size).toBe(0);
+    expect(first.xp).toBe(GEM_VALUE);
+    expect(second.xp).toBe(0);
+    expect(events.length).toBe(1);
+    const ev = events[0]!;
+    if (ev.type !== "gem_collected") throw new Error("type guard");
+    expect(ev.playerId).toBe("first");
   });
 });

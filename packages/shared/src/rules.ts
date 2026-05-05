@@ -11,6 +11,7 @@ import {
   ENEMY_SPAWN_INTERVAL_S,
   ENEMY_SPAWN_RADIUS,
   ENEMY_SPEED,
+  GEM_PICKUP_RADIUS,
   GEM_VALUE,
   MAX_ENEMIES,
   PLAYER_SPEED,
@@ -391,4 +392,33 @@ export function tickProjectiles(
   }
 
   active.length = w;
+}
+
+/**
+ * For each gem, the first player (in `state.players` insertion order)
+ * within GEM_PICKUP_RADIUS² collects it: increments xp, removes the gem
+ * from state, emits gem_collected. Per AD8 — deterministic and
+ * dependency-free.
+ */
+export function tickGems(state: RoomState, emit: Emit): void {
+  const radiusSq = GEM_PICKUP_RADIUS * GEM_PICKUP_RADIUS;
+  state.gems.forEach((gem: Gem, key: string) => {
+    let collector: Player | undefined;
+    state.players.forEach((p: Player) => {
+      if (collector) return;
+      const dx = p.x - gem.x;
+      const dz = p.z - gem.z;
+      if (dx * dx + dz * dz <= radiusSq) collector = p;
+    });
+    if (!collector) return;
+
+    collector.xp += gem.value;
+    state.gems.delete(key);
+    emit({
+      type: "gem_collected",
+      gemId: gem.id,
+      playerId: collector.sessionId,
+      value: gem.value,
+    });
+  });
 }
