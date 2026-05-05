@@ -16,3 +16,11 @@ export const ENEMY_SPEED = 2.0;                 // world units/sec
 export const ENEMY_SPAWN_INTERVAL_S = 1.0;      // seconds between spawner ticks
 export const ENEMY_SPAWN_RADIUS = 30;           // world units from a player
 export const MAX_ENEMIES = 300;                 // hard cap; spawner stops here
+
+// M4 — combat
+export const ENEMY_HP = 30;                 // 3 Bolt hits @ 10 dmg
+export const ENEMY_RADIUS = 0.5;            // matches the cone visual in EnemySwarm
+export const GEM_PICKUP_RADIUS = 1.5;
+export const GEM_VALUE = 1;
+export const PROJECTILE_MAX_CAPACITY = 256; // server cap + client InstancedMesh capacity
+export const TARGETING_MAX_RANGE = 20;
