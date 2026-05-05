@@ -31,8 +31,10 @@ export type PlayerCubeProps = {
 };
 
 /**
- * SIDE EFFECT: mutates predictor.renderOffset.x/.z in place (decays them).
- * Call once per frame; calling twice double-decays the offset.
+ * SIDE EFFECT: mutates predictor.renderOffset.x/.z (decays + jump-capture)
+ * and predictor.lastLiveDirX/Z (records this frame's liveDir for next-frame
+ * jump detection). Call once per frame; calling twice double-decays the
+ * offset and double-stamps lastLiveDir.
  *
  * Compute the visible position for the local player from authoritative
  * predicted state plus two render-only contributions:
@@ -42,9 +44,11 @@ export type PlayerCubeProps = {
  *     sent input — see AD2) so key release stops the cube immediately.
  *     Clamped to one step's worth (AD3) so a stalled main thread can't
  *     catapult the cube.
- *  2. Decaying renderOffset: each reconcile() snap is captured as a
- *     compensating offset (AD4), then exponentially decayed here so the
- *     visible cube smoothly catches up to authoritative truth.
+ *  2. Decaying renderOffset: absorbs jumps from two sources — reconcile()
+ *     snaps in predictedX/Z (AD4) and liveDir changes between render
+ *     frames (AD6 — diagonal release, direction reversal). Both are
+ *     captured additively, then exponentially decayed here so the visible
+ *     cube smoothly catches up to authoritative truth over ~100ms.
  */
 function localPlayerRenderPos(
   predictor: LocalPredictor,
@@ -59,6 +63,20 @@ function localPlayerRenderPos(
     STEP_INTERVAL_S,
   );
   const liveDir = getLiveInputDir();
+
+  // Absorb extrapolation-term jump from a liveDir change (diagonal release,
+  // direction reversal) into renderOffset, so the visible position stays
+  // continuous when the user switches keys mid-step. Same pattern as the
+  // reconcile-snap absorption (AD4) — capture the jump, let render decay
+  // walk it to zero. Skip on first frame (NaN sentinel).
+  if (!Number.isNaN(predictor.lastLiveDirX)) {
+    const jumpX = (liveDir.x - predictor.lastLiveDirX) * PLAYER_SPEED * tSinceStep;
+    const jumpZ = (liveDir.z - predictor.lastLiveDirZ) * PLAYER_SPEED * tSinceStep;
+    predictor.renderOffset.x -= jumpX;
+    predictor.renderOffset.z -= jumpZ;
+  }
+  predictor.lastLiveDirX = liveDir.x;
+  predictor.lastLiveDirZ = liveDir.z;
 
   return {
     x: predictor.predictedX + liveDir.x * PLAYER_SPEED * tSinceStep + predictor.renderOffset.x,

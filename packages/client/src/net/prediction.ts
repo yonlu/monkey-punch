@@ -50,6 +50,13 @@ export class LocalPredictor {
   // renderer) keeps the simulation/render contract in one place.
   renderOffset = { x: 0, z: 0 };
 
+  // Last liveDir read by the render layer. Used to detect input-direction
+  // changes between render frames and absorb the resulting extrapolation
+  // jump into renderOffset (same AD4 pattern used for reconcile snaps).
+  // NaN sentinel = first frame; no prior liveDir to diff against.
+  lastLiveDirX = NaN;
+  lastLiveDirZ = NaN;
+
   private seq = 0;
   private unacked: UnackedInput[] = [];
 
