@@ -42,6 +42,9 @@ const MAX_PLAYERS = 10;
 const DEFAULT_RECONNECTION_GRACE_S = 30;
 const ALLOW_DEBUG_MESSAGES = true;     // becomes runtime config later
 const SNAPSHOT_LOG_INTERVAL_MS = 5_000;
+// 100 ticks = 5s at 20Hz. Sweep is a safety net; tryHit/evictEnemy/
+// evictPlayer cover the common cases, so this is conservative.
+const ORBIT_COOLDOWN_SWEEP_INTERVAL_TICKS = 100;
 
 // MP_RECONNECTION_GRACE_S overrides the grace window in seconds. Tests set
 // it to "1" so reconnect.test.ts runs in ~1.5s instead of ~31s. Anything
@@ -250,7 +253,7 @@ export class GameRoom extends Room<RoomState> {
     tickSpawner(this.state, this.spawner, SIM_DT_S, this.rng);
 
     this.cooldownSweepCounter += 1;
-    if (this.cooldownSweepCounter >= 100) {
+    if (this.cooldownSweepCounter >= ORBIT_COOLDOWN_SWEEP_INTERVAL_TICKS) {
       this.cooldownSweepCounter = 0;
       this.orbitHitCooldown.sweep(Date.now(), this.maxOrbitHitCooldownMs);
     }

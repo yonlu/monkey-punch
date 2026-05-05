@@ -1,3 +1,5 @@
+import { isOrbitWeapon, type WeaponDef } from "@mp/shared";
+
 /**
  * Server-local per-(player, weaponIndex, enemy) hit cooldown for orbit-
  * behavior weapons. Per spec §AD7: not on the schema (clients have no use
@@ -65,8 +67,6 @@ export function createOrbitHitCooldownStore(): OrbitHitCooldownStore {
     },
   };
 }
-
-import { isOrbitWeapon, type WeaponDef } from "@mp/shared";
 
 /**
  * Compute the longest hit-cooldown across all orbit-behavior weapon levels
