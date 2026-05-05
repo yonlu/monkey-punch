@@ -110,6 +110,23 @@ Rationale: without this, `lastStepTime = 0`, and `now - 0` clamps to
 arrives. Initializing in the constructor makes the formula yield exactly
 zero displacement on first paint.
 
+**AD6: liveDir-change jumps are absorbed into `renderOffset` (extension of AD4).**
+The render formula's extrapolation term — `liveDir.x * PLAYER_SPEED * tSinceStep` —
+is discontinuous when `liveDir` changes between render frames. At the moment of
+change, the term jumps by `(liveDir_new − liveDir_old) * PLAYER_SPEED *
+tSinceStep`. For a diagonal release at `tSinceStep = 25ms`, that's ~0.088u
+visible snap. For a direction reversal (D→A), it's ~0.25u — clearly visible.
+The fix extends AD4: `LocalPredictor` carries `lastLiveDirX/Z` fields (NaN
+sentinel for first frame); the render helper compares this frame's `liveDir`
+to last frame's, computes the jump, and additively writes the negation into
+`renderOffset`. The exponential decay then walks the cube's visual momentum
+toward the new authoritative trajectory over ~100ms — feels like physical
+inertia rather than a snap.
+Why on the predictor and not in render-local state: keeps all smoothing
+state co-located on `LocalPredictor` (same as `lastStepTime` and
+`renderOffset`). The renderer mutates the fields the same way it mutates
+`renderOffset`, and the helper's JSDoc lists both as side effects.
+
 ## Files touched
 
 All client-only.
