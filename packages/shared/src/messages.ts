@@ -28,10 +28,55 @@ export type ClientMessage =
 // Server→client one-shot, NOT a ClientMessage variant (rule 3 governs
 // client→server only). Documented here so a grep on this file finds the
 // shape:
-//   pong: { t: number }   // echoed from PingMessage.t
+//   pong: { t: number, serverNow: number }
+//     t          — echoed from PingMessage.t (drives RTT calculation)
+//     serverNow  — server Date.now() at echo (drives serverTimeOffsetMs on
+//                  the client; basis for AD1 cross-client projectile sim)
 export type PongMessage = {
   type: "pong";
   t: number;
+  serverNow: number;
+};
+
+// Server→client combat events. Broadcast via room.broadcast(type, payload).
+// Not ClientMessage variants. Adding a new event means adding a row in
+// MessageType (below) and a type here. The fire-and-hit event protocol is
+// the foundation for every future weapon / pickup type — see CLAUDE.md
+// rule 12 (added in M4).
+
+export type FireEvent = {
+  type: "fire";
+  fireId: number;
+  weaponKind: number;
+  ownerId: string;
+  originX: number;
+  originZ: number;
+  dirX: number;             // pre-normalized
+  dirZ: number;             // pre-normalized
+  serverTick: number;       // for debugging / correlation
+  serverFireTimeMs: number; // server Date.now() at fire (drives client closed-form sim)
+};
+
+export type HitEvent = {
+  type: "hit";
+  fireId: number;
+  enemyId: number;
+  damage: number;
+  serverTick: number;
+};
+
+export type EnemyDiedEvent = {
+  type: "enemy_died";
+  enemyId: number;
+  x: number;
+  z: number;
+};
+
+export type GemCollectedEvent = {
+  type: "gem_collected";
+  gemId: number;
+  playerId: string;
+  value: number;
 };
 
 export const MessageType = {
@@ -40,6 +85,10 @@ export const MessageType = {
   Pong: "pong",
   DebugSpawn: "debug_spawn",
   DebugClearEnemies: "debug_clear_enemies",
+  Fire: "fire",
+  Hit: "hit",
+  EnemyDied: "enemy_died",
+  GemCollected: "gem_collected",
 } as const;
 
 export type MessageTypeName = (typeof MessageType)[keyof typeof MessageType];
