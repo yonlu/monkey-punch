@@ -49,19 +49,27 @@ export function useCombatVfxRef(): { api: VfxApi; component: JSX.Element } {
     [],
   );
 
-  const component = (
-    <CombatVfxRenderer
-      hits={hits}
-      deaths={deaths}
-      pickups={pickups}
-      onPrune={() => {
-        const now = performance.now();
-        if (now - lastForceMs.current > 16) {
-          lastForceMs.current = now;
-          force((n) => (n + 1) & 0x7fffffff);
-        }
-      }}
-    />
+  const onPrune = useMemo(
+    () => () => {
+      const now = performance.now();
+      if (now - lastForceMs.current > 16) {
+        lastForceMs.current = now;
+        force((n) => (n + 1) & 0x7fffffff);
+      }
+    },
+    [],
+  );
+
+  const component = useMemo(
+    () => (
+      <CombatVfxRenderer
+        hits={hits}
+        deaths={deaths}
+        pickups={pickups}
+        onPrune={onPrune}
+      />
+    ),
+    [hits, deaths, pickups, onPrune],
   );
   return { api, component };
 }
