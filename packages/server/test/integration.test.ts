@@ -216,6 +216,63 @@ describe("integration: XP gain on gem pickup end-to-end", () => {
   }, 30_000);
 });
 
+describe("integration: cross-client fire event determinism", () => {
+  it("two clients see bit-identical FireEvent payloads for shared fireIds", async () => {
+    const a = new Client(`ws://localhost:${PORT}`);
+    const b = new Client(`ws://localhost:${PORT}`);
+
+    type RoomShape = { code: string };
+    const roomA = await a.create<RoomShape>("game", { name: "Alice" });
+    await waitFor(() => roomA.state.code !== "" && roomA.state.code != null, 1000);
+
+    const roomB = await b.join<RoomShape>("game", { code: roomA.state.code, name: "Bob" });
+
+    type FirePayload = {
+      fireId: number;
+      originX: number;
+      originZ: number;
+      dirX: number;
+      dirZ: number;
+      serverFireTimeMs: number;
+      ownerId: string;
+      weaponKind: number;
+    };
+    const firesA = new Map<number, FirePayload>();
+    const firesB = new Map<number, FirePayload>();
+
+    roomA.onMessage("fire", (msg: FirePayload) => firesA.set(msg.fireId, msg));
+    roomB.onMessage("fire", (msg: FirePayload) => firesB.set(msg.fireId, msg));
+
+    // Burst-spawn enemies so auto-fire actually fires within the test
+    // window. (With no enemies, no fire events occur and the test passes
+    // vacuously — bad. We need at least one shared fireId.)
+    roomA.send("debug_spawn", { type: "debug_spawn", count: 20 });
+
+    // Wait ~10s — long enough for enemies to walk in and combat to occur.
+    await new Promise((r) => setTimeout(r, 10_000));
+
+    // Find the intersection of fireIds seen by both.
+    const shared: number[] = [];
+    firesA.forEach((_, id) => { if (firesB.has(id)) shared.push(id); });
+    expect(shared.length).toBeGreaterThan(0);
+
+    for (const id of shared) {
+      const ea = firesA.get(id)!;
+      const eb = firesB.get(id)!;
+      expect(ea.originX).toBe(eb.originX);
+      expect(ea.originZ).toBe(eb.originZ);
+      expect(ea.dirX).toBe(eb.dirX);
+      expect(ea.dirZ).toBe(eb.dirZ);
+      expect(ea.serverFireTimeMs).toBe(eb.serverFireTimeMs);
+      expect(ea.ownerId).toBe(eb.ownerId);
+      expect(ea.weaponKind).toBe(eb.weaponKind);
+    }
+
+    await roomB.leave();
+    await roomA.leave();
+  }, 25_000);
+});
+
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (!cond()) {
