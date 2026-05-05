@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { LocalPredictor } from "./prediction.js";
 import { PLAYER_SPEED, SIM_DT_S } from "@mp/shared";
 
@@ -17,6 +17,23 @@ describe("LocalPredictor", () => {
     expect(p.predictedX).toBeCloseTo(PLAYER_SPEED * SIM_DT_S);
     expect(p.predictedZ).toBe(0);
     expect(sent).toEqual([{ seq: 1, dir: { x: 1, z: 0 } }]);
+  });
+
+  it("step() updates lastStepTime to the current performance.now()", () => {
+    const nowSpy = vi.spyOn(performance, "now");
+    nowSpy.mockReturnValue(1000);
+    const p = new LocalPredictor();
+    expect(p.lastStepTime).toBe(1000);
+
+    nowSpy.mockReturnValue(1050);
+    p.step({ x: 0, z: 0 }, () => {});
+    expect(p.lastStepTime).toBe(1050);
+
+    nowSpy.mockReturnValue(1100);
+    p.step({ x: 0, z: 0 }, () => {});
+    expect(p.lastStepTime).toBe(1100);
+
+    nowSpy.mockRestore();
   });
 
   it("reconcile against acked seq drops queue and snaps to authoritative", () => {

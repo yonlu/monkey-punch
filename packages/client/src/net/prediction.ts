@@ -68,6 +68,7 @@ export class LocalPredictor {
     this.unacked.push({ seq: this.seq, dir: msg.dir });
     this.predictedX += dir.x * PLAYER_SPEED * SIM_DT_S;
     this.predictedZ += dir.z * PLAYER_SPEED * SIM_DT_S;
+    this.lastStepTime = performance.now();
   }
 
   /**
