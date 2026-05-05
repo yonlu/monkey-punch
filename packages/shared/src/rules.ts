@@ -213,76 +213,101 @@ export function tickWeapons(
       const def: WeaponDef | undefined = WEAPON_KINDS[weapon.kind];
       if (!def) return; // unknown kind — skip silently
 
-      // Dispatch on behavior.kind. TS doesn't narrow the outer `def` through
-      // nested discriminator access, so we use the user-defined predicates
-      // (isProjectileWeapon / isOrbitWeapon) — that flows narrowing into
-      // statsAt's generic inference.
-      if (isProjectileWeapon(def)) {
-        const stats = statsAt(def, weapon.level);
+      // Dispatch on behavior.kind. The switch keeps each behavior arm
+      // localized and the `default` assertNever turns "added a third
+      // WeaponBehavior kind without wiring it here" into a compile error
+      // instead of a silent no-op.
+      //
+      // Inside each case we still use the user-defined predicate
+      // (isProjectileWeapon) to narrow `def` for the call to the generic
+      // `statsAt`. TS 5.x does narrow `def.behavior` through the case
+      // label, but it does NOT fold that nested narrowing back into the
+      // outer `def`'s union when computing `W["levels"][number]` —
+      // statsAt then resolves to `ProjectileLevel | OrbitLevel` and
+      // projectile-only fields (cooldown / projectileSpeed /
+      // projectileLifetime) fail to typecheck. The predicate forwards
+      // the narrowing into `W` directly. The switch shape still earns
+      // its keep: the assertNever default is the exhaustiveness check
+      // we were missing.
+      switch (def.behavior.kind) {
+        case "projectile": {
+          if (!isProjectileWeapon(def)) return; // unreachable; see comment above
+          const stats = statsAt(def, weapon.level);
 
-        weapon.cooldownRemaining = Math.max(0, weapon.cooldownRemaining - dt);
-        if (weapon.cooldownRemaining > 0) return;
+          weapon.cooldownRemaining = Math.max(0, weapon.cooldownRemaining - dt);
+          if (weapon.cooldownRemaining > 0) return;
 
-        let bestSq = Infinity;
-        let bestDx = 0;
-        let bestDz = 0;
-        let hasTarget = false;
-        state.enemies.forEach((enemy: Enemy) => {
-          const dx = enemy.x - player.x;
-          const dz = enemy.z - player.z;
-          const sq = dx * dx + dz * dz;
-          if (sq <= rangeSq && sq < bestSq) {
-            bestSq = sq;
-            bestDx = dx;
-            bestDz = dz;
-            hasTarget = true;
-          }
-        });
-        if (!hasTarget) return;
-        if (bestSq === 0) return;
+          let bestSq = Infinity;
+          let bestDx = 0;
+          let bestDz = 0;
+          let hasTarget = false;
+          state.enemies.forEach((enemy: Enemy) => {
+            const dx = enemy.x - player.x;
+            const dz = enemy.z - player.z;
+            const sq = dx * dx + dz * dz;
+            if (sq <= rangeSq && sq < bestSq) {
+              bestSq = sq;
+              bestDx = dx;
+              bestDz = dz;
+              hasTarget = true;
+            }
+          });
+          if (!hasTarget) return;
+          if (bestSq === 0) return;
 
-        const dist = Math.sqrt(bestSq);
-        const dirX = bestDx / dist;
-        const dirZ = bestDz / dist;
+          const dist = Math.sqrt(bestSq);
+          const dirX = bestDx / dist;
+          const dirZ = bestDz / dist;
 
-        const proj: Projectile = {
-          fireId: ctx.nextFireId(),
-          ownerId: player.sessionId,
-          weaponKind: weapon.kind,
-          damage: stats.damage,
-          speed: stats.projectileSpeed,
-          radius: stats.hitRadius,
-          lifetime: stats.projectileLifetime,
-          age: 0,
-          dirX,
-          dirZ,
-          prevX: player.x,
-          prevZ: player.z,
-          x: player.x,
-          z: player.z,
-        };
-        ctx.pushProjectile(proj);
+          const proj: Projectile = {
+            fireId: ctx.nextFireId(),
+            ownerId: player.sessionId,
+            weaponKind: weapon.kind,
+            damage: stats.damage,
+            speed: stats.projectileSpeed,
+            radius: stats.hitRadius,
+            lifetime: stats.projectileLifetime,
+            age: 0,
+            dirX,
+            dirZ,
+            prevX: player.x,
+            prevZ: player.z,
+            x: player.x,
+            z: player.z,
+          };
+          ctx.pushProjectile(proj);
 
-        emit({
-          type: "fire",
-          fireId: proj.fireId,
-          weaponKind: weapon.kind,
-          ownerId: player.sessionId,
-          originX: player.x,
-          originZ: player.z,
-          dirX,
-          dirZ,
-          serverTick: state.tick,
-          serverFireTimeMs: ctx.serverNowMs(),
-        });
+          emit({
+            type: "fire",
+            fireId: proj.fireId,
+            weaponKind: weapon.kind,
+            ownerId: player.sessionId,
+            originX: player.x,
+            originZ: player.z,
+            dirX,
+            dirZ,
+            serverTick: state.tick,
+            serverFireTimeMs: ctx.serverNowMs(),
+          });
 
-        weapon.cooldownRemaining = stats.cooldown;
-        return;
+          weapon.cooldownRemaining = stats.cooldown;
+          break;
+        }
+        case "orbit": {
+          // Orbit arm lands in Phase 3 (separate commit). For now, no-op so
+          // a stale Orbit weapon would be benign. With this case explicit,
+          // adding the Phase 3 body is a localized edit.
+          break;
+        }
+        default: {
+          // Exhaustiveness guard. If a third behavior kind is added to
+          // WeaponDef, this becomes a compile error: `def.behavior` will
+          // not have type `never` and the assignment to `_exhaustive`
+          // will fail.
+          const _exhaustive: never = def.behavior;
+          void _exhaustive;
+        }
       }
-
-      // Orbit arm lands in Phase 3. For now, no-op so Bolt-only games still
-      // tick clean if a stale Orbit weapon ever appears (it can't yet — no
-      // row in WEAPON_KINDS — but the dispatch is exhaustive).
     });
   });
 }

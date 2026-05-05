@@ -31,4 +31,11 @@ describe("statsAt", () => {
     const max = def.levels.length;
     expect(statsAt(def, max + 5)).toBe(def.levels[max - 1]);
   });
+
+  it("floors fractional levels and treats NaN as level 1", () => {
+    const def = WEAPON_KINDS[0]!;
+    expect(statsAt(def, 1.7)).toBe(def.levels[0]);
+    expect(statsAt(def, 2.99)).toBe(def.levels[1]);
+    expect(statsAt(def, NaN)).toBe(def.levels[0]);
+  });
 });

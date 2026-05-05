@@ -68,8 +68,17 @@ export function isOrbitWeapon(def: WeaponDef): def is OrbitWeaponDef {
  * server (tickWeapons) and clients (renderers, HUD) read effective stats
  * through this — never via direct `def.levels[level]` indexing — so off-by-one
  * around level=0 or beyond max never reaches a hot path.
+ *
+ * Defensive against fractional and non-finite inputs: the type system permits
+ * any `number` but a fractional array index returns `undefined`, which the
+ * non-null assertion would mask and downstream NaN-corrupt. Today
+ * `WeaponState.level` is uint8 so this is theoretical, but `statsAt` is the
+ * public read API and should not require its caller to pre-floor.
  */
 export function statsAt<W extends WeaponDef>(def: W, level: number): W["levels"][number] {
-  const idx = Math.max(1, Math.min(def.levels.length, level)) - 1;
+  const floored = Math.floor(level);
+  // Math.floor(NaN) is NaN; coerce to 1 so we land on level 1 below.
+  const safe = Number.isFinite(floored) ? floored : 1;
+  const idx = Math.max(0, Math.min(def.levels.length - 1, safe - 1));
   return def.levels[idx]!;
 }
