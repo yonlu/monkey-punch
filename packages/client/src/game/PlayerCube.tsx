@@ -31,6 +31,9 @@ export type PlayerCubeProps = {
 };
 
 /**
+ * SIDE EFFECT: mutates predictor.renderOffset.x/.z in place (decays them).
+ * Call once per frame; calling twice double-decays the offset.
+ *
  * Compute the visible position for the local player from authoritative
  * predicted state plus two render-only contributions:
  *  1. Live-input extrapolation: predictedX/Z is updated only every
