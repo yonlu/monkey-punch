@@ -16,6 +16,7 @@ import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "@mp/shared";
 import { Ground } from "./Ground.js";
 import { PlayerCube } from "./PlayerCube.js";
 import { EnemySwarm } from "./EnemySwarm.js";
+import { OrbitSwarm } from "./OrbitSwarm.js";
 import { ProjectileSwarm } from "./ProjectileSwarm.js";
 import { GemSwarm } from "./GemSwarm.js";
 import { PlayerHud } from "./PlayerHud.js";
@@ -308,6 +309,10 @@ export function GameView({
       } else if (e.code === "Backslash") {
         e.preventDefault();
         room.send("debug_clear_enemies", { type: "debug_clear_enemies" });
+      } else if (e.code === "KeyG" && e.shiftKey) {
+        e.preventDefault();
+        // Orbit is index 1 in WEAPON_KINDS. Granting at L1, or upgrading +1.
+        room.send("debug_grant_weapon", { type: "debug_grant_weapon", weaponKind: 1 });
       }
     };
     window.addEventListener("keydown", keyHandler);
@@ -361,6 +366,7 @@ export function GameView({
           />
         ))}
         <EnemySwarm enemyIds={enemyIds} buffers={enemyBuffers} />
+        <OrbitSwarm room={room} predictor={predictor} buffers={buffers} />
         <ProjectileSwarm fires={fires} serverTime={serverTime} />
         <GemSwarm room={room} />
         {vfxJsx}
