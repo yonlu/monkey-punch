@@ -211,6 +211,11 @@ export function GameView({
       // a backstop, but the per-fire timer is the primary driver and fires
       // the moment the projectile expires — so the visible count drops in
       // lockstep with reality.
+      //
+      // Adding `interpDelayMs` to the timeout aligns the cleanup with
+      // rendered time: the projectile is rendered at serverNow() -
+      // interpDelayMs, so the rendered projectile reaches `lifetime` at
+      // real time T_fire + lifetime + interpDelayMs.
       const def = WEAPON_KINDS[msg.weaponKind];
       const lifetimeMs =
         def && isProjectileWeapon(def)
@@ -219,16 +224,31 @@ export function GameView({
       const timer = setTimeout(() => {
         fires.delete(msg.fireId);
         fireTimers.delete(msg.fireId);
-      }, lifetimeMs + 50);
+      }, lifetimeMs + 50 + hudState.interpDelayMs);
       fireTimers.set(msg.fireId, timer);
     });
 
     const offHit = room.onMessage("hit", (msg: HitEvent) => {
-      fires.delete(msg.fireId);
-      const t = fireTimers.get(msg.fireId);
-      if (t) {
-        clearTimeout(t);
-        fireTimers.delete(msg.fireId);
+      // fireId === 0 is the sentinel for orbit hits (no projectile to
+      // despawn). Skip the projectile-cleanup path entirely.
+      if (msg.fireId !== 0) {
+        // Defer the visual despawn by interpDelayMs so the projectile
+        // disappears at the moment the *rendered* enemy is hit, not at the
+        // moment the (interpDelay-ahead) server confirms the hit. Without
+        // this, projectiles vanish ~interpDelayMs * speed units before
+        // reaching their rendered hit point — and for short flights
+        // (enemy within ~interpDelayMs * speed of the player) the
+        // projectile never renders at all.
+        const fireId = msg.fireId;
+        const lifetimeTimer = fireTimers.get(fireId);
+        if (lifetimeTimer) clearTimeout(lifetimeTimer);
+        fireTimers.delete(fireId);
+        const hitTimer = setTimeout(() => {
+          fires.delete(fireId);
+        }, hudState.interpDelayMs);
+        // Track the deferred-delete timer in the same map so unmount
+        // cleanup cancels it.
+        fireTimers.set(fireId, hitTimer);
       }
       // Hit flash at the rendered enemy position — same time-base as the
       // projectile (interpDelayMs behind realtime), so the flash lands where
