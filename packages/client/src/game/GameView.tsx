@@ -27,6 +27,13 @@ import { LocalPredictor } from "../net/prediction.js";
 import { hudState } from "../net/hudState.js";
 import { DebugHud } from "./DebugHud.js";
 
+// Extra time (past the rendered hit moment) that a projectile keeps
+// rendering after the server reports a hit. Lets the projectile visibly
+// pass through the enemy rather than vanishing at the contact edge.
+// At Bolt's 18 u/s, 100 ms ≈ 1.8 units of overshoot, roughly the sum of
+// enemy + projectile diameters.
+const PROJECTILE_HIT_LINGER_MS = 100;
+
 type PlayerEntry = {
   sessionId: string;
   name: string;
@@ -232,20 +239,25 @@ export function GameView({
       // fireId === 0 is the sentinel for orbit hits (no projectile to
       // despawn). Skip the projectile-cleanup path entirely.
       if (msg.fireId !== 0) {
-        // Defer the visual despawn by interpDelayMs so the projectile
-        // disappears at the moment the *rendered* enemy is hit, not at the
-        // moment the (interpDelay-ahead) server confirms the hit. Without
-        // this, projectiles vanish ~interpDelayMs * speed units before
-        // reaching their rendered hit point — and for short flights
-        // (enemy within ~interpDelayMs * speed of the player) the
-        // projectile never renders at all.
+        // Defer the visual despawn so the projectile (a) disappears at or
+        // after the moment the *rendered* enemy is hit (since the client
+        // renders at serverNow() - interpDelayMs, the hit message arrives
+        // ~interpDelayMs ahead of the rendered hit), and (b) "lives a
+        // little more" past the hit moment so it visibly passes through
+        // the enemy rather than vanishing right at the contact edge.
+        //
+        // Total deferral = interpDelayMs (re-align with render time) +
+        // PROJECTILE_HIT_LINGER_MS (overshoot past the hit point). At
+        // Bolt's speed of 18 u/s, 100ms of overshoot ≈ 1.8 units, which
+        // is roughly enemyDiameter (1.0) + projectileDiameter (0.8), so
+        // the projectile clears the enemy before it disappears.
         const fireId = msg.fireId;
         const lifetimeTimer = fireTimers.get(fireId);
         if (lifetimeTimer) clearTimeout(lifetimeTimer);
         fireTimers.delete(fireId);
         const hitTimer = setTimeout(() => {
           fires.delete(fireId);
-        }, hudState.interpDelayMs);
+        }, hudState.interpDelayMs + PROJECTILE_HIT_LINGER_MS);
         // Track the deferred-delete timer in the same map so unmount
         // cleanup cancels it.
         fireTimers.set(fireId, hitTimer);
