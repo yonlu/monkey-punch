@@ -19,11 +19,17 @@ export type DebugClearEnemiesMessage = {
   type: "debug_clear_enemies";
 };
 
+export type DebugGrantWeaponMessage = {
+  type: "debug_grant_weapon";
+  weaponKind: number;
+};
+
 export type ClientMessage =
   | InputMessage
   | PingMessage
   | DebugSpawnMessage
-  | DebugClearEnemiesMessage;
+  | DebugClearEnemiesMessage
+  | DebugGrantWeaponMessage;
 
 // Server→client one-shot, NOT a ClientMessage variant (rule 3 governs
 // client→server only). Documented here so a grep on this file finds the
@@ -85,6 +91,7 @@ export const MessageType = {
   Pong: "pong",
   DebugSpawn: "debug_spawn",
   DebugClearEnemies: "debug_clear_enemies",
+  DebugGrantWeapon: "debug_grant_weapon",
   Fire: "fire",
   Hit: "hit",
   EnemyDied: "enemy_died",

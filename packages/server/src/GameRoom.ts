@@ -28,6 +28,7 @@ import type {
   PingMessage,
   DebugSpawnMessage,
   DebugClearEnemiesMessage,
+  DebugGrantWeaponMessage,
 } from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
 import { clampDirection } from "./input.js";
@@ -184,6 +185,27 @@ export class GameRoom extends Room<RoomState> {
 
       this.onMessage<DebugClearEnemiesMessage>("debug_clear_enemies", () => {
         this.state.enemies.clear();
+      });
+
+      this.onMessage<DebugGrantWeaponMessage>("debug_grant_weapon", (client, message) => {
+        const player = this.state.players.get(client.sessionId);
+        if (!player) return;
+        const kindRaw = Number(message?.weaponKind);
+        if (!Number.isFinite(kindRaw) || kindRaw < 0 || kindRaw >= WEAPON_KINDS.length) return;
+        const kind = Math.floor(kindRaw);
+
+        const existing = player.weapons.find((w) => w.kind === kind);
+        if (existing) {
+          const def = WEAPON_KINDS[kind]!;
+          existing.level = Math.min(existing.level + 1, def.levels.length);
+          return;
+        }
+
+        const fresh = new WeaponState();
+        fresh.kind = kind;
+        fresh.level = 1;
+        fresh.cooldownRemaining = 0;
+        player.weapons.push(fresh);
       });
     }
 
