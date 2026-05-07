@@ -32,6 +32,7 @@ import {
   LEVEL_UP_DEADLINE_TICKS,
   xpForLevel,
   MAP_RADIUS,
+  ENEMY_DESPAWN_RADIUS,
 } from "../src/constants.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "../src/weapons.js";
 import { mulberry32 } from "../src/rng.js";
@@ -1134,6 +1135,34 @@ describe("tickPlayers — M6", () => {
     p.downed = true;
     tickPlayers(state, 0.5);
     expect(p.x).toBe(0);
+  });
+});
+
+describe("tickEnemies — M6", () => {
+  it("treats downed players as non-targets (steps toward living players only)", () => {
+    const state = new RoomState();
+    const dead = addPlayer(state, "dead", 0, 0); dead.x = 0; dead.z = 0; dead.downed = true;
+    const live = addPlayer(state, "live", 0, 0); live.x = 10; live.z = 0;
+    const e = addEnemy(state, 1, 1, 0);   // closer to dead
+    tickEnemies(state, 0.05);
+    // Should step toward live (positive x), not toward dead.
+    expect(e.x).toBeGreaterThan(1);
+  });
+
+  it("despawns enemies beyond ENEMY_DESPAWN_RADIUS from any non-downed player", () => {
+    const state = new RoomState();
+    const live = addPlayer(state, "live", 0, 0); live.x = 0; live.z = 0;
+    addEnemy(state, 1, 100, 0);   // 100 units away
+    tickEnemies(state, 0.05);
+    expect(state.enemies.has("1")).toBe(false);
+  });
+
+  it("does NOT despawn enemies within ENEMY_DESPAWN_RADIUS", () => {
+    const state = new RoomState();
+    const live = addPlayer(state, "live", 0, 0); live.x = 0; live.z = 0;
+    addEnemy(state, 1, 30, 0);
+    tickEnemies(state, 0.05);
+    expect(state.enemies.has("1")).toBe(true);
   });
 });
 

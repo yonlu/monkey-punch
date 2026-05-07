@@ -6,6 +6,7 @@ import {
   type RoomState,
 } from "./schema.js";
 import {
+  ENEMY_DESPAWN_RADIUS,
   ENEMY_HP,
   ENEMY_RADIUS,
   ENEMY_SPAWN_INTERVAL_S,
@@ -60,12 +61,16 @@ export function tickEnemies(state: RoomState, dt: number): void {
   if (state.runEnded) return;
   if (state.players.size === 0) return;
 
+  const despawnSq = ENEMY_DESPAWN_RADIUS * ENEMY_DESPAWN_RADIUS;
+  const toDespawn: number[] = [];
+
   state.enemies.forEach((enemy: Enemy) => {
     let nearestDx = 0;
     let nearestDz = 0;
     let nearestSq = Infinity;
 
     state.players.forEach((p: Player) => {
+      if (p.downed) return;                    // skip downed for targeting + despawn
       const dx = p.x - enemy.x;
       const dz = p.z - enemy.z;
       const sq = dx * dx + dz * dz;
@@ -76,12 +81,19 @@ export function tickEnemies(state: RoomState, dt: number): void {
       }
     });
 
-    if (nearestSq === 0) return;            // coincident: no step
+    if (nearestSq === Infinity) return;        // no living players — freeze in place
+    if (nearestSq > despawnSq) {
+      toDespawn.push(enemy.id);
+      return;
+    }
+    if (nearestSq === 0) return;
     const dist = Math.sqrt(nearestSq);
     const step = ENEMY_SPEED * dt;
     enemy.x += (nearestDx / dist) * step;
     enemy.z += (nearestDz / dist) * step;
   });
+
+  for (const id of toDespawn) state.enemies.delete(String(id));
 }
 
 export type SpawnerState = {
