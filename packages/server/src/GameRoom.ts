@@ -38,7 +38,7 @@ import type {
   DebugGrantXpMessage,
 } from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
-import { clampDirection } from "./input.js";
+import { clampDirection, clampFacing } from "./input.js";
 import {
   createOrbitHitCooldownStore,
   maxOrbitHitCooldownMs,
@@ -154,16 +154,18 @@ export class GameRoom extends Room<RoomState> {
     this.onMessage<InputMessage>("input", (client, message) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
+      if (player.downed) return;                   // drop silently; do NOT bump lastProcessedInput
+      if (this.state.runEnded) return;             // run-end frozen state
 
       const seq = Number(message?.seq);
-      if (!Number.isFinite(seq) || seq <= player.lastProcessedInput) {
-        // Stale or replayed input — drop silently.
-        return;
-      }
+      if (!Number.isFinite(seq) || seq <= player.lastProcessedInput) return;
 
       const dir = clampDirection(Number(message?.dir?.x), Number(message?.dir?.z));
+      const facing = clampFacing(Number(message?.facing?.x), Number(message?.facing?.z));
       player.inputDir.x = dir.x;
       player.inputDir.z = dir.z;
+      player.facingX = facing.x;
+      player.facingZ = facing.z;
       player.lastProcessedInput = seq;
     });
 
