@@ -1,5 +1,3 @@
-const os = require("os");
-
 module.exports = {
   apps: [
     {
@@ -8,7 +6,9 @@ module.exports = {
       script: "packages/server/dist/index.js",
       time: true,
       watch: false,
-      instances: os.cpus().length,
+      // Single fork: server uses `new Server()` (not defineServer + cluster
+      // transport), so multiple forks would race to bind the same port.
+      instances: 1,
       exec_mode: "fork",
       wait_ready: false,
     },
