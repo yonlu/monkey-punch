@@ -61,6 +61,9 @@ export class Player extends Schema {
   declare xp: number;
   declare level: number;
   declare weapons: ArraySchema<WeaponState>;
+  declare pendingLevelUp: boolean;
+  declare levelUpChoices: ArraySchema<number>;
+  declare levelUpDeadlineTick: number;
   constructor() {
     super();
     this.sessionId = "";
@@ -73,6 +76,9 @@ export class Player extends Schema {
     this.xp = 0;
     this.level = 1;
     this.weapons = new ArraySchema<WeaponState>();
+    this.pendingLevelUp = false;
+    this.levelUpChoices = new ArraySchema<number>();
+    this.levelUpDeadlineTick = 0;
   }
 }
 defineTypes(Player, {
@@ -86,6 +92,9 @@ defineTypes(Player, {
   xp: "uint32",
   level: "uint8",
   weapons: [WeaponState],
+  pendingLevelUp: "boolean",
+  levelUpChoices: [ "uint8" ],
+  levelUpDeadlineTick: "uint32",
 });
 
 export class Enemy extends Schema {

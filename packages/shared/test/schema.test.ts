@@ -215,3 +215,20 @@ describe("Player.xp / Player.level round-trip", () => {
     expect(() => encoder.encodeAll()).not.toThrow();
   });
 });
+
+describe("Player level-up fields", () => {
+  it("defaults are non-pending, empty choices, deadline 0", () => {
+    const p = new Player();
+    expect(p.pendingLevelUp).toBe(false);
+    expect(p.levelUpChoices.length).toBe(0);
+    expect(p.levelUpDeadlineTick).toBe(0);
+  });
+
+  it("levelUpChoices accepts 3 uint8 weapon-kind ints", () => {
+    const p = new Player();
+    p.levelUpChoices.push(0, 1, 1);
+    expect(p.levelUpChoices.length).toBe(3);
+    expect(p.levelUpChoices[0]).toBe(0);
+    expect(p.levelUpChoices[2]).toBe(1);
+  });
+});
