@@ -36,6 +36,7 @@ import type {
   DebugClearEnemiesMessage,
   DebugGrantWeaponMessage,
   DebugGrantXpMessage,
+  DebugDamageSelfMessage,
 } from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
 import { clampDirection, clampFacing } from "./input.js";
@@ -237,6 +238,32 @@ export class GameRoom extends Room<RoomState> {
         if (!Number.isFinite(raw) || raw <= 0) return;
         // Cap at 10000 per call to prevent runaway XP from a typo.
         player.xp += Math.min(Math.floor(raw), 10_000);
+      });
+
+      this.onMessage<DebugDamageSelfMessage>("debug_damage_self", (client, message) => {
+        const player = this.state.players.get(client.sessionId);
+        if (!player) return;
+        if (player.downed) return;
+        const amount = Math.max(1, Math.min(Math.floor(Number(message?.amount) || 0), player.hp));
+        player.hp -= amount;
+        this.emit({
+          type: "player_damaged",
+          playerId: client.sessionId,
+          damage: amount,
+          x: player.x,
+          z: player.z,
+          serverTick: this.state.tick,
+        });
+        if (player.hp <= 0 && !player.downed) {
+          player.downed = true;
+          player.inputDir.x = 0;
+          player.inputDir.z = 0;
+          this.emit({
+            type: "player_downed",
+            playerId: client.sessionId,
+            serverTick: this.state.tick,
+          });
+        }
       });
     }
 
