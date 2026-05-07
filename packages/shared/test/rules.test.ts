@@ -8,6 +8,7 @@ import {
   tickWeapons,
   tickProjectiles,
   tickGems,
+  tickXp,
   resolveLevelUp,
   type SpawnerState,
   type Projectile,
@@ -27,6 +28,8 @@ import {
   GEM_VALUE,
   GEM_PICKUP_RADIUS,
   TARGETING_MAX_RANGE,
+  LEVEL_UP_DEADLINE_TICKS,
+  xpForLevel,
 } from "../src/constants.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "../src/weapons.js";
 import { mulberry32 } from "../src/rng.js";
@@ -963,5 +966,101 @@ describe("resolveLevelUp", () => {
     resolveLevelUp(p, 0, (e) => events.push(e), false);
 
     expect(p.weapons[0]!.level).toBe(def.levels.length); // capped, not 6
+  });
+});
+
+describe("tickXp", () => {
+  it("does nothing for a player below threshold", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.level = 1;
+    p.xp = xpForLevel(1) - 1; // one short
+
+    const events: CombatEvent[] = [];
+    tickXp(state, mulberry32(123), (e) => events.push(e));
+
+    expect(p.pendingLevelUp).toBe(false);
+    expect(p.level).toBe(1);
+    expect(events.length).toBe(0);
+  });
+
+  it("triggers level-up exactly once when XP crosses threshold", () => {
+    const state = new RoomState();
+    state.tick = 50;
+    const p = addPlayer(state, "p1", 0, 0);
+    p.level = 1;
+    p.xp = xpForLevel(1); // exact
+
+    const events: CombatEvent[] = [];
+    tickXp(state, mulberry32(123), (e) => events.push(e));
+
+    expect(p.pendingLevelUp).toBe(true);
+    expect(p.level).toBe(2);
+    expect(p.xp).toBe(0);
+    expect(p.levelUpChoices.length).toBe(3);
+    expect(p.levelUpDeadlineTick).toBe(50 + LEVEL_UP_DEADLINE_TICKS);
+
+    const offered = events.find((e) => e.type === "level_up_offered")!;
+    expect(offered).toBeDefined();
+    if (offered.type === "level_up_offered") {
+      expect(offered.playerId).toBe("p1");
+      expect(offered.newLevel).toBe(2);
+      expect(offered.choices.length).toBe(3);
+      expect(offered.deadlineTick).toBe(50 + LEVEL_UP_DEADLINE_TICKS);
+    }
+  });
+
+  it("does not retrigger while pendingLevelUp is true", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.level = 2;
+    p.xp = xpForLevel(2) * 3; // way over threshold
+    p.pendingLevelUp = true;
+
+    const events: CombatEvent[] = [];
+    tickXp(state, mulberry32(123), (e) => events.push(e));
+    tickXp(state, mulberry32(123), (e) => events.push(e));
+
+    expect(events.length).toBe(0);
+    expect(p.level).toBe(2);
+  });
+
+  it("retriggers on next tick after pending clears, if XP still over", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.level = 1;
+    p.xp = xpForLevel(1) + xpForLevel(2); // enough for two levels
+
+    const events1: CombatEvent[] = [];
+    tickXp(state, mulberry32(123), (e) => events1.push(e));
+    expect(p.pendingLevelUp).toBe(true);
+    expect(p.level).toBe(2);
+
+    // Simulate resolution.
+    p.pendingLevelUp = false;
+    p.levelUpChoices.length = 0;
+    p.levelUpDeadlineTick = 0;
+
+    const events2: CombatEvent[] = [];
+    tickXp(state, mulberry32(123), (e) => events2.push(e));
+    expect(p.pendingLevelUp).toBe(true);
+    expect(p.level).toBe(3);
+    expect(events2.filter((e) => e.type === "level_up_offered").length).toBe(1);
+  });
+
+  it("rolls 3 choices in [0, WEAPON_KINDS.length) using the supplied rng", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.level = 1;
+    p.xp = xpForLevel(1);
+
+    const events: CombatEvent[] = [];
+    tickXp(state, mulberry32(7), (e) => events.push(e));
+
+    expect(p.levelUpChoices.length).toBe(3);
+    p.levelUpChoices.forEach((c) => {
+      expect(c).toBeGreaterThanOrEqual(0);
+      expect(c).toBeLessThan(WEAPON_KINDS.length);
+    });
   });
 });

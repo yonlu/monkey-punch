@@ -13,10 +13,12 @@ import {
   ENEMY_SPEED,
   GEM_PICKUP_RADIUS,
   GEM_VALUE,
+  LEVEL_UP_DEADLINE_TICKS,
   MAX_ENEMIES,
   PLAYER_SPEED,
   TARGETING_MAX_RANGE,
   TICK_RATE,
+  xpForLevel,
 } from "./constants.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, type WeaponDef } from "./weapons.js";
 import type { Rng } from "./rng.js";
@@ -598,5 +600,46 @@ export function resolveLevelUp(
     weaponKind,
     newWeaponLevel,
     autoPicked,
+  });
+}
+
+/**
+ * For each player: if XP has crossed the threshold for their current level
+ * AND they don't already have a pending level-up, drain the cost, increment
+ * level, roll 3 weapon-kind choices via `rng` (with replacement), set
+ * pendingLevelUp + levelUpChoices + levelUpDeadlineTick, emit
+ * level_up_offered.
+ *
+ * Per spec §AD4 (one level per tick, drain via re-ticks) and §AD5 (room
+ * rng, fixed tick order).
+ */
+export function tickXp(state: RoomState, rng: Rng, emit: Emit): void {
+  state.players.forEach((player: Player) => {
+    if (player.pendingLevelUp) return;
+    const need = xpForLevel(player.level);
+    if (player.xp < need) return;
+
+    player.xp -= need;
+    player.level += 1;
+
+    // Roll 3 choices (with replacement). Mutate in place: clear+push.
+    player.levelUpChoices.length = 0;
+    const choicesArr: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const k = Math.floor(rng() * WEAPON_KINDS.length);
+      player.levelUpChoices.push(k);
+      choicesArr.push(k);
+    }
+
+    player.pendingLevelUp = true;
+    player.levelUpDeadlineTick = state.tick + LEVEL_UP_DEADLINE_TICKS;
+
+    emit({
+      type: "level_up_offered",
+      playerId: player.sessionId,
+      newLevel: player.level,
+      choices: choicesArr,
+      deadlineTick: player.levelUpDeadlineTick,
+    });
   });
 }
