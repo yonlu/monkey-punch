@@ -60,7 +60,6 @@ export type PlayerCubeProps = {
 export function PlayerCube({ room, sessionId, name, buffer, predictor }: PlayerCubeProps) {
   const groupRef = useRef<Group>(null);
   const cubeRef = useRef<Mesh>(null);
-  const matRef = useRef<{ color: { set: (c: string) => void } } | null>(null);
   const camera = useThree((s) => s.camera) as PerspectiveCamera;
   const baseColor = useMemo(() => colorFor(sessionId), [sessionId]);
 
