@@ -64,6 +64,17 @@ export function App() {
     });
   }, [phase]);
 
+  // Consent leave — player clicked "Leave room" on RunOverPanel. Route back
+  // to the landing screen pre-filled with the same name and code.
+  const onConsentLeave = useCallback(() => {
+    if (phase.kind !== "playing") return;
+    setPhase({
+      kind: "landing",
+      initialName: phase.name,
+      initialCode: phase.code,
+    });
+  }, [phase]);
+
   if (phase.kind === "landing") {
     return (
       <Landing
@@ -119,6 +130,7 @@ export function App() {
       key={phase.token}
       room={phase.room}
       onUnexpectedLeave={onUnexpectedLeave}
+      onConsentLeave={onConsentLeave}
     />
   );
 }

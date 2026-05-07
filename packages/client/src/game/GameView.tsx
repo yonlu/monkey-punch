@@ -1,5 +1,5 @@
-import { Canvas } from "@react-three/fiber";
-import { useEffect, useMemo, useState } from "react";
+import { Canvas, useThree } from "@react-three/fiber";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Room } from "colyseus.js";
 import { getStateCallbacks } from "colyseus.js";
 import type {
@@ -13,6 +13,7 @@ import type {
   RoomState,
 } from "@mp/shared";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "@mp/shared";
+import type { PerspectiveCamera } from "three";
 import { Ground } from "./Ground.js";
 import { PlayerCube } from "./PlayerCube.js";
 import { EnemySwarm } from "./EnemySwarm.js";
@@ -29,6 +30,12 @@ import { attachInput } from "./input.js";
 import { LocalPredictor } from "../net/prediction.js";
 import { hudState } from "../net/hudState.js";
 import { DebugHud } from "./DebugHud.js";
+import { CameraRig } from "./CameraRig.js";
+import { Crosshair } from "./Crosshair.js";
+import { BoundaryRing } from "./BoundaryRing.js";
+import { DamageNumberPool } from "./DamageNumberPool.js";
+import { MinimapCanvas } from "./MinimapCanvas.js";
+import { RunOverPanel } from "./RunOverPanel.js";
 
 // Extra time (past the rendered hit moment) that a projectile keeps
 // rendering after the server reports a hit. Lets the projectile visibly
@@ -43,12 +50,20 @@ type PlayerEntry = {
   buffer: SnapshotBuffer;
 };
 
+function CaptureCamera({ camRef }: { camRef: React.MutableRefObject<PerspectiveCamera | null> }) {
+  const cam = useThree((s) => s.camera) as PerspectiveCamera;
+  camRef.current = cam;
+  return null;
+}
+
 export function GameView({
   room,
   onUnexpectedLeave,
+  onConsentLeave,
 }: {
   room: Room<RoomState>;
   onUnexpectedLeave: () => void;
+  onConsentLeave: () => void;
 }) {
   const [players, setPlayers] = useState<Map<string, PlayerEntry>>(new Map());
   const [code, setCode] = useState<string>(room.state.code ?? "");
@@ -62,8 +77,15 @@ export function GameView({
   const fires = useMemo(() => new Map<number, FireEvent>(), []);
   const { api: vfx, component: vfxJsx } = useCombatVfxRef();
 
+  const canvasCameraRef = useRef<PerspectiveCamera | null>(null);
+
   useEffect(() => {
-    const detachInput = attachInput(room, predictor);
+    const detachInput = attachInput(
+      room,
+      predictor,
+      () => canvasCameraRef.current,
+      () => ({ x: predictor.renderX, z: predictor.renderZ }),
+    );
 
     const $ = getStateCallbacks(room);
 
@@ -302,7 +324,8 @@ export function GameView({
       }
       if (e.code === "Digit1" || e.code === "Digit2" || e.code === "Digit3") {
         const localPlayer = room.state.players.get(room.sessionId);
-        if (localPlayer?.pendingLevelUp && localPlayer.levelUpChoices.length > 0) {
+        if (!localPlayer || localPlayer.downed) return;     // M6 — downed players can't pick
+        if (localPlayer.pendingLevelUp && localPlayer.levelUpChoices.length > 0) {
           e.preventDefault();
           const idx = e.code === "Digit1" ? 0 : e.code === "Digit2" ? 1 : 2;
           if (idx < localPlayer.levelUpChoices.length) {
@@ -368,15 +391,19 @@ export function GameView({
       <div className="banner">room: <strong>{code}</strong> · share this code with friends</div>
       <Canvas
         shadows
-        camera={{ position: [0, 12, 12], fov: 55 }}
+        camera={{ position: [0, 9, 11], fov: 55 }}
         style={{ width: "100%", height: "100%" }}
       >
+        <CaptureCamera camRef={canvasCameraRef} />
+        <CameraRig room={room} predictor={predictor} buffers={buffers} />
         <ambientLight intensity={0.5} />
         <directionalLight position={[10, 20, 5]} intensity={1.0} castShadow />
         <Ground />
+        <BoundaryRing />
         {Array.from(players.values()).map((p) => (
           <PlayerCube
             key={p.sessionId}
+            room={room}
             sessionId={p.sessionId}
             name={p.name}
             buffer={p.buffer}
@@ -388,11 +415,15 @@ export function GameView({
         <LevelUpFlashVfx room={room} predictor={predictor} buffers={buffers} />
         <ProjectileSwarm fires={fires} serverTime={serverTime} />
         <GemSwarm room={room} />
+        <Crosshair room={room} />
+        <DamageNumberPool room={room} predictor={predictor} buffers={buffers} enemyBuffers={enemyBuffers} />
         {vfxJsx}
       </Canvas>
       <PlayerHud room={room} />
       <LevelUpOverlay room={room} />
       <DebugHud />
+      <MinimapCanvas room={room} predictor={predictor} />
+      <RunOverPanel room={room} onLeave={onConsentLeave} />
     </div>
   );
 }
