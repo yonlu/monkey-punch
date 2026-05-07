@@ -87,8 +87,12 @@ export function OrbitSwarm({ room, predictor, buffers, serverTime }: OrbitSwarmP
       let rx: number;
       let rz: number;
       if (player.sessionId === room.sessionId) {
-        rx = predictor.predictedX;
-        rz = predictor.predictedZ;
+        // Use the smoothed render-pos PlayerCube publishes each frame —
+        // predictor.predictedX/Z only updates at 20Hz, which makes the
+        // orb attach point step visibly when moving. PlayerCube renders
+        // before us in JSX/mount order, so renderX/Z is current-frame.
+        rx = predictor.renderX;
+        rz = predictor.renderZ;
       } else {
         const sample = buffers.get(player.sessionId)?.sample(performance.now() - hudState.interpDelayMs);
         if (!sample) {

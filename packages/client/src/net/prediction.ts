@@ -40,6 +40,17 @@ export class LocalPredictor {
   predictedZ = 0;
   lastReconErr = 0;
 
+  // Render-smoothed local-player position, written by PlayerCube each
+  // frame after applying the live-input extrapolation + renderOffset
+  // decay (see localPlayerRenderPos in PlayerCube.tsx). Other render-
+  // time consumers (OrbitSwarm, hit-flash anchoring, etc.) should read
+  // these instead of predictedX/Z when they want a 60 fps-smooth attach
+  // point — predictedX/Z only updates at the 20 Hz step() cadence.
+  // Initialized to 0 so the very first OrbitSwarm frame, before
+  // PlayerCube's first useFrame, sees the same value predictedX/Z had.
+  renderX = 0;
+  renderZ = 0;
+
   // performance.now() at the most recent step(). Render layer extrapolates
   // (now - lastStepTime) ms of motion past predictedX/Z using live input.
   // Initialized in constructor so first paint extrapolates 0 ms, not 50.

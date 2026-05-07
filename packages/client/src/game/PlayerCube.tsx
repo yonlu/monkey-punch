@@ -95,6 +95,9 @@ export function PlayerCube({ sessionId, buffer, predictor }: PlayerCubeProps) {
       // post-construction, so position is exactly predictedX/Z.
       const pos = localPlayerRenderPos(predictor, 0);
       ref.current.position.set(pos.x, RENDER_Y, pos.z);
+      // Publish smoothed render-pos for other components (OrbitSwarm).
+      predictor.renderX = pos.x;
+      predictor.renderZ = pos.z;
       return;
     }
     const sample = buffer.sample(performance.now() - hudState.interpDelayMs);
@@ -108,6 +111,9 @@ export function PlayerCube({ sessionId, buffer, predictor }: PlayerCubeProps) {
       ref.current.position.x = pos.x;
       ref.current.position.z = pos.z;
       ref.current.position.y = RENDER_Y;
+      // Publish smoothed render-pos for other components (OrbitSwarm).
+      predictor.renderX = pos.x;
+      predictor.renderZ = pos.z;
       return;
     }
     const sample = buffer.sample(performance.now() - hudState.interpDelayMs);
