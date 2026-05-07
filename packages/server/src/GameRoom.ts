@@ -8,7 +8,9 @@ import {
   tickWeapons,
   tickProjectiles,
   tickGems,
+  tickXp,
   tickSpawner,
+  resolveLevelUp,
   spawnDebugBurst,
   PROJECTILE_MAX_CAPACITY,
   SIM_DT_S,
@@ -26,6 +28,7 @@ import {
 import type {
   InputMessage,
   PingMessage,
+  LevelUpChoiceMessage,
   DebugSpawnMessage,
   DebugClearEnemiesMessage,
   DebugGrantWeaponMessage,
@@ -83,6 +86,9 @@ export class GameRoom extends Room<RoomState> {
   private orbitHitCooldown!: OrbitHitCooldownStore;
   private maxOrbitHitCooldownMs!: number;
   private cooldownSweepCounter = 0;
+  // Hoisted so onMessage handlers (e.g. level_up_choice) can share the
+  // same emit lambda used by tick(). Assigned in onCreate.
+  private emit!: Emit;
 
   private snapshotLogTimer: NodeJS.Timeout | null = null;
   private patchByteCount = 0;
@@ -103,6 +109,7 @@ export class GameRoom extends Room<RoomState> {
     state.tick = 0;
     console.log(`[room ${code}] created seed=${state.seed}`);
     this.setState(state);
+    this.emit = (e: CombatEvent) => this.broadcast(e.type, e);
     this.rng = mulberry32(state.seed);
     this.orbitHitCooldown = createOrbitHitCooldownStore();
     this.maxOrbitHitCooldownMs = maxOrbitHitCooldownMs(WEAPON_KINDS);
@@ -160,6 +167,15 @@ export class GameRoom extends Room<RoomState> {
       const t = Number(message?.t);
       if (!Number.isFinite(t)) return;
       client.send("pong", { type: "pong", t, serverNow: Date.now() });
+    });
+
+    this.onMessage<LevelUpChoiceMessage>("level_up_choice", (client, message) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || !player.pendingLevelUp) return;
+      const idx = Number(message?.choiceIndex);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= player.levelUpChoices.length) return;
+      const weaponKind = player.levelUpChoices[idx]!;
+      resolveLevelUp(player, weaponKind, this.emit, /* autoPicked */ false);
     });
 
     if (ALLOW_DEBUG_MESSAGES) {
@@ -264,14 +280,16 @@ export class GameRoom extends Room<RoomState> {
 
   private tick(): void {
     this.state.tick += 1;
-    const emit: Emit = (e: CombatEvent) => this.broadcast(e.type, e);
-
-    // AD6: players → enemies → weapons → projectiles → gems → spawner.
+    // AD5 (M5): tick order is load-bearing for RNG determinism.
+    // tickXp consumes the same rng as tickSpawner, so reordering forks
+    // the seed schedule. tickLevelUpDeadlines lands here in Task 8.
     tickPlayers(this.state, SIM_DT_S);
     tickEnemies(this.state, SIM_DT_S);
-    tickWeapons(this.state, SIM_DT_S, this.weaponCtx, emit);
-    tickProjectiles(this.state, this.activeProjectiles, SIM_DT_S, this.projectileCtx, emit);
-    tickGems(this.state, emit);
+    tickWeapons(this.state, SIM_DT_S, this.weaponCtx, this.emit);
+    tickProjectiles(this.state, this.activeProjectiles, SIM_DT_S, this.projectileCtx, this.emit);
+    tickGems(this.state, this.emit);
+    tickXp(this.state, this.rng, this.emit);
+    // tickLevelUpDeadlines goes here in Phase 8.
     tickSpawner(this.state, this.spawner, SIM_DT_S, this.rng);
 
     this.cooldownSweepCounter += 1;
