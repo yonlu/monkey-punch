@@ -273,6 +273,115 @@ describe("integration: cross-client fire event determinism", () => {
   }, 25_000);
 });
 
+describe("integration: M6 player_damaged → player_downed → run_ended", () => {
+  it("solo room: damage chain reaches client; downed flag flips; runEnded broadcasts", async () => {
+    const client = new Client(`ws://localhost:${PORT}`);
+    type RoomShape = {
+      code: string;
+      runEnded: boolean;
+      players: { get: (sid: string) => { hp: number; downed: boolean; lastProcessedInput: number } | undefined };
+    };
+    const room = await client.create<RoomShape>("game", { name: "Solo" });
+    await waitFor(() => room.state.code !== "" && room.state.code != null, 1000);
+
+    type Damaged = { playerId: string; damage: number };
+    type Downed = { playerId: string };
+    type Ended = { serverTick: number };
+
+    const damages: Damaged[] = [];
+    let downedFor: string | null = null;
+    let runEndedSeen = false;
+
+    room.onMessage("player_damaged", (msg: Damaged) => damages.push(msg));
+    room.onMessage("player_downed", (msg: Downed) => { downedFor = msg.playerId; });
+    room.onMessage("run_ended", (_msg: Ended) => { runEndedSeen = true; });
+
+    // Drop hp to zero via the debug message. The handler emits player_damaged +
+    // player_downed, sets downed=true. tickRunEndCheck on the next tick flips
+    // state.runEnded and emits run_ended (single-player room → all-downed).
+    room.send("debug_damage_self", { type: "debug_damage_self", amount: 100 });
+
+    await waitFor(() => damages.length >= 1, 1500);
+    expect(damages[0]!.playerId).toBe(room.sessionId);
+    expect(damages[0]!.damage).toBe(100);
+
+    await waitFor(() => downedFor === room.sessionId, 1500);
+    // Also wait for the schema patch to propagate (message arrives before patch).
+    await waitFor(() => room.state.players.get(room.sessionId)?.downed === true, 1000);
+    const me = room.state.players.get(room.sessionId);
+    expect(me?.downed).toBe(true);
+    expect(me?.hp).toBe(0);
+
+    // Snapshot lastProcessedInput; sending an input as a downed player must NOT
+    // bump it (input handler drops silently per the gate added in Task 2.3).
+    const seqBefore = me?.lastProcessedInput ?? 0;
+    room.send("input", {
+      type: "input",
+      seq: seqBefore + 1,
+      dir: { x: 1, z: 0 },
+      facing: { x: 0, z: 1 },
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    const meAfterInput = room.state.players.get(room.sessionId);
+    expect(meAfterInput?.lastProcessedInput).toBe(seqBefore);
+
+    await waitFor(() => runEndedSeen, 1500);
+    // Also wait for the schema patch to propagate (message arrives before patch).
+    await waitFor(() => room.state.runEnded, 1000);
+    expect(room.state.runEnded).toBe(true);
+
+    await room.leave();
+  }, 8000);
+
+  it("two-client room: damaging one client does NOT end the run; both go down does", async () => {
+    const a = new Client(`ws://localhost:${PORT}`);
+    const b = new Client(`ws://localhost:${PORT}`);
+
+    type RoomShape = {
+      code: string;
+      runEnded: boolean;
+      players: {
+        get: (sid: string) => { hp: number; downed: boolean } | undefined;
+        forEach: (cb: (p: { sessionId: string; downed: boolean }) => void) => void;
+        size: number;
+      };
+    };
+    const roomA = await a.create<RoomShape>("game", { name: "Alice" });
+    await waitFor(() => roomA.state.code !== "" && roomA.state.code != null, 1000);
+
+    const roomB = await b.join<RoomShape>("game", { code: roomA.state.code, name: "Bob" });
+    await waitFor(() => roomA.state.players.size === 2 && roomB.state.players.size === 2, 1500);
+
+    let runEndedAtA = false;
+    let runEndedAtB = false;
+    roomA.onMessage("run_ended", () => { runEndedAtA = true; });
+    roomB.onMessage("run_ended", () => { runEndedAtB = true; });
+
+    // Down Alice. Run should NOT end (Bob is still up).
+    roomA.send("debug_damage_self", { type: "debug_damage_self", amount: 100 });
+    await waitFor(
+      () => roomA.state.players.get(roomA.sessionId)?.downed === true,
+      1500,
+    );
+    // Give the next tick a chance to potentially fire run_ended (it must not).
+    await new Promise((r) => setTimeout(r, 200));
+    expect(runEndedAtA).toBe(false);
+    expect(runEndedAtB).toBe(false);
+    expect(roomA.state.runEnded).toBe(false);
+
+    // Down Bob. Run ends at the next tick.
+    roomB.send("debug_damage_self", { type: "debug_damage_self", amount: 100 });
+    await waitFor(() => runEndedAtA && runEndedAtB, 2000);
+    // Also wait for the schema patch to propagate (message arrives before patch).
+    await waitFor(() => roomA.state.runEnded && roomB.state.runEnded, 1000);
+    expect(roomA.state.runEnded).toBe(true);
+    expect(roomB.state.runEnded).toBe(true);
+
+    await roomB.leave();
+    await roomA.leave();
+  }, 12000);
+});
+
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (!cond()) {
