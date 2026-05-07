@@ -91,4 +91,49 @@ describe("integration: reconnection grace", () => {
 
     await observer.leave();
   }, 5000);
+
+  it("downed state and recap fields survive reconnection within grace window", async () => {
+    const client = new Client(`ws://localhost:${PORT}`);
+    const room = await client.create<any>("game", { name: "Down" });
+    await waitFor(() => room.state.code !== "" && room.state.code != null, 1000);
+
+    const sessionId = room.sessionId;
+    const token = room.reconnectionToken;
+
+    // Drop the player to 0 hp via the debug message; tickContactDamage isn't
+    // running (no enemies in contact), so this is the deterministic path.
+    // The handler emits player_damaged + player_downed and sets downed=true.
+    room.send("debug_damage_self", { type: "debug_damage_self", amount: 100 });
+
+    await waitFor(() => {
+      const me = room.state.players.get(sessionId);
+      return !!me && me.downed === true && me.hp === 0;
+    }, 1500);
+
+    // Snapshot joinTick BEFORE disconnect so we can assert exact equality
+    // post-resume. (joinTick is uint32, so a `>= 0` assertion is trivially
+    // true and would not catch a regression that re-ran onJoin on reconnect.)
+    const joinTickBefore = room.state.players.get(sessionId)!.joinTick;
+
+    // Force-close transport and reconnect within the (overridden 1s) grace.
+    (room as any).connection.transport.close();
+    await new Promise((r) => setTimeout(r, 100));
+
+    const resumed = await client.reconnect<any>(token);
+    await waitFor(() => resumed.state.code !== "" && resumed.state.code != null, 1500);
+
+    expect(resumed.sessionId).toBe(sessionId);
+    const meAfter = resumed.state.players.get(sessionId)!;
+    expect(meAfter.downed).toBe(true);
+    expect(meAfter.hp).toBe(0);
+    // joinTick must be the same value as before disconnect (set once in onJoin,
+    // not touched on reconnect).
+    expect(meAfter.joinTick).toBe(joinTickBefore);
+    // kills and xpGained are zero in this test because no kills happened, but
+    // we assert they persist as schema fields (not `undefined`).
+    expect(meAfter.kills).toBe(0);
+    expect(meAfter.xpGained).toBe(0);
+
+    await resumed.leave();
+  }, 5000);
 });

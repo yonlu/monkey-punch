@@ -5,6 +5,8 @@ import {
   RoomState,
   tickPlayers,
   tickEnemies,
+  tickContactDamage,
+  tickRunEndCheck,
   tickWeapons,
   tickProjectiles,
   tickGems,
@@ -14,9 +16,12 @@ import {
   resolveLevelUp,
   spawnDebugBurst,
   PROJECTILE_MAX_CAPACITY,
+  ENEMY_CONTACT_COOLDOWN_S,
   SIM_DT_S,
   MAX_ENEMIES,
   WEAPON_KINDS,
+  PLAYER_MAX_HP,
+  PLAYER_NAME_MAX_LEN,
   mulberry32,
   type Rng,
   type SpawnerState,
@@ -34,14 +39,19 @@ import type {
   DebugClearEnemiesMessage,
   DebugGrantWeaponMessage,
   DebugGrantXpMessage,
+  DebugDamageSelfMessage,
 } from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
-import { clampDirection } from "./input.js";
+import { clampDirection, clampFacing } from "./input.js";
 import {
   createOrbitHitCooldownStore,
   maxOrbitHitCooldownMs,
   type OrbitHitCooldownStore,
 } from "./orbitHitCooldown.js";
+import {
+  createContactCooldownStore,
+  type ContactCooldownStore,
+} from "./contactCooldown.js";
 
 const TICK_INTERVAL_MS = SIM_DT_S * 1000; // 50 ms — must equal shared SIM_DT_S
 const MAX_PLAYERS = 10;
@@ -86,6 +96,7 @@ export class GameRoom extends Room<RoomState> {
   private projectileCtx!: ProjectileContext;
   private projectileCapacityWarned = false;
   private orbitHitCooldown!: OrbitHitCooldownStore;
+  private contactCooldown!: ContactCooldownStore;
   private maxOrbitHitCooldownMs!: number;
   private cooldownSweepCounter = 0;
   // Hoisted so onMessage handlers (e.g. level_up_choice) can share the
@@ -114,6 +125,7 @@ export class GameRoom extends Room<RoomState> {
     this.emit = (e: CombatEvent) => this.broadcast(e.type, e);
     this.rng = mulberry32(state.seed);
     this.orbitHitCooldown = createOrbitHitCooldownStore();
+    this.contactCooldown = createContactCooldownStore();
     this.maxOrbitHitCooldownMs = maxOrbitHitCooldownMs(WEAPON_KINDS);
 
     this.weaponCtx = {
@@ -152,16 +164,18 @@ export class GameRoom extends Room<RoomState> {
     this.onMessage<InputMessage>("input", (client, message) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
+      if (player.downed) return;                   // drop silently; do NOT bump lastProcessedInput
+      if (this.state.runEnded) return;             // run-end frozen state
 
       const seq = Number(message?.seq);
-      if (!Number.isFinite(seq) || seq <= player.lastProcessedInput) {
-        // Stale or replayed input — drop silently.
-        return;
-      }
+      if (!Number.isFinite(seq) || seq <= player.lastProcessedInput) return;
 
       const dir = clampDirection(Number(message?.dir?.x), Number(message?.dir?.z));
+      const facing = clampFacing(Number(message?.facing?.x), Number(message?.facing?.z));
       player.inputDir.x = dir.x;
       player.inputDir.z = dir.z;
+      player.facingX = facing.x;
+      player.facingZ = facing.z;
       player.lastProcessedInput = seq;
     });
 
@@ -234,6 +248,32 @@ export class GameRoom extends Room<RoomState> {
         // Cap at 10000 per call to prevent runaway XP from a typo.
         player.xp += Math.min(Math.floor(raw), 10_000);
       });
+
+      this.onMessage<DebugDamageSelfMessage>("debug_damage_self", (client, message) => {
+        const player = this.state.players.get(client.sessionId);
+        if (!player) return;
+        if (player.downed) return;
+        const amount = Math.max(1, Math.min(Math.floor(Number(message?.amount) || 0), player.hp));
+        player.hp -= amount;
+        this.emit({
+          type: "player_damaged",
+          playerId: client.sessionId,
+          damage: amount,
+          x: player.x,
+          z: player.z,
+          serverTick: this.state.tick,
+        });
+        if (player.hp <= 0 && !player.downed) {
+          player.downed = true;
+          player.inputDir.x = 0;
+          player.inputDir.z = 0;
+          this.emit({
+            type: "player_downed",
+            playerId: client.sessionId,
+            serverTick: this.state.tick,
+          });
+        }
+      });
     }
 
     this.installSnapshotLogger();
@@ -243,10 +283,19 @@ export class GameRoom extends Room<RoomState> {
   override onJoin(client: Client, options: JoinOptions): void {
     const player = new Player();
     player.sessionId = client.sessionId;
-    player.name = (options?.name ?? "Anon").slice(0, 24);
+    player.name =
+      ((options?.name ?? "").trim().slice(0, PLAYER_NAME_MAX_LEN) || "Player");
     player.x = 0;
     player.y = 0;
     player.z = 0;
+    player.hp = PLAYER_MAX_HP;
+    player.maxHp = PLAYER_MAX_HP;
+    player.downed = false;
+    player.facingX = 0;
+    player.facingZ = 1;
+    player.kills = 0;
+    player.xpGained = 0;
+    player.joinTick = this.state.tick;
 
     const bolt = new WeaponState();
     bolt.kind = 0;
@@ -269,6 +318,7 @@ export class GameRoom extends Room<RoomState> {
     if (consented) {
       this.state.players.delete(client.sessionId);
       this.orbitHitCooldown.evictPlayer(client.sessionId);
+      this.contactCooldown.evictPlayer(client.sessionId);
       return;
     }
 
@@ -282,6 +332,7 @@ export class GameRoom extends Room<RoomState> {
       );
       this.state.players.delete(client.sessionId);
       this.orbitHitCooldown.evictPlayer(client.sessionId);
+      this.contactCooldown.evictPlayer(client.sessionId);
     }
   }
 
@@ -291,13 +342,13 @@ export class GameRoom extends Room<RoomState> {
 
   private tick(): void {
     this.state.tick += 1;
-    // AD5 (M5): tick order is load-bearing for RNG determinism AND for
-    // fairness. tickXp consumes the same rng as tickSpawner, so reordering
-    // forks the seed schedule. xp after gems so this-tick gem pickups feed
-    // the threshold check; deadlines immediately after xp so an auto-pick
-    // that fires this tick uses fresh choices.
+    // M6: tickContactDamage after tickEnemies sees fresh positions; tickRunEndCheck
+    // immediately after so weapons/projectiles/spawner all observe the post-end
+    // state via their `state.runEnded` early-out.
     tickPlayers(this.state, SIM_DT_S);
     tickEnemies(this.state, SIM_DT_S);
+    tickContactDamage(this.state, this.contactCooldown, SIM_DT_S, Date.now(), this.emit);
+    tickRunEndCheck(this.state, this.emit);
     tickWeapons(this.state, SIM_DT_S, this.weaponCtx, this.emit);
     tickProjectiles(this.state, this.activeProjectiles, SIM_DT_S, this.projectileCtx, this.emit);
     tickGems(this.state, this.emit);
@@ -308,7 +359,9 @@ export class GameRoom extends Room<RoomState> {
     this.cooldownSweepCounter += 1;
     if (this.cooldownSweepCounter >= ORBIT_COOLDOWN_SWEEP_INTERVAL_TICKS) {
       this.cooldownSweepCounter = 0;
-      this.orbitHitCooldown.sweep(Date.now(), this.maxOrbitHitCooldownMs);
+      const now = Date.now();
+      this.orbitHitCooldown.sweep(now, this.maxOrbitHitCooldownMs);
+      this.contactCooldown.sweep(now, ENEMY_CONTACT_COOLDOWN_S * 1000);
     }
   }
 

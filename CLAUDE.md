@@ -59,22 +59,29 @@ binding — violations are bugs.
     instance, not on RoomState — server-only counters do not pollute the
     schema.
 11. **Tick order.** Each server tick runs in this fixed order:
-    `tickPlayers → tickEnemies → tickWeapons → tickProjectiles → tickGems
-    → tickXp → tickLevelUpDeadlines → tickSpawner`.
-    Players first so weapons see fresh positions; weapons before
-    projectiles so a same-tick fire is integrated next tick (it starts
-    with `age = 0` and the projectile's first movement is in the
-    *following* `tickProjectiles` call); gems after projectiles so
-    this-tick deaths drop pickups before pickup checks run; xp after
-    gems so this-tick gem pickups feed the level-up threshold check;
-    deadlines immediately after xp so an auto-pick that fires this
-    tick uses fresh choices; spawner last so the rng schedule is
-    fixed (xp + spawner both consume the room rng — reordering forks
-    the seed). This order is load-bearing for fairness AND for cross-
-    client determinism — do not reorder.
+    `tickPlayers → tickEnemies → tickContactDamage → tickRunEndCheck
+    → tickWeapons → tickProjectiles → tickGems → tickXp
+    → tickLevelUpDeadlines → tickSpawner`.
+    Players first so weapons see fresh positions; contact damage after
+    enemies so contact tests see post-movement positions; run-end check
+    immediately after so weapons/projectiles/spawner all see the
+    post-end state; weapons before projectiles so a same-tick fire is
+    integrated next tick (it starts with `age = 0` and the projectile's
+    first movement is in the *following* `tickProjectiles` call); gems
+    after projectiles so this-tick deaths drop pickups before pickup
+    checks run; xp after gems so this-tick gem pickups feed the
+    level-up threshold check; deadlines immediately after xp so an
+    auto-pick that fires this tick uses fresh choices; spawner last so
+    the rng schedule is fixed (xp + spawner both consume the room rng
+    — reordering forks the seed). This order is load-bearing for
+    fairness AND for cross-client determinism — do not reorder.
+    Universal invariant (M6 onward): every tick function early-outs at
+    its top with `if (state.runEnded) return;`. The frozen-world recap
+    state is one branch in each function, not a per-system gate.
 12. **Combat events are server→client only and time-based, not state.**
     `fire`, `hit`, `enemy_died`, `gem_collected`, `level_up_offered`,
-    `level_up_resolved` are broadcast events, not schema entries.
+    `level_up_resolved`, `player_damaged`, `player_downed`, `run_ended`
+    are broadcast events, not schema entries.
     Projectile-behavior weapons are simulated client-side as a closed-form
     function of the `fire` event payload. Orbit-behavior weapons are
     simulated client-side as a closed-form function of `(state.tick,

@@ -81,7 +81,12 @@ export class LocalPredictor {
    */
   step(dir: { x: number; z: number }, send: SendInput): void {
     this.seq += 1;
-    const msg = { type: "input" as const, seq: this.seq, dir: { x: dir.x, z: dir.z } };
+    const msg = {
+      type: "input" as const,
+      seq: this.seq,
+      dir: { x: dir.x, z: dir.z },
+      facing: { x: 0, z: 1 },
+    };
     send(msg);
     this.unacked.push({ seq: this.seq, dir: msg.dir });
     this.predictedX += dir.x * PLAYER_SPEED * SIM_DT_S;

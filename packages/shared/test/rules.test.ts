@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { RoomState, Player, Enemy, WeaponState, Gem } from "../src/schema.js";
 import {
   tickPlayers,
@@ -11,12 +11,15 @@ import {
   tickXp,
   tickLevelUpDeadlines,
   resolveLevelUp,
+  tickContactDamage,
+  tickRunEndCheck,
   type SpawnerState,
   type Projectile,
   type WeaponContext,
   type ProjectileContext,
   type Emit,
   type CombatEvent,
+  type ContactCooldownLike,
 } from "../src/rules.js";
 import {
   PLAYER_SPEED,
@@ -31,6 +34,8 @@ import {
   TARGETING_MAX_RANGE,
   LEVEL_UP_DEADLINE_TICKS,
   xpForLevel,
+  MAP_RADIUS,
+  ENEMY_DESPAWN_RADIUS,
 } from "../src/constants.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "../src/weapons.js";
 import { mulberry32 } from "../src/rng.js";
@@ -1112,5 +1117,358 @@ describe("tickLevelUpDeadlines", () => {
     const events: CombatEvent[] = [];
     tickLevelUpDeadlines(state, (e) => events.push(e));
     expect(events.length).toBe(0);
+  });
+});
+
+describe("tickPlayers — M6", () => {
+  it("clamps player position to MAP_RADIUS when integration would exceed it", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 1, 0);
+    p.x = 59;
+    p.z = 0;
+    // Step would push past MAP_RADIUS=60.
+    for (let i = 0; i < 100; i++) tickPlayers(state, 0.05);
+    expect(Math.hypot(p.x, p.z)).toBeLessThanOrEqual(60 + 1e-9);
+    expect(p.x).toBeCloseTo(60);
+  });
+
+  it("does not move downed players", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 1, 0);
+    p.downed = true;
+    tickPlayers(state, 0.5);
+    expect(p.x).toBe(0);
+  });
+});
+
+describe("tickEnemies — M6", () => {
+  it("treats downed players as non-targets (steps toward living players only)", () => {
+    const state = new RoomState();
+    const dead = addPlayer(state, "dead", 0, 0); dead.x = 0; dead.z = 0; dead.downed = true;
+    const live = addPlayer(state, "live", 0, 0); live.x = 10; live.z = 0;
+    const e = addEnemy(state, 1, 1, 0);   // closer to dead
+    tickEnemies(state, 0.05);
+    // Should step toward live (positive x), not toward dead.
+    expect(e.x).toBeGreaterThan(1);
+  });
+
+  it("despawns enemies beyond ENEMY_DESPAWN_RADIUS from any non-downed player", () => {
+    const state = new RoomState();
+    const live = addPlayer(state, "live", 0, 0); live.x = 0; live.z = 0;
+    addEnemy(state, 1, 100, 0);   // 100 units away
+    tickEnemies(state, 0.05);
+    expect(state.enemies.has("1")).toBe(false);
+  });
+
+  it("does NOT despawn enemies within ENEMY_DESPAWN_RADIUS", () => {
+    const state = new RoomState();
+    const live = addPlayer(state, "live", 0, 0); live.x = 0; live.z = 0;
+    addEnemy(state, 1, 30, 0);
+    tickEnemies(state, 0.05);
+    expect(state.enemies.has("1")).toBe(true);
+  });
+});
+
+describe("runEnded universal early-out", () => {
+  function makeFrozenState(): RoomState {
+    const state = new RoomState();
+    state.runEnded = true;
+    const p = addPlayer(state, "a", 1, 0);
+    p.x = 0; p.z = 0;
+    addEnemy(state, 1, 5, 0);
+    return state;
+  }
+
+  function noopEmit() {}
+
+  it("tickPlayers does not move players when runEnded", () => {
+    const state = makeFrozenState();
+    const p = state.players.get("a")!;
+    tickPlayers(state, 0.05);
+    expect(p.x).toBe(0);
+    expect(p.z).toBe(0);
+  });
+
+  it("tickEnemies does not move enemies when runEnded", () => {
+    const state = makeFrozenState();
+    const e = state.enemies.get("1")!;
+    tickEnemies(state, 0.05);
+    expect(e.x).toBe(5);
+    expect(e.z).toBe(0);
+  });
+
+  it("tickGems does not collect gems when runEnded", () => {
+    const state = makeFrozenState();
+    const p = state.players.get("a")!;
+    const g = new Gem();
+    g.id = 1; g.x = 0; g.z = 0; g.value = 5;
+    state.gems.set("1", g);
+    tickGems(state, noopEmit);
+    expect(state.gems.size).toBe(1);
+    expect(p.xp).toBe(0);
+  });
+
+  it("tickXp does not advance xp threshold when runEnded", () => {
+    const state = makeFrozenState();
+    const p = state.players.get("a")!;
+    p.xp = 10_000;
+    p.level = 1;
+    tickXp(state, mulberry32(1), noopEmit);
+    expect(p.level).toBe(1);
+    expect(p.pendingLevelUp).toBe(false);
+  });
+});
+
+function makeFakeContactCooldown() {
+  const tryHit = vi.fn().mockReturnValue(true);
+  return {
+    store: { tryHit, evictEnemy: vi.fn(), evictPlayer: vi.fn(), sweep: vi.fn() },
+    tryHit,
+  };
+}
+
+describe("tickContactDamage", () => {
+  it("applies damage when player and enemy overlap and cooldown allows", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.hp = 100; p.maxHp = 100;
+    p.x = 0; p.z = 0;
+    addEnemy(state, 1, 0.5, 0);   // touching: dist = 0.5 < (PLAYER_RADIUS + ENEMY_RADIUS = 1)
+    const fc = makeFakeContactCooldown();
+    const events: CombatEvent[] = [];
+    const emit: Emit = (e) => { events.push(e); };
+
+    tickContactDamage(state, fc.store, 0.05, 0, emit);
+
+    expect(p.hp).toBe(95);
+    expect(events.find((e) => e.type === "player_damaged")).toBeDefined();
+  });
+
+  it("does not apply damage when cooldown rejects", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.hp = 100; p.x = 0; p.z = 0;
+    addEnemy(state, 1, 0.5, 0);
+    const fc = makeFakeContactCooldown();
+    fc.tryHit.mockReturnValue(false);
+    const events: CombatEvent[] = [];
+    tickContactDamage(state, fc.store, 0.05, 0, (e) => events.push(e));
+
+    expect(p.hp).toBe(100);
+    expect(events.length).toBe(0);
+  });
+
+  it("flips downed and emits player_downed when hp crosses 0", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 1, 0);
+    p.hp = 5; p.maxHp = 100; p.x = 0; p.z = 0;
+    p.inputDir.x = 1;   // moving when hit
+    addEnemy(state, 1, 0.5, 0);
+    const fc = makeFakeContactCooldown();
+    const events: CombatEvent[] = [];
+
+    tickContactDamage(state, fc.store, 0.05, 0, (e) => events.push(e));
+
+    expect(p.hp).toBe(0);
+    expect(p.downed).toBe(true);
+    expect(p.inputDir.x).toBe(0);
+    expect(p.inputDir.z).toBe(0);
+    expect(events.filter((e) => e.type === "player_damaged").length).toBe(1);
+    expect(events.filter((e) => e.type === "player_downed").length).toBe(1);
+  });
+
+  it("does not damage already-downed players", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.hp = 0; p.downed = true; p.x = 0; p.z = 0;
+    addEnemy(state, 1, 0.5, 0);
+    const fc = makeFakeContactCooldown();
+    const events: CombatEvent[] = [];
+    tickContactDamage(state, fc.store, 0.05, 0, (e) => events.push(e));
+    expect(events.length).toBe(0);
+  });
+
+  it("early-outs on runEnded", () => {
+    const state = new RoomState();
+    state.runEnded = true;
+    const p = addPlayer(state, "a", 0, 0);
+    p.hp = 100; p.x = 0; p.z = 0;
+    addEnemy(state, 1, 0.5, 0);
+    const fc = makeFakeContactCooldown();
+    const events: CombatEvent[] = [];
+    tickContactDamage(state, fc.store, 0.05, 0, (e) => events.push(e));
+    expect(p.hp).toBe(100);
+    expect(events.length).toBe(0);
+  });
+});
+
+describe("tickRunEndCheck", () => {
+  it("flips runEnded only when all players are downed", () => {
+    const state = new RoomState();
+    const a = addPlayer(state, "a", 0, 0); a.downed = true;
+    const b = addPlayer(state, "b", 0, 0); b.downed = false;
+    const events: CombatEvent[] = [];
+    tickRunEndCheck(state, (e) => events.push(e));
+    expect(state.runEnded).toBe(false);
+    expect(events.length).toBe(0);
+
+    b.downed = true;
+    tickRunEndCheck(state, (e) => events.push(e));
+    expect(state.runEnded).toBe(true);
+    expect(state.runEndedTick).toBe(state.tick);
+    expect(events.filter((e) => e.type === "run_ended").length).toBe(1);
+  });
+
+  it("does not fire on empty room", () => {
+    const state = new RoomState();
+    const events: CombatEvent[] = [];
+    tickRunEndCheck(state, (e) => events.push(e));
+    expect(state.runEnded).toBe(false);
+    expect(events.length).toBe(0);
+  });
+
+  it("fires only once across multiple ticks", () => {
+    const state = new RoomState();
+    const a = addPlayer(state, "a", 0, 0); a.downed = true;
+    const events: CombatEvent[] = [];
+    tickRunEndCheck(state, (e) => events.push(e));
+    tickRunEndCheck(state, (e) => events.push(e));
+    expect(events.filter((e) => e.type === "run_ended").length).toBe(1);
+  });
+});
+
+describe("tickProjectiles — M6 kills", () => {
+  it("credits owner.kills when a projectile kills an enemy", () => {
+    const state = new RoomState();
+    const owner = addPlayer(state, "owner", 0, 0); owner.x = 0; owner.z = 0;
+    const e = addEnemy(state, 1, 1, 0); e.hp = 1;
+    const projectiles: Projectile[] = [{
+      fireId: 1, ownerId: "owner", weaponKind: 0,
+      damage: 10, speed: 20, radius: 0.4, lifetime: 1,
+      age: 0, dirX: 1, dirZ: 0,
+      prevX: 0, prevZ: 0, x: 0, z: 0,
+    }];
+    const ctx: ProjectileContext = {
+      nextGemId: () => 1,
+      orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+    };
+    tickProjectiles(state, projectiles, 0.05, ctx, () => {});
+    expect(owner.kills).toBe(1);
+  });
+
+  it("does not crash when projectile owner has left", () => {
+    const state = new RoomState();
+    addEnemy(state, 1, 1, 0).hp = 1;
+    const projectiles: Projectile[] = [{
+      fireId: 1, ownerId: "ghost", weaponKind: 0,
+      damage: 10, speed: 20, radius: 0.4, lifetime: 1,
+      age: 0, dirX: 1, dirZ: 0,
+      prevX: 0, prevZ: 0, x: 0, z: 0,
+    }];
+    const ctx: ProjectileContext = {
+      nextGemId: () => 1,
+      orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+    };
+    expect(() => tickProjectiles(state, projectiles, 0.05, ctx, () => {})).not.toThrow();
+  });
+});
+
+describe("tickWeapons — M6", () => {
+  it("skips downed players entirely (no fire emitted, no cooldown decrement)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0); p.downed = true;
+    const w = new WeaponState();
+    w.kind = 0; w.level = 1; w.cooldownRemaining = 0;
+    p.weapons.push(w);
+    addEnemy(state, 1, 5, 0);
+    const events: CombatEvent[] = [];
+    const ctx: WeaponContext = {
+      nextFireId: () => 1,
+      serverNowMs: () => 0,
+      pushProjectile: () => {},
+      nextGemId: () => 1,
+      orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+    };
+    tickWeapons(state, 0.05, ctx, (e) => events.push(e));
+    expect(events.find((e) => e.type === "fire")).toBeUndefined();
+    expect(w.cooldownRemaining).toBe(0);
+  });
+
+  it("increments owner.kills on orbit-killing-blow", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.x = 0; p.z = 0;
+    const w = new WeaponState();
+    w.kind = 1; w.level = 1; w.cooldownRemaining = 0;   // orbit
+    p.weapons.push(w);
+    // At state.tick=0 and orbRadius=2.0, orb 0 sits at (2.0, 0).
+    const e = addEnemy(state, 1, 2.0, 0);
+    e.hp = 1;   // dies in one orbit hit
+    const ctx: WeaponContext = {
+      nextFireId: () => 1,
+      serverNowMs: () => 0,
+      pushProjectile: () => {},
+      nextGemId: () => 1,
+      orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+    };
+    tickWeapons(state, 0.05, ctx, () => {});
+    expect(p.kills).toBe(1);
+  });
+});
+
+describe("tickGems — M6", () => {
+  it("increments xpGained alongside xp on collect", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0); p.x = 0; p.z = 0; p.xp = 0; p.xpGained = 0;
+    const g = new Gem(); g.id = 1; g.x = 0; g.z = 0; g.value = 5;
+    state.gems.set("1", g);
+    tickGems(state, () => {});
+    expect(p.xp).toBe(5);
+    expect(p.xpGained).toBe(5);
+  });
+
+  it("xpGained is monotone (never drained when xp is)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0); p.x = 0; p.z = 0; p.xp = 0; p.xpGained = 0;
+    const g1 = new Gem(); g1.id = 1; g1.x = 0; g1.z = 0; g1.value = 10;
+    state.gems.set("1", g1);
+    tickGems(state, () => {});
+    p.xp = 0;   // simulate level-up drain
+    const g2 = new Gem(); g2.id = 2; g2.x = 0; g2.z = 0; g2.value = 4;
+    state.gems.set("2", g2);
+    tickGems(state, () => {});
+    expect(p.xp).toBe(4);
+    expect(p.xpGained).toBe(14);
+  });
+});
+
+describe("tickSpawner — M6", () => {
+  it("does not target downed players when picking a spawn anchor", () => {
+    const state = new RoomState();
+    const dead = addPlayer(state, "dead", 0, 0); dead.downed = true; dead.x = 1000; dead.z = 1000;
+    const live = addPlayer(state, "live", 0, 0); live.x = 0; live.z = 0;
+    const spawner: SpawnerState = { accumulator: ENEMY_SPAWN_INTERVAL_S, nextEnemyId: 1 };
+    const rng = mulberry32(7);
+    tickSpawner(state, spawner, ENEMY_SPAWN_INTERVAL_S, rng);
+    // The new enemy must be near the live player, not within 1000 units of dead.
+    const e = Array.from(state.enemies.values())[0]!;
+    expect(Math.hypot(e.x - live.x, e.z - live.z)).toBeLessThanOrEqual(ENEMY_SPAWN_RADIUS + 1);
+  });
+
+  it("skips spawn when 3 retries all land outside MAP_RADIUS", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0); p.x = 59.9; p.z = 0;
+    // accumulator starts at 0; one dt of exactly ENEMY_SPAWN_INTERVAL_S fires exactly one slot.
+    const spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+    // Most angles around p at radius 30 land outside MAP_RADIUS=60.
+    // We assert the enemies count is either 0 (all retries failed) or 1 (one retry succeeded with right angle).
+    const before = state.enemies.size;
+    tickSpawner(state, spawner, ENEMY_SPAWN_INTERVAL_S, mulberry32(1));
+    const after = state.enemies.size;
+    expect(after - before).toBeLessThanOrEqual(1);
+    if (after - before === 1) {
+      const e = Array.from(state.enemies.values()).pop()!;
+      expect(Math.hypot(e.x, e.z)).toBeLessThanOrEqual(MAP_RADIUS + 1e-6);
+    }
   });
 });

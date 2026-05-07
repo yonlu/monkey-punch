@@ -1,4 +1,5 @@
 import { Schema, MapSchema, ArraySchema, defineTypes } from "@colyseus/schema";
+import { PLAYER_MAX_HP } from "./constants.js";
 
 // IMPORTANT: schema fields are declared with `declare` (type-only) and assigned
 // in the constructor body. Class field INITIALIZERS (`x = 0`) compile differently
@@ -64,6 +65,14 @@ export class Player extends Schema {
   declare pendingLevelUp: boolean;
   declare levelUpChoices: ArraySchema<number>;
   declare levelUpDeadlineTick: number;
+  declare hp: number;
+  declare maxHp: number;
+  declare downed: boolean;
+  declare facingX: number;
+  declare facingZ: number;
+  declare kills: number;
+  declare xpGained: number;
+  declare joinTick: number;
   constructor() {
     super();
     this.sessionId = "";
@@ -79,6 +88,14 @@ export class Player extends Schema {
     this.pendingLevelUp = false;
     this.levelUpChoices = new ArraySchema<number>();
     this.levelUpDeadlineTick = 0;
+    this.hp = PLAYER_MAX_HP;
+    this.maxHp = PLAYER_MAX_HP;
+    this.downed = false;
+    this.facingX = 0;
+    this.facingZ = 1;
+    this.kills = 0;
+    this.xpGained = 0;
+    this.joinTick = 0;
   }
 }
 defineTypes(Player, {
@@ -95,6 +112,14 @@ defineTypes(Player, {
   pendingLevelUp: "boolean",
   levelUpChoices: [ "uint8" ],
   levelUpDeadlineTick: "uint32",
+  hp: "uint16",
+  maxHp: "uint16",
+  downed: "boolean",
+  facingX: "number",
+  facingZ: "number",
+  kills: "uint32",
+  xpGained: "uint32",
+  joinTick: "uint32",
 });
 
 export class Enemy extends Schema {
@@ -147,6 +172,8 @@ export class RoomState extends Schema {
   declare players: MapSchema<Player>;
   declare enemies: MapSchema<Enemy>;
   declare gems: MapSchema<Gem>;
+  declare runEnded: boolean;
+  declare runEndedTick: number;
   constructor() {
     super();
     this.code = "";
@@ -155,6 +182,8 @@ export class RoomState extends Schema {
     this.players = new MapSchema<Player>();
     this.enemies = new MapSchema<Enemy>();
     this.gems = new MapSchema<Gem>();
+    this.runEnded = false;
+    this.runEndedTick = 0;
   }
 }
 defineTypes(RoomState, {
@@ -164,4 +193,6 @@ defineTypes(RoomState, {
   players: { map: Player },
   enemies: { map: Enemy },
   gems: { map: Gem },
+  runEnded: "boolean",
+  runEndedTick: "uint32",
 });

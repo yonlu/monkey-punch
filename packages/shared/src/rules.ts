@@ -6,6 +6,9 @@ import {
   type RoomState,
 } from "./schema.js";
 import {
+  ENEMY_CONTACT_COOLDOWN_S,
+  ENEMY_CONTACT_DAMAGE,
+  ENEMY_DESPAWN_RADIUS,
   ENEMY_HP,
   ENEMY_RADIUS,
   ENEMY_SPAWN_INTERVAL_S,
@@ -14,7 +17,9 @@ import {
   GEM_PICKUP_RADIUS,
   GEM_VALUE,
   LEVEL_UP_DEADLINE_TICKS,
+  MAP_RADIUS,
   MAX_ENEMIES,
+  PLAYER_RADIUS,
   PLAYER_SPEED,
   TARGETING_MAX_RANGE,
   TICK_RATE,
@@ -29,12 +34,24 @@ import type {
   GemCollectedEvent,
   LevelUpOfferedEvent,
   LevelUpResolvedEvent,
+  PlayerDamagedEvent,
+  PlayerDownedEvent,
+  RunEndedEvent,
 } from "./messages.js";
 
 export function tickPlayers(state: RoomState, dt: number): void {
+  if (state.runEnded) return;
+  const max2 = MAP_RADIUS * MAP_RADIUS;
   state.players.forEach((p) => {
+    if (p.downed) return;
     p.x += p.inputDir.x * PLAYER_SPEED * dt;
     p.z += p.inputDir.z * PLAYER_SPEED * dt;
+    const r2 = p.x * p.x + p.z * p.z;
+    if (r2 > max2) {
+      const scale = MAP_RADIUS / Math.sqrt(r2);
+      p.x *= scale;
+      p.z *= scale;
+    }
   });
 }
 
@@ -47,7 +64,11 @@ export function tickPlayers(state: RoomState, dt: number): void {
  * Allocates only function-scope locals.
  */
 export function tickEnemies(state: RoomState, dt: number): void {
+  if (state.runEnded) return;
   if (state.players.size === 0) return;
+
+  const despawnSq = ENEMY_DESPAWN_RADIUS * ENEMY_DESPAWN_RADIUS;
+  const toDespawn: number[] = [];
 
   state.enemies.forEach((enemy: Enemy) => {
     let nearestDx = 0;
@@ -55,6 +76,7 @@ export function tickEnemies(state: RoomState, dt: number): void {
     let nearestSq = Infinity;
 
     state.players.forEach((p: Player) => {
+      if (p.downed) return;                    // skip downed for targeting + despawn
       const dx = p.x - enemy.x;
       const dz = p.z - enemy.z;
       const sq = dx * dx + dz * dz;
@@ -65,12 +87,19 @@ export function tickEnemies(state: RoomState, dt: number): void {
       }
     });
 
-    if (nearestSq === 0) return;            // coincident: no step
+    if (nearestSq === Infinity) return;        // no living players — freeze in place
+    if (nearestSq > despawnSq) {
+      toDespawn.push(enemy.id);
+      return;
+    }
+    if (nearestSq === 0) return;
     const dist = Math.sqrt(nearestSq);
     const step = ENEMY_SPEED * dt;
     enemy.x += (nearestDx / dist) * step;
     enemy.z += (nearestDz / dist) * step;
   });
+
+  for (const id of toDespawn) state.enemies.delete(String(id));
 }
 
 export type SpawnerState = {
@@ -87,6 +116,11 @@ export type SpawnerState = {
  * same call. Reasoning: if it stalled, the moment one enemy was removed
  * (next milestone, when combat lands) we'd flood. Drain is the right
  * default.
+ *
+ * M6: Only non-downed players are eligible spawn anchors. If all players
+ * are downed, bail early (run will end this tick anyway). Spawn positions
+ * are clamped to MAP_RADIUS via a retry-3 loop; if all retries land
+ * outside the map, the slot is skipped (accumulator still decremented).
  */
 export function tickSpawner(
   state: RoomState,
@@ -94,9 +128,16 @@ export function tickSpawner(
   dt: number,
   rng: Rng,
 ): void {
+  if (state.runEnded) return;
   if (state.players.size === 0) return;
 
+  // Count non-downed players; bail if all are downed (run will end this tick anyway).
+  let liveCount = 0;
+  state.players.forEach((p) => { if (!p.downed) liveCount += 1; });
+  if (liveCount === 0) return;
+
   spawner.accumulator += dt;
+  const map2 = MAP_RADIUS * MAP_RADIUS;
 
   while (spawner.accumulator >= ENEMY_SPAWN_INTERVAL_S) {
     if (state.enemies.size >= MAX_ENEMIES) {
@@ -104,32 +145,37 @@ export function tickSpawner(
       return;
     }
 
-    const playerIdx = Math.floor(rng() * state.players.size);
+    // Pick a random non-downed player.
+    const liveIdx = Math.floor(rng() * liveCount);
     let i = 0;
     let target: Player | undefined;
     state.players.forEach((p) => {
-      if (i === playerIdx) target = p;
+      if (p.downed) return;
+      if (i === liveIdx) target = p;
       i++;
     });
     if (!target) {
-      // Unreachable given mulberry32's [0,1) output range and the size>0
-      // check above (state.players.size === 0 short-circuits at the top).
-      // Throw rather than silently swallow so a future refactor that
-      // breaks the index math surfaces immediately instead of degrading
-      // determinism by consuming RNG calls in an asymmetric pattern.
       throw new Error(
-        `tickSpawner: unreachable — playerIdx=${playerIdx} out of range for size=${state.players.size}`,
+        `tickSpawner: unreachable — liveIdx=${liveIdx} out of range for liveCount=${liveCount}`,
       );
     }
 
-    const angle = rng() * Math.PI * 2;
-    const enemy = new Enemy();
-    enemy.id = spawner.nextEnemyId++;
-    enemy.kind = 0;
-    enemy.x = target.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
-    enemy.z = target.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
-    enemy.hp = ENEMY_HP;
-    state.enemies.set(String(enemy.id), enemy);
+    // Try up to 3 angles to land inside MAP_RADIUS; skip this slot if all fail.
+    let placed = false;
+    for (let attempt = 0; attempt < 3 && !placed; attempt++) {
+      const angle = rng() * Math.PI * 2;
+      const x = target.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
+      const z = target.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
+      if (x * x + z * z > map2) continue;
+      const enemy = new Enemy();
+      enemy.id = spawner.nextEnemyId++;
+      enemy.kind = 0;
+      enemy.x = x;
+      enemy.z = z;
+      enemy.hp = ENEMY_HP;
+      state.enemies.set(String(enemy.id), enemy);
+      placed = true;
+    }
 
     spawner.accumulator -= ENEMY_SPAWN_INTERVAL_S;
   }
@@ -189,7 +235,10 @@ export type CombatEvent =
   | EnemyDiedEvent
   | GemCollectedEvent
   | LevelUpOfferedEvent
-  | LevelUpResolvedEvent;
+  | LevelUpResolvedEvent
+  | PlayerDamagedEvent
+  | PlayerDownedEvent
+  | RunEndedEvent;
 export type Emit = (event: CombatEvent) => void;
 
 /**
@@ -201,6 +250,17 @@ export type Emit = (event: CombatEvent) => void;
 export interface OrbitHitCooldownLike {
   tryHit(playerId: string, weaponIndex: number, enemyId: number, nowMs: number, cooldownMs: number): boolean;
   evictEnemy(enemyId: number): void;
+}
+
+/**
+ * Server-supplied per-(player, enemy) contact-damage cooldown. Structural —
+ * the concrete implementation lives in server/src/contactCooldown.ts.
+ */
+export interface ContactCooldownLike {
+  tryHit(playerId: string, enemyId: number, nowMs: number, cooldownMs: number): boolean;
+  evictEnemy(enemyId: number): void;
+  evictPlayer(playerId: string): void;
+  sweep(nowMs: number, maxCooldownMs: number): void;
 }
 
 export type WeaponContext = {
@@ -230,9 +290,11 @@ export function tickWeapons(
   ctx: WeaponContext,
   emit: Emit,
 ): void {
+  if (state.runEnded) return;
   const rangeSq = TARGETING_MAX_RANGE * TARGETING_MAX_RANGE;
 
   state.players.forEach((player: Player) => {
+    if (player.downed) return;                 // M6 — downed players don't fire
     player.weapons.forEach((weapon: WeaponState) => {
       const def: WeaponDef | undefined = WEAPON_KINDS[weapon.kind];
       if (!def) return; // unknown kind — skip silently
@@ -373,6 +435,7 @@ export function tickWeapons(
                 const deathZ = enemy.z;
                 const deathId = enemy.id;
                 state.enemies.delete(String(enemy.id));
+                player.kills += 1;
                 ctx.orbitHitCooldown.evictEnemy(deathId);
 
                 emit({
@@ -425,6 +488,7 @@ export function tickProjectiles(
   ctx: ProjectileContext,
   emit: Emit,
 ): void {
+  if (state.runEnded) return;
   let w = 0;
   for (let r = 0; r < active.length; r++) {
     const proj = active[r]!;
@@ -494,6 +558,8 @@ export function tickProjectiles(
         const deathX = hitEnemy.x;
         const deathZ = hitEnemy.z;
         const deathId = hitEnemy.id;
+        const owner = state.players.get(proj.ownerId);
+        if (owner) owner.kills += 1;
         state.enemies.delete(String(hitEnemy.id));
         ctx.orbitHitCooldown.evictEnemy(deathId);
 
@@ -523,6 +589,7 @@ export function tickProjectiles(
  * dependency-free.
  */
 export function tickGems(state: RoomState, emit: Emit): void {
+  if (state.runEnded) return;
   const radiusSq = GEM_PICKUP_RADIUS * GEM_PICKUP_RADIUS;
   state.gems.forEach((gem: Gem, key: string) => {
     let collector: Player | undefined;
@@ -535,6 +602,7 @@ export function tickGems(state: RoomState, emit: Emit): void {
     if (!collector) return;
 
     collector.xp += gem.value;
+    collector.xpGained += gem.value;
     state.gems.delete(key);
     emit({
       type: "gem_collected",
@@ -614,6 +682,7 @@ export function resolveLevelUp(
  * rng, fixed tick order).
  */
 export function tickXp(state: RoomState, rng: Rng, emit: Emit): void {
+  if (state.runEnded) return;
   state.players.forEach((player: Player) => {
     if (player.pendingLevelUp) return;
     const need = xpForLevel(player.level);
@@ -649,6 +718,7 @@ export function tickXp(state: RoomState, rng: Rng, emit: Emit): void {
  * Per spec §AD9 — same resolveLevelUp path, autoPicked=true.
  */
 export function tickLevelUpDeadlines(state: RoomState, emit: Emit): void {
+  if (state.runEnded) return;
   state.players.forEach((player: Player) => {
     if (!player.pendingLevelUp) return;
     if (state.tick < player.levelUpDeadlineTick) return;
@@ -661,4 +731,83 @@ export function tickLevelUpDeadlines(state: RoomState, emit: Emit): void {
     const weaponKind = player.levelUpChoices[0]!;
     resolveLevelUp(player, weaponKind, emit, /* autoPicked */ true);
   });
+}
+
+/**
+ * For each non-downed player, find every enemy whose center-to-center
+ * distance is within (PLAYER_RADIUS + ENEMY_RADIUS). Each touching pair
+ * tries to hit through `cooldown.tryHit(...)`; on success, apply
+ * ENEMY_CONTACT_DAMAGE, emit `player_damaged`, and (if hp crosses 0) flip
+ * `downed` + zero inputDir + emit `player_downed`.
+ *
+ * `nowMs` is the server's wall-clock; the cooldown store is the only
+ * consumer of it. Determinism: outcomes (damage, downed) depend on the
+ * cooldown decision, which depends on wall-clock — same pattern as orbit
+ * hits in tickWeapons. Clients don't run this function, so cross-client
+ * divergence is impossible by construction (server is authoritative).
+ */
+export function tickContactDamage(
+  state: RoomState,
+  cooldown: ContactCooldownLike,
+  _dt: number,
+  nowMs: number,
+  emit: Emit,
+): void {
+  if (state.runEnded) return;
+  const cooldownMs = ENEMY_CONTACT_COOLDOWN_S * 1000;
+  const radiusSum = PLAYER_RADIUS + ENEMY_RADIUS;
+  const radiusSumSq = radiusSum * radiusSum;
+
+  state.players.forEach((player: Player) => {
+    if (player.downed) return;
+
+    state.enemies.forEach((enemy: Enemy) => {
+      const dx = enemy.x - player.x;
+      const dz = enemy.z - player.z;
+      if (dx * dx + dz * dz > radiusSumSq) return;
+      if (!cooldown.tryHit(player.sessionId, enemy.id, nowMs, cooldownMs)) return;
+
+      const damage = Math.min(player.hp, ENEMY_CONTACT_DAMAGE);
+      player.hp -= damage;
+      emit({
+        type: "player_damaged",
+        playerId: player.sessionId,
+        damage,
+        x: player.x,
+        z: player.z,
+        serverTick: state.tick,
+      });
+
+      if (player.hp <= 0 && !player.downed) {
+        player.downed = true;
+        player.inputDir.x = 0;
+        player.inputDir.z = 0;
+        emit({
+          type: "player_downed",
+          playerId: player.sessionId,
+          serverTick: state.tick,
+        });
+      }
+    });
+  });
+}
+
+/**
+ * If every player is downed, set state.runEnded=true, snapshot
+ * state.runEndedTick, and emit `run_ended`. No-op on empty room or if
+ * runEnded is already true.
+ */
+export function tickRunEndCheck(state: RoomState, emit: Emit): void {
+  if (state.runEnded) return;
+  if (state.players.size === 0) return;
+
+  let allDowned = true;
+  state.players.forEach((p: Player) => {
+    if (!p.downed) allDowned = false;
+  });
+  if (!allDowned) return;
+
+  state.runEnded = true;
+  state.runEndedTick = state.tick;
+  emit({ type: "run_ended", serverTick: state.tick });
 }

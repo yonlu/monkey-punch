@@ -2,6 +2,7 @@ export type InputMessage = {
   type: "input";
   seq: number;                            // monotonic per client (required)
   dir: { x: number; z: number };
+  facing: { x: number; z: number };       // unit vector; server clamps; defaults (0,1)
 };
 
 export type PingMessage = {
@@ -29,6 +30,11 @@ export type DebugGrantXpMessage = {
   amount: number;
 };
 
+export type DebugDamageSelfMessage = {
+  type: "debug_damage_self";
+  amount: number;            // server clamps to current hp
+};
+
 export type LevelUpChoiceMessage = {
   type: "level_up_choice";
   choiceIndex: number; // 0/1/2
@@ -41,6 +47,7 @@ export type ClientMessage =
   | DebugClearEnemiesMessage
   | DebugGrantWeaponMessage
   | DebugGrantXpMessage
+  | DebugDamageSelfMessage
   | LevelUpChoiceMessage;
 
 // Server→client one-shot, NOT a ClientMessage variant (rule 3 governs
@@ -113,6 +120,26 @@ export type LevelUpResolvedEvent = {
   autoPicked: boolean;
 };
 
+export type PlayerDamagedEvent = {
+  type: "player_damaged";
+  playerId: string;
+  damage: number;
+  x: number;                // player position at hit, for floating-number placement
+  z: number;
+  serverTick: number;
+};
+
+export type PlayerDownedEvent = {
+  type: "player_downed";
+  playerId: string;
+  serverTick: number;
+};
+
+export type RunEndedEvent = {
+  type: "run_ended";
+  serverTick: number;
+};
+
 export const MessageType = {
   Input: "input",
   Ping: "ping",
@@ -121,6 +148,7 @@ export const MessageType = {
   DebugClearEnemies: "debug_clear_enemies",
   DebugGrantWeapon: "debug_grant_weapon",
   DebugGrantXp: "debug_grant_xp",
+  DebugDamageSelf: "debug_damage_self",
   Fire: "fire",
   Hit: "hit",
   EnemyDied: "enemy_died",
@@ -128,6 +156,9 @@ export const MessageType = {
   LevelUpChoice: "level_up_choice",
   LevelUpOffered: "level_up_offered",
   LevelUpResolved: "level_up_resolved",
+  PlayerDamaged: "player_damaged",
+  PlayerDowned: "player_downed",
+  RunEnded: "run_ended",
 } as const;
 
 export type MessageTypeName = (typeof MessageType)[keyof typeof MessageType];
