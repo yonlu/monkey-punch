@@ -1,27 +1,95 @@
-// Pure data table for weapon kinds. No Schema, no methods, no side effects on import.
-// Adding a weapon means adding a row here (and possibly a new `targeting` mode in
-// rules.ts). Per spec §Weapons table.
+// Pure data table for weapon kinds. No Schema, no methods, no side effects on
+// import. Adding a weapon means adding a row here under an existing
+// behavior.kind, never a new branch in tickWeapons or the client renderers.
+// Per spec §AD1/AD3 (M5).
 
 export type TargetingMode = "nearest";
 
-export type WeaponKind = {
-  name: string;
-  cooldown: number;            // seconds between shots
+export type ProjectileLevel = {
+  damage: number;
+  cooldown: number;            // seconds between fires
+  hitRadius: number;
   projectileSpeed: number;     // units/sec
   projectileLifetime: number;  // seconds
-  projectileRadius: number;    // collision radius
-  damage: number;
-  targeting: TargetingMode;
 };
 
-export const WEAPON_KINDS: readonly WeaponKind[] = [
+export type OrbitLevel = {
+  damage: number;
+  hitRadius: number;
+  hitCooldownPerEnemyMs: number;
+  orbCount: number;
+  orbRadius: number;
+  orbAngularSpeed: number;     // radians/sec
+};
+
+export type WeaponDef =
+  | { name: string; behavior: { kind: "projectile"; targeting: TargetingMode }; levels: ProjectileLevel[] }
+  | { name: string; behavior: { kind: "orbit" };                                  levels: OrbitLevel[] };
+
+export const WEAPON_KINDS: readonly WeaponDef[] = [
   {
     name: "Bolt",
-    cooldown: 0.6,
-    projectileSpeed: 18,
-    projectileLifetime: 0.8,
-    projectileRadius: 0.4,
-    damage: 10,
-    targeting: "nearest",
+    behavior: { kind: "projectile", targeting: "nearest" },
+    levels: [
+      // NOTE: only `damage` and `cooldown` vary per level for Bolt. Visual
+      // stats (hitRadius, projectileSpeed, projectileLifetime) are held
+      // constant so client projectile rendering — which doesn't carry
+      // weapon level on the FireEvent — stays in sync with server hits at
+      // every level. Future per-level visual scaling needs `weaponLevel`
+      // added to FireEvent; out of scope for M5.
+      { damage: 10, cooldown: 0.60, hitRadius: 0.4, projectileSpeed: 18, projectileLifetime: 0.8 },
+      { damage: 14, cooldown: 0.55, hitRadius: 0.4, projectileSpeed: 18, projectileLifetime: 0.8 },
+      { damage: 18, cooldown: 0.50, hitRadius: 0.4, projectileSpeed: 18, projectileLifetime: 0.8 },
+      { damage: 22, cooldown: 0.45, hitRadius: 0.4, projectileSpeed: 18, projectileLifetime: 0.8 },
+      { damage: 28, cooldown: 0.40, hitRadius: 0.4, projectileSpeed: 18, projectileLifetime: 0.8 },
+    ],
+  },
+  {
+    name: "Orbit",
+    behavior: { kind: "orbit" },
+    levels: [
+      { damage:  6, hitRadius: 0.5, hitCooldownPerEnemyMs: 700, orbCount: 2, orbRadius: 2.0, orbAngularSpeed: 2.4 },
+      { damage:  8, hitRadius: 0.5, hitCooldownPerEnemyMs: 650, orbCount: 2, orbRadius: 2.2, orbAngularSpeed: 2.6 },
+      { damage: 10, hitRadius: 0.6, hitCooldownPerEnemyMs: 600, orbCount: 3, orbRadius: 2.2, orbAngularSpeed: 2.6 },
+      { damage: 13, hitRadius: 0.6, hitCooldownPerEnemyMs: 550, orbCount: 3, orbRadius: 2.4, orbAngularSpeed: 2.8 },
+      { damage: 16, hitRadius: 0.6, hitCooldownPerEnemyMs: 500, orbCount: 4, orbRadius: 2.4, orbAngularSpeed: 3.0 },
+    ],
   },
 ];
+
+export type ProjectileWeaponDef = Extract<WeaponDef, { behavior: { kind: "projectile" } }>;
+export type OrbitWeaponDef = Extract<WeaponDef, { behavior: { kind: "orbit" } }>;
+
+/**
+ * Type guard for the projectile branch of WeaponDef. Used at every site that
+ * reads projectile-specific stats — TS does not narrow the outer object
+ * through nested discriminator access (`def.behavior.kind === "..."`), so a
+ * user-defined predicate is required for narrowing to flow into `statsAt`.
+ */
+export function isProjectileWeapon(def: WeaponDef): def is ProjectileWeaponDef {
+  return def.behavior.kind === "projectile";
+}
+
+export function isOrbitWeapon(def: WeaponDef): def is OrbitWeaponDef {
+  return def.behavior.kind === "orbit";
+}
+
+/**
+ * Clamp `level` into the defined range and return the row of stats. Both
+ * server (tickWeapons) and clients (renderers, HUD) read effective stats
+ * through this — never via direct `def.levels[level]` indexing — so off-by-one
+ * around level=0 or beyond max never reaches a hot path.
+ *
+ * Defensive against fractional and non-finite inputs: the type system permits
+ * any `number` but a fractional array index returns `undefined`, which the
+ * non-null assertion would mask and downstream NaN-corrupt. Today
+ * `WeaponState.level` is uint8 so this is theoretical, but `statsAt` is the
+ * public read API and should not require its caller to pre-floor.
+ */
+export function statsAt<W extends WeaponDef>(def: W, level: number): W["levels"][number] {
+  const floored = Math.floor(level);
+  // Math.floor(NaN) is NaN; coerce to 1 so we land on level 1 below.
+  const safe = Number.isFinite(floored) ? floored : 1;
+  const idx = Math.max(0, Math.min(def.levels.length - 1, safe - 1));
+  return def.levels[idx]!;
+}

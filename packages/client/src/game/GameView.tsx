@@ -12,13 +12,16 @@ import type {
   PongMessage,
   RoomState,
 } from "@mp/shared";
-import { WEAPON_KINDS } from "@mp/shared";
+import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "@mp/shared";
 import { Ground } from "./Ground.js";
 import { PlayerCube } from "./PlayerCube.js";
 import { EnemySwarm } from "./EnemySwarm.js";
+import { OrbitSwarm } from "./OrbitSwarm.js";
 import { ProjectileSwarm } from "./ProjectileSwarm.js";
 import { GemSwarm } from "./GemSwarm.js";
 import { PlayerHud } from "./PlayerHud.js";
+import { LevelUpOverlay } from "./LevelUpOverlay.js";
+import { LevelUpFlashVfx } from "./LevelUpFlashVfx.js";
 import { useCombatVfxRef } from "./CombatVfx.js";
 import { SnapshotBuffer } from "../net/snapshots.js";
 import { ServerTime } from "../net/serverTime.js";
@@ -26,6 +29,13 @@ import { attachInput } from "./input.js";
 import { LocalPredictor } from "../net/prediction.js";
 import { hudState } from "../net/hudState.js";
 import { DebugHud } from "./DebugHud.js";
+
+// Extra time (past the rendered hit moment) that a projectile keeps
+// rendering after the server reports a hit. Lets the projectile visibly
+// pass through the enemy rather than vanishing at the contact edge.
+// At Bolt's 18 u/s, 100 ms ≈ 1.8 units of overshoot, roughly the sum of
+// enemy + projectile diameters.
+const PROJECTILE_HIT_LINGER_MS = 100;
 
 type PlayerEntry = {
   sessionId: string;
@@ -94,9 +104,13 @@ export function GameView({
           hudState.xp = player.xp;
           const w = player.weapons[0];
           if (w) {
-            const kind = WEAPON_KINDS[w.kind];
-            const total = kind?.cooldown ?? 1;
-            hudState.cooldownFrac = 1 - Math.max(0, Math.min(1, w.cooldownRemaining / total));
+            const def = WEAPON_KINDS[w.kind];
+            if (def && isProjectileWeapon(def)) {
+              const stats = statsAt(def, w.level);
+              hudState.cooldownFrac = 1 - Math.max(0, Math.min(1, w.cooldownRemaining / stats.cooldown));
+            } else {
+              hudState.cooldownFrac = 1;
+            }
           }
         } else {
           buf!.push({ t: performance.now(), x: player.x, z: player.z });
@@ -207,21 +221,49 @@ export function GameView({
       // a backstop, but the per-fire timer is the primary driver and fires
       // the moment the projectile expires — so the visible count drops in
       // lockstep with reality.
-      const kind = WEAPON_KINDS[msg.weaponKind];
-      const lifetimeMs = kind ? kind.projectileLifetime * 1000 : 800;
+      //
+      // Adding `interpDelayMs` to the timeout aligns the cleanup with
+      // rendered time: the projectile is rendered at serverNow() -
+      // interpDelayMs, so the rendered projectile reaches `lifetime` at
+      // real time T_fire + lifetime + interpDelayMs.
+      const def = WEAPON_KINDS[msg.weaponKind];
+      const lifetimeMs =
+        def && isProjectileWeapon(def)
+          ? statsAt(def, 1).projectileLifetime * 1000
+          : 800;
       const timer = setTimeout(() => {
         fires.delete(msg.fireId);
         fireTimers.delete(msg.fireId);
-      }, lifetimeMs + 50);
+      }, lifetimeMs + 50 + hudState.interpDelayMs);
       fireTimers.set(msg.fireId, timer);
     });
 
     const offHit = room.onMessage("hit", (msg: HitEvent) => {
-      fires.delete(msg.fireId);
-      const t = fireTimers.get(msg.fireId);
-      if (t) {
-        clearTimeout(t);
-        fireTimers.delete(msg.fireId);
+      // fireId === 0 is the sentinel for orbit hits (no projectile to
+      // despawn). Skip the projectile-cleanup path entirely.
+      if (msg.fireId !== 0) {
+        // Defer the visual despawn so the projectile (a) disappears at or
+        // after the moment the *rendered* enemy is hit (since the client
+        // renders at serverNow() - interpDelayMs, the hit message arrives
+        // ~interpDelayMs ahead of the rendered hit), and (b) "lives a
+        // little more" past the hit moment so it visibly passes through
+        // the enemy rather than vanishing right at the contact edge.
+        //
+        // Total deferral = interpDelayMs (re-align with render time) +
+        // PROJECTILE_HIT_LINGER_MS (overshoot past the hit point). At
+        // Bolt's speed of 18 u/s, 100ms of overshoot ≈ 1.8 units, which
+        // is roughly enemyDiameter (1.0) + projectileDiameter (0.8), so
+        // the projectile clears the enemy before it disappears.
+        const fireId = msg.fireId;
+        const lifetimeTimer = fireTimers.get(fireId);
+        if (lifetimeTimer) clearTimeout(lifetimeTimer);
+        fireTimers.delete(fireId);
+        const hitTimer = setTimeout(() => {
+          fires.delete(fireId);
+        }, hudState.interpDelayMs + PROJECTILE_HIT_LINGER_MS);
+        // Track the deferred-delete timer in the same map so unmount
+        // cleanup cancels it.
+        fireTimers.set(fireId, hitTimer);
       }
       // Hit flash at the rendered enemy position — same time-base as the
       // projectile (interpDelayMs behind realtime), so the flash lands where
@@ -258,6 +300,17 @@ export function GameView({
         hudState.visible = !hudState.visible;
         return;
       }
+      if (e.code === "Digit1" || e.code === "Digit2" || e.code === "Digit3") {
+        const localPlayer = room.state.players.get(room.sessionId);
+        if (localPlayer?.pendingLevelUp && localPlayer.levelUpChoices.length > 0) {
+          e.preventDefault();
+          const idx = e.code === "Digit1" ? 0 : e.code === "Digit2" ? 1 : 2;
+          if (idx < localPlayer.levelUpChoices.length) {
+            room.send("level_up_choice", { type: "level_up_choice", choiceIndex: idx });
+          }
+        }
+        return;
+      }
       if (!hudState.visible) return;
 
       if (e.code === "BracketRight" && !e.shiftKey) {
@@ -269,6 +322,15 @@ export function GameView({
       } else if (e.code === "Backslash") {
         e.preventDefault();
         room.send("debug_clear_enemies", { type: "debug_clear_enemies" });
+      } else if (e.code === "KeyG" && e.shiftKey) {
+        e.preventDefault();
+        // Orbit is index 1 in WEAPON_KINDS. Granting at L1, or upgrading +1.
+        room.send("debug_grant_weapon", { type: "debug_grant_weapon", weaponKind: 1 });
+      } else if (e.code === "KeyX" && e.shiftKey) {
+        e.preventDefault();
+        // Push 100 XP into the player so the next tickXp triggers a level-up.
+        // Server caps amount at 10_000 per call.
+        room.send("debug_grant_xp", { type: "debug_grant_xp", amount: 100 });
       }
     };
     window.addEventListener("keydown", keyHandler);
@@ -322,11 +384,14 @@ export function GameView({
           />
         ))}
         <EnemySwarm enemyIds={enemyIds} buffers={enemyBuffers} />
+        <OrbitSwarm room={room} predictor={predictor} buffers={buffers} serverTime={serverTime} />
+        <LevelUpFlashVfx room={room} predictor={predictor} buffers={buffers} />
         <ProjectileSwarm fires={fires} serverTime={serverTime} />
         <GemSwarm room={room} />
         {vfxJsx}
       </Canvas>
       <PlayerHud room={room} />
+      <LevelUpOverlay room={room} />
       <DebugHud />
     </div>
   );

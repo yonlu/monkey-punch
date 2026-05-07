@@ -8,6 +8,9 @@ import {
   tickWeapons,
   tickProjectiles,
   tickGems,
+  tickXp,
+  tickLevelUpDeadlines,
+  resolveLevelUp,
   type SpawnerState,
   type Projectile,
   type WeaponContext,
@@ -26,8 +29,10 @@ import {
   GEM_VALUE,
   GEM_PICKUP_RADIUS,
   TARGETING_MAX_RANGE,
+  LEVEL_UP_DEADLINE_TICKS,
+  xpForLevel,
 } from "../src/constants.js";
-import { WEAPON_KINDS } from "../src/weapons.js";
+import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "../src/weapons.js";
 import { mulberry32 } from "../src/rng.js";
 
 function addPlayer(state: RoomState, id: string, dirX: number, dirZ: number): Player {
@@ -364,10 +369,13 @@ function makeCapture(initialFireId = 1, fixedNowMs = 1_000_000): CapturedFire {
   const fires: CombatEvent[] = [];
   const projectiles: Projectile[] = [];
   let next = initialFireId;
+  let nextGem = 1;
   const ctx: WeaponContext = {
     nextFireId: () => next++,
     serverNowMs: () => fixedNowMs,
     pushProjectile: (p) => projectiles.push(p),
+    nextGemId: () => nextGem++,
+    orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
   };
   return { fires, projectiles, ctx };
 }
@@ -408,10 +416,15 @@ describe("tickWeapons", () => {
     expect(proj.fireId).toBe(42);
     expect(proj.ownerId).toBe("p1");
     expect(proj.weaponKind).toBe(0);
-    expect(proj.damage).toBe(WEAPON_KINDS[0]!.damage);
-    expect(proj.speed).toBe(WEAPON_KINDS[0]!.projectileSpeed);
-    expect(proj.radius).toBe(WEAPON_KINDS[0]!.projectileRadius);
-    expect(proj.lifetime).toBe(WEAPON_KINDS[0]!.projectileLifetime);
+    {
+      const def = WEAPON_KINDS[0]!;
+      if (!isProjectileWeapon(def)) throw new Error("expected projectile");
+      const stats = statsAt(def, 1);
+      expect(proj.damage).toBe(stats.damage);
+      expect(proj.speed).toBe(stats.projectileSpeed);
+      expect(proj.radius).toBe(stats.hitRadius);
+      expect(proj.lifetime).toBe(stats.projectileLifetime);
+    }
     expect(proj.age).toBe(0);
     expect(proj.dirX).toBeCloseTo(1);
     expect(proj.dirZ).toBeCloseTo(0);
@@ -433,7 +446,11 @@ describe("tickWeapons", () => {
     expect(fire.dirZ).toBeCloseTo(0);
     expect(fire.serverFireTimeMs).toBe(999_888);
 
-    expect(w.cooldownRemaining).toBeCloseTo(WEAPON_KINDS[0]!.cooldown);
+    {
+      const def = WEAPON_KINDS[0]!;
+      if (!isProjectileWeapon(def)) throw new Error("expected projectile");
+      expect(w.cooldownRemaining).toBeCloseTo(statsAt(def, 1).cooldown);
+    }
   });
 
   it("clamps cooldown at 0 with no targets and stays clamped across multiple ticks (AD10)", () => {
@@ -521,7 +538,10 @@ function makeProjectile(overrides: Partial<Projectile>): Projectile {
 function makeProjCtx(initialGemId = 1): { ctx: ProjectileContext; nextGem: () => number } {
   let next = initialGemId;
   return {
-    ctx: { nextGemId: () => next++ },
+    ctx: {
+      nextGemId: () => next++,
+      orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+    },
     nextGem: () => next,
   };
 }
@@ -756,5 +776,341 @@ describe("tickGems", () => {
     const ev = events[0]!;
     if (ev.type !== "gem_collected") throw new Error("type guard");
     expect(ev.playerId).toBe("first");
+  });
+});
+
+// --------------------- M5 orbit arm ---------------------
+
+function makeOrbitCooldownStub() {
+  const hits: Array<[string, number, number]> = [];
+  return {
+    tryHit: (pid: string, wi: number, eid: number, _now: number, _cd: number) => {
+      hits.push([pid, wi, eid]);
+      return true;
+    },
+    evictEnemy: (_id: number) => {},
+    hits,
+  };
+}
+
+function makeWeaponCtx(opts?: {
+  nextFireId?: () => number;
+  nowMs?: number;
+  pushProjectile?: (p: Projectile) => void;
+  nextGemId?: () => number;
+  orbitHitCooldown?: { tryHit: (...args: any[]) => boolean; evictEnemy: (id: number) => void };
+}): WeaponContext {
+  return {
+    nextFireId: opts?.nextFireId ?? (() => 1),
+    serverNowMs: () => opts?.nowMs ?? 0,
+    pushProjectile: opts?.pushProjectile ?? (() => {}),
+    nextGemId: opts?.nextGemId ?? (() => 1),
+    orbitHitCooldown: opts?.orbitHitCooldown ?? { tryHit: () => true, evictEnemy: () => {} },
+  };
+}
+
+describe("tickWeapons orbit arm", () => {
+  it("hits an enemy at orb radius on the first tick", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+
+    const orbit = new WeaponState();
+    orbit.kind = 1; // index of Orbit in WEAPON_KINDS
+    orbit.level = 1;
+    orbit.cooldownRemaining = 0;
+    p.weapons.push(orbit);
+
+    // Place an enemy at the L1 orb radius on the +X axis.
+    // L1 orbCount=2, orbRadius=2.0, orbAngularSpeed=2.4 rad/s.
+    // At state.tick=0 the angles are 0 and π; orb 0 sits at (2.0, 0).
+    const e = addEnemy(state, 1, 2.0, 0);
+    e.hp = 100;
+
+    const cd = makeOrbitCooldownStub();
+    const events: CombatEvent[] = [];
+    const ctx = makeWeaponCtx({ orbitHitCooldown: cd });
+
+    state.tick = 0;
+    tickWeapons(state, 0.05, ctx, (ev) => events.push(ev));
+
+    // Enemy took 6 damage (Orbit L1 damage). One hit event was emitted.
+    expect(e.hp).toBe(94);
+    const hitEvents = events.filter((e) => e.type === "hit");
+    expect(hitEvents.length).toBe(1);
+    expect(cd.hits.length).toBe(1);
+  });
+
+  it("does not double-hit within the per-enemy cooldown window", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    const orbit = new WeaponState();
+    orbit.kind = 1;
+    orbit.level = 1;
+    p.weapons.push(orbit);
+
+    const e = addEnemy(state, 1, 2.0, 0);
+    e.hp = 100;
+
+    // Stub returns false the second time (simulating a still-cooling-down hit).
+    let n = 0;
+    const cd = {
+      tryHit: () => {
+        n += 1;
+        return n === 1;
+      },
+      evictEnemy: () => {},
+    };
+    const events: CombatEvent[] = [];
+    const ctx = makeWeaponCtx({ orbitHitCooldown: cd });
+
+    state.tick = 0;
+    tickWeapons(state, 0.05, ctx, (ev) => events.push(ev));
+    state.tick = 1;
+    tickWeapons(state, 0.05, ctx, (ev) => events.push(ev));
+
+    // Two ticks but only one hit landed (the second tryHit returned false).
+    expect(e.hp).toBe(94);
+    expect(events.filter((e) => e.type === "hit").length).toBe(1);
+  });
+
+  it("on lethal hit: emits enemy_died, drops a gem, removes the enemy, evicts cooldown entry", () => {
+    const state = new RoomState();
+    addPlayer(state, "p1", 0, 0);
+    const p = state.players.get("p1")!;
+    const orbit = new WeaponState();
+    orbit.kind = 1;
+    orbit.level = 1;
+    p.weapons.push(orbit);
+
+    const e = addEnemy(state, 7, 2.0, 0);
+    e.hp = 1; // lethal in one hit
+
+    let evictedId = -1;
+    const cd = {
+      tryHit: () => true,
+      evictEnemy: (id: number) => { evictedId = id; },
+    };
+    const events: CombatEvent[] = [];
+    const ctx = makeWeaponCtx({ orbitHitCooldown: cd });
+
+    state.tick = 0;
+    tickWeapons(state, 0.05, ctx, (ev) => events.push(ev));
+
+    expect(state.enemies.has("7")).toBe(false);
+    expect(state.gems.size).toBe(1);
+    expect(events.some((e) => e.type === "enemy_died" && e.enemyId === 7)).toBe(true);
+    expect(evictedId).toBe(7);
+  });
+});
+
+describe("resolveLevelUp", () => {
+  it("upgrades existing weapon: increments level, no new WeaponState pushed, emits resolved", () => {
+    const p = new Player();
+    p.sessionId = "p1";
+    p.pendingLevelUp = true;
+    p.levelUpChoices.push(0, 1, 0);
+    p.levelUpDeadlineTick = 200;
+    const w = new WeaponState();
+    w.kind = 0; w.level = 1; w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const events: CombatEvent[] = [];
+    resolveLevelUp(p, /* weaponKind */ 0, (e) => events.push(e), /* autoPicked */ false);
+
+    expect(p.weapons.length).toBe(1);
+    expect(p.weapons[0]!.level).toBe(2);
+    expect(p.pendingLevelUp).toBe(false);
+    expect(p.levelUpChoices.length).toBe(0);
+    expect(p.levelUpDeadlineTick).toBe(0);
+
+    const resolved = events.find((e) => e.type === "level_up_resolved")!;
+    expect(resolved).toBeDefined();
+    if (resolved.type === "level_up_resolved") {
+      expect(resolved.playerId).toBe("p1");
+      expect(resolved.weaponKind).toBe(0);
+      expect(resolved.newWeaponLevel).toBe(2);
+      expect(resolved.autoPicked).toBe(false);
+    }
+  });
+
+  it("adds new weapon at level 1 if not present", () => {
+    const p = new Player();
+    p.sessionId = "p1";
+    p.pendingLevelUp = true;
+    p.levelUpChoices.push(1, 0, 1);
+
+    const events: CombatEvent[] = [];
+    resolveLevelUp(p, /* Orbit */ 1, (e) => events.push(e), /* autoPicked */ true);
+
+    expect(p.weapons.length).toBe(1);
+    expect(p.weapons[0]!.kind).toBe(1);
+    expect(p.weapons[0]!.level).toBe(1);
+    expect(p.weapons[0]!.cooldownRemaining).toBe(0);
+
+    const resolved = events.find((e) => e.type === "level_up_resolved")!;
+    if (resolved.type === "level_up_resolved") {
+      expect(resolved.newWeaponLevel).toBe(1);
+      expect(resolved.autoPicked).toBe(true);
+    }
+  });
+
+  it("caps level at WEAPON_KINDS[kind].levels.length", () => {
+    const p = new Player();
+    p.sessionId = "p1";
+    const def = WEAPON_KINDS[0]!; // Bolt: 5 levels
+    const w = new WeaponState();
+    w.kind = 0; w.level = def.levels.length; w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const events: CombatEvent[] = [];
+    resolveLevelUp(p, 0, (e) => events.push(e), false);
+
+    expect(p.weapons[0]!.level).toBe(def.levels.length); // capped, not 6
+  });
+});
+
+describe("tickXp", () => {
+  it("does nothing for a player below threshold", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.level = 1;
+    p.xp = xpForLevel(1) - 1; // one short
+
+    const events: CombatEvent[] = [];
+    tickXp(state, mulberry32(123), (e) => events.push(e));
+
+    expect(p.pendingLevelUp).toBe(false);
+    expect(p.level).toBe(1);
+    expect(events.length).toBe(0);
+  });
+
+  it("triggers level-up exactly once when XP crosses threshold", () => {
+    const state = new RoomState();
+    state.tick = 50;
+    const p = addPlayer(state, "p1", 0, 0);
+    p.level = 1;
+    p.xp = xpForLevel(1); // exact
+
+    const events: CombatEvent[] = [];
+    tickXp(state, mulberry32(123), (e) => events.push(e));
+
+    expect(p.pendingLevelUp).toBe(true);
+    expect(p.level).toBe(2);
+    expect(p.xp).toBe(0);
+    expect(p.levelUpChoices.length).toBe(3);
+    expect(p.levelUpDeadlineTick).toBe(50 + LEVEL_UP_DEADLINE_TICKS);
+
+    const offered = events.find((e) => e.type === "level_up_offered")!;
+    expect(offered).toBeDefined();
+    if (offered.type === "level_up_offered") {
+      expect(offered.playerId).toBe("p1");
+      expect(offered.newLevel).toBe(2);
+      expect(offered.choices.length).toBe(3);
+      expect(offered.deadlineTick).toBe(50 + LEVEL_UP_DEADLINE_TICKS);
+    }
+  });
+
+  it("does not retrigger while pendingLevelUp is true", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.level = 2;
+    p.xp = xpForLevel(2) * 3; // way over threshold
+    p.pendingLevelUp = true;
+
+    const events: CombatEvent[] = [];
+    tickXp(state, mulberry32(123), (e) => events.push(e));
+    tickXp(state, mulberry32(123), (e) => events.push(e));
+
+    expect(events.length).toBe(0);
+    expect(p.level).toBe(2);
+  });
+
+  it("retriggers on next tick after pending clears, if XP still over", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.level = 1;
+    p.xp = xpForLevel(1) + xpForLevel(2); // enough for two levels
+
+    const events1: CombatEvent[] = [];
+    tickXp(state, mulberry32(123), (e) => events1.push(e));
+    expect(p.pendingLevelUp).toBe(true);
+    expect(p.level).toBe(2);
+
+    // Simulate resolution.
+    p.pendingLevelUp = false;
+    p.levelUpChoices.length = 0;
+    p.levelUpDeadlineTick = 0;
+
+    const events2: CombatEvent[] = [];
+    tickXp(state, mulberry32(123), (e) => events2.push(e));
+    expect(p.pendingLevelUp).toBe(true);
+    expect(p.level).toBe(3);
+    expect(events2.filter((e) => e.type === "level_up_offered").length).toBe(1);
+  });
+
+  it("rolls 3 choices in [0, WEAPON_KINDS.length) using the supplied rng", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.level = 1;
+    p.xp = xpForLevel(1);
+
+    const events: CombatEvent[] = [];
+    tickXp(state, mulberry32(7), (e) => events.push(e));
+
+    expect(p.levelUpChoices.length).toBe(3);
+    p.levelUpChoices.forEach((c) => {
+      expect(c).toBeGreaterThanOrEqual(0);
+      expect(c).toBeLessThan(WEAPON_KINDS.length);
+    });
+  });
+});
+
+describe("tickLevelUpDeadlines", () => {
+  it("does not fire before the deadline tick", () => {
+    const state = new RoomState();
+    state.tick = 100;
+    const p = addPlayer(state, "p1", 0, 0);
+    p.pendingLevelUp = true;
+    p.levelUpChoices.push(0, 0, 0);
+    p.levelUpDeadlineTick = 200;
+
+    const events: CombatEvent[] = [];
+    tickLevelUpDeadlines(state, (e) => events.push(e));
+
+    expect(p.pendingLevelUp).toBe(true);
+    expect(events.length).toBe(0);
+  });
+
+  it("fires exactly when state.tick === deadline (auto-picks choice 0)", () => {
+    const state = new RoomState();
+    state.tick = 200;
+    const p = addPlayer(state, "p1", 0, 0);
+    p.pendingLevelUp = true;
+    p.levelUpChoices.push(1, 0, 0);
+    p.levelUpDeadlineTick = 200;
+
+    const events: CombatEvent[] = [];
+    tickLevelUpDeadlines(state, (e) => events.push(e));
+
+    expect(p.pendingLevelUp).toBe(false);
+    expect(p.weapons.length).toBe(1);
+    expect(p.weapons[0]!.kind).toBe(1); // chose Orbit (choice 0)
+    const resolved = events.find((e) => e.type === "level_up_resolved")!;
+    if (resolved.type === "level_up_resolved") {
+      expect(resolved.autoPicked).toBe(true);
+    }
+  });
+
+  it("ignores players without pendingLevelUp", () => {
+    const state = new RoomState();
+    state.tick = 200;
+    const p = addPlayer(state, "p1", 0, 0);
+    p.pendingLevelUp = false;
+    p.levelUpDeadlineTick = 100; // would be past, but pending is false
+
+    const events: CombatEvent[] = [];
+    tickLevelUpDeadlines(state, (e) => events.push(e));
+    expect(events.length).toBe(0);
   });
 });

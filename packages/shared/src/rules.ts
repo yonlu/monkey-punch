@@ -1,9 +1,9 @@
 import {
   Enemy,
   Gem,
+  WeaponState,
   type Player,
   type RoomState,
-  type WeaponState,
 } from "./schema.js";
 import {
   ENEMY_HP,
@@ -13,17 +13,22 @@ import {
   ENEMY_SPEED,
   GEM_PICKUP_RADIUS,
   GEM_VALUE,
+  LEVEL_UP_DEADLINE_TICKS,
   MAX_ENEMIES,
   PLAYER_SPEED,
   TARGETING_MAX_RANGE,
+  TICK_RATE,
+  xpForLevel,
 } from "./constants.js";
-import { WEAPON_KINDS } from "./weapons.js";
+import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, type WeaponDef } from "./weapons.js";
 import type { Rng } from "./rng.js";
 import type {
   FireEvent,
   HitEvent,
   EnemyDiedEvent,
   GemCollectedEvent,
+  LevelUpOfferedEvent,
+  LevelUpResolvedEvent,
 } from "./messages.js";
 
 export function tickPlayers(state: RoomState, dt: number): void {
@@ -178,13 +183,32 @@ export type Projectile = {
   z: number;
 };
 
-export type CombatEvent = FireEvent | HitEvent | EnemyDiedEvent | GemCollectedEvent;
+export type CombatEvent =
+  | FireEvent
+  | HitEvent
+  | EnemyDiedEvent
+  | GemCollectedEvent
+  | LevelUpOfferedEvent
+  | LevelUpResolvedEvent;
 export type Emit = (event: CombatEvent) => void;
+
+/**
+ * Server-supplied per-(player, weaponIndex, enemy) hit cooldown for orbit
+ * weapons. Structural — the concrete implementation lives in
+ * server/src/orbitHitCooldown.ts and satisfies this shape. Defined here
+ * (not in a separate shared file) because tickWeapons is the only consumer.
+ */
+export interface OrbitHitCooldownLike {
+  tryHit(playerId: string, weaponIndex: number, enemyId: number, nowMs: number, cooldownMs: number): boolean;
+  evictEnemy(enemyId: number): void;
+}
 
 export type WeaponContext = {
   nextFireId: () => number;
   serverNowMs: () => number;
   pushProjectile: (p: Projectile) => void;
+  nextGemId: () => number;
+  orbitHitCooldown: OrbitHitCooldownLike;
 };
 
 /**
@@ -210,77 +234,174 @@ export function tickWeapons(
 
   state.players.forEach((player: Player) => {
     player.weapons.forEach((weapon: WeaponState) => {
-      // Tick the cooldown first; clamp at 0 (AD10).
-      weapon.cooldownRemaining = Math.max(0, weapon.cooldownRemaining - dt);
-      if (weapon.cooldownRemaining > 0) return;
+      const def: WeaponDef | undefined = WEAPON_KINDS[weapon.kind];
+      if (!def) return; // unknown kind — skip silently
 
-      // Find the nearest in-range enemy (squared distance).
-      let bestSq = Infinity;
-      let bestDx = 0;
-      let bestDz = 0;
-      let hasTarget = false;
-      state.enemies.forEach((enemy: Enemy) => {
-        const dx = enemy.x - player.x;
-        const dz = enemy.z - player.z;
-        const sq = dx * dx + dz * dz;
-        if (sq <= rangeSq && sq < bestSq) {
-          bestSq = sq;
-          bestDx = dx;
-          bestDz = dz;
-          hasTarget = true;
+      // Dispatch on behavior.kind. The switch keeps each behavior arm
+      // localized and the `default` assertNever turns "added a third
+      // WeaponBehavior kind without wiring it here" into a compile error
+      // instead of a silent no-op.
+      //
+      // Inside each case we still use the user-defined predicate
+      // (isProjectileWeapon) to narrow `def` for the call to the generic
+      // `statsAt`. TS 5.x does narrow `def.behavior` through the case
+      // label, but it does NOT fold that nested narrowing back into the
+      // outer `def`'s union when computing `W["levels"][number]` —
+      // statsAt then resolves to `ProjectileLevel | OrbitLevel` and
+      // projectile-only fields (cooldown / projectileSpeed /
+      // projectileLifetime) fail to typecheck. The predicate forwards
+      // the narrowing into `W` directly. The switch shape still earns
+      // its keep: the assertNever default is the exhaustiveness check
+      // we were missing.
+      switch (def.behavior.kind) {
+        case "projectile": {
+          if (!isProjectileWeapon(def)) return; // unreachable; see comment above
+          const stats = statsAt(def, weapon.level);
+
+          weapon.cooldownRemaining = Math.max(0, weapon.cooldownRemaining - dt);
+          if (weapon.cooldownRemaining > 0) return;
+
+          let bestSq = Infinity;
+          let bestDx = 0;
+          let bestDz = 0;
+          let hasTarget = false;
+          state.enemies.forEach((enemy: Enemy) => {
+            const dx = enemy.x - player.x;
+            const dz = enemy.z - player.z;
+            const sq = dx * dx + dz * dz;
+            if (sq <= rangeSq && sq < bestSq) {
+              bestSq = sq;
+              bestDx = dx;
+              bestDz = dz;
+              hasTarget = true;
+            }
+          });
+          if (!hasTarget) return;
+          if (bestSq === 0) return;
+
+          const dist = Math.sqrt(bestSq);
+          const dirX = bestDx / dist;
+          const dirZ = bestDz / dist;
+
+          const proj: Projectile = {
+            fireId: ctx.nextFireId(),
+            ownerId: player.sessionId,
+            weaponKind: weapon.kind,
+            damage: stats.damage,
+            speed: stats.projectileSpeed,
+            radius: stats.hitRadius,
+            lifetime: stats.projectileLifetime,
+            age: 0,
+            dirX,
+            dirZ,
+            prevX: player.x,
+            prevZ: player.z,
+            x: player.x,
+            z: player.z,
+          };
+          ctx.pushProjectile(proj);
+
+          emit({
+            type: "fire",
+            fireId: proj.fireId,
+            weaponKind: weapon.kind,
+            ownerId: player.sessionId,
+            originX: player.x,
+            originZ: player.z,
+            dirX,
+            dirZ,
+            serverTick: state.tick,
+            serverFireTimeMs: ctx.serverNowMs(),
+          });
+
+          weapon.cooldownRemaining = stats.cooldown;
+          break;
         }
-      });
+        case "orbit": {
+          if (!isOrbitWeapon(def)) return; // narrowing only — case already gates this
+          const stats = statsAt(def, weapon.level);
+          const tickTime = state.tick / TICK_RATE;
+          const radiusSum = stats.hitRadius + ENEMY_RADIUS;
+          const radiusSumSq = radiusSum * radiusSum;
+          const nowMs = ctx.serverNowMs();
 
-      if (!hasTarget) return; // clamp stays at 0
+          // Resolve the index of `weapon` within `player.weapons`. ArraySchema.indexOf
+          // exists; weapons are only pushed (never reordered), so the index is stable.
+          const weaponIndex = player.weapons.indexOf(weapon);
 
-      // Defensive: a target with squared-distance 0 (player and enemy
-      // coincident) would NaN the normalization. Skip firing for this tick;
-      // the cooldown stays at 0 and we'll fire next tick once they separate.
-      if (bestSq === 0) return;
+          for (let i = 0; i < stats.orbCount; i++) {
+            const angle = tickTime * stats.orbAngularSpeed + i * (2 * Math.PI / stats.orbCount);
+            const orbX = player.x + Math.cos(angle) * stats.orbRadius;
+            const orbZ = player.z + Math.sin(angle) * stats.orbRadius;
 
-      const dist = Math.sqrt(bestSq);
-      const dirX = bestDx / dist;
-      const dirZ = bestDz / dist;
-      const kind = WEAPON_KINDS[weapon.kind]!;
+            // Point-circle vs each enemy. Per AD8: arc per tick at current angular
+            // speeds is small enough that swept-arc isn't needed. Collect hits in a
+            // temporary list because mutating state.enemies during a forEach causes
+            // visit order to drift.
+            const toHit: Enemy[] = [];
+            state.enemies.forEach((enemy: Enemy) => {
+              const dx = enemy.x - orbX;
+              const dz = enemy.z - orbZ;
+              if (dx * dx + dz * dz <= radiusSumSq) toHit.push(enemy);
+            });
 
-      const proj: Projectile = {
-        fireId: ctx.nextFireId(),
-        ownerId: player.sessionId,
-        weaponKind: weapon.kind,
-        damage: kind.damage,
-        speed: kind.projectileSpeed,
-        radius: kind.projectileRadius,
-        lifetime: kind.projectileLifetime,
-        age: 0,
-        dirX,
-        dirZ,
-        prevX: player.x,
-        prevZ: player.z,
-        x: player.x,
-        z: player.z,
-      };
-      ctx.pushProjectile(proj);
+            for (const enemy of toHit) {
+              if (!ctx.orbitHitCooldown.tryHit(player.sessionId, weaponIndex, enemy.id, nowMs, stats.hitCooldownPerEnemyMs)) {
+                continue;
+              }
+              enemy.hp -= stats.damage;
 
-      emit({
-        type: "fire",
-        fireId: proj.fireId,
-        weaponKind: weapon.kind,
-        ownerId: player.sessionId,
-        originX: player.x,
-        originZ: player.z,
-        dirX,
-        dirZ,
-        serverTick: state.tick,
-        serverFireTimeMs: ctx.serverNowMs(),
-      });
+              // fireId=0 sentinel — orbit hits don't correlate to a fire event.
+              // M4 starts nextFireId at 1, so 0 is unambiguously "non-projectile".
+              emit({
+                type: "hit",
+                fireId: 0,
+                enemyId: enemy.id,
+                damage: stats.damage,
+                serverTick: state.tick,
+              });
 
-      weapon.cooldownRemaining = kind.cooldown;
+              if (enemy.hp <= 0) {
+                const gem = new Gem();
+                gem.id = ctx.nextGemId();
+                gem.x = enemy.x;
+                gem.z = enemy.z;
+                gem.value = GEM_VALUE;
+                state.gems.set(String(gem.id), gem);
+
+                const deathX = enemy.x;
+                const deathZ = enemy.z;
+                const deathId = enemy.id;
+                state.enemies.delete(String(enemy.id));
+                ctx.orbitHitCooldown.evictEnemy(deathId);
+
+                emit({
+                  type: "enemy_died",
+                  enemyId: deathId,
+                  x: deathX,
+                  z: deathZ,
+                });
+              }
+            }
+          }
+          break;
+        }
+        default: {
+          // Exhaustiveness guard. If a third behavior kind is added to
+          // WeaponDef, this becomes a compile error: `def.behavior` will
+          // not have type `never` and the assignment to `_exhaustive`
+          // will fail.
+          const _exhaustive: never = def.behavior;
+          void _exhaustive;
+        }
+      }
     });
   });
 }
 
 export type ProjectileContext = {
   nextGemId: () => number;
+  orbitHitCooldown: OrbitHitCooldownLike;
 };
 
 /**
@@ -374,6 +495,7 @@ export function tickProjectiles(
         const deathZ = hitEnemy.z;
         const deathId = hitEnemy.id;
         state.enemies.delete(String(hitEnemy.id));
+        ctx.orbitHitCooldown.evictEnemy(deathId);
 
         emit({
           type: "enemy_died",
@@ -420,5 +542,123 @@ export function tickGems(state: RoomState, emit: Emit): void {
       playerId: collector.sessionId,
       value: gem.value,
     });
+  });
+}
+
+/**
+ * Pure: mutate `player` to apply the chosen level-up, then emit
+ * `level_up_resolved`. Called from both the `level_up_choice` message
+ * handler (autoPicked=false) and `tickLevelUpDeadlines` (autoPicked=true).
+ *
+ * Per spec §AD9. If the player already has a weapon of `weaponKind`,
+ * increments its level (capped at WEAPON_KINDS[kind].levels.length).
+ * Otherwise pushes a new WeaponState at level 1.
+ */
+export function resolveLevelUp(
+  player: Player,
+  weaponKind: number,
+  emit: Emit,
+  autoPicked: boolean,
+): void {
+  const def = WEAPON_KINDS[weaponKind];
+  if (!def) {
+    // Unknown kind; clear pending state to avoid wedging the player and bail.
+    player.pendingLevelUp = false;
+    player.levelUpChoices.length = 0;
+    player.levelUpDeadlineTick = 0;
+    return;
+  }
+
+  let newWeaponLevel: number;
+  let existingIdx = -1;
+  for (let i = 0; i < player.weapons.length; i++) {
+    if (player.weapons[i]!.kind === weaponKind) {
+      existingIdx = i;
+      break;
+    }
+  }
+  if (existingIdx >= 0) {
+    const w = player.weapons[existingIdx]!;
+    w.level = Math.min(w.level + 1, def.levels.length);
+    newWeaponLevel = w.level;
+  } else {
+    const w = new WeaponState();
+    w.kind = weaponKind;
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    player.weapons.push(w);
+    newWeaponLevel = 1;
+  }
+
+  player.pendingLevelUp = false;
+  player.levelUpChoices.length = 0;
+  player.levelUpDeadlineTick = 0;
+
+  emit({
+    type: "level_up_resolved",
+    playerId: player.sessionId,
+    weaponKind,
+    newWeaponLevel,
+    autoPicked,
+  });
+}
+
+/**
+ * For each player: if XP has crossed the threshold for their current level
+ * AND they don't already have a pending level-up, drain the cost, increment
+ * level, roll 3 weapon-kind choices via `rng` (with replacement), set
+ * pendingLevelUp + levelUpChoices + levelUpDeadlineTick, emit
+ * level_up_offered.
+ *
+ * Per spec §AD4 (one level per tick, drain via re-ticks) and §AD5 (room
+ * rng, fixed tick order).
+ */
+export function tickXp(state: RoomState, rng: Rng, emit: Emit): void {
+  state.players.forEach((player: Player) => {
+    if (player.pendingLevelUp) return;
+    const need = xpForLevel(player.level);
+    if (player.xp < need) return;
+
+    player.xp -= need;
+    player.level += 1;
+
+    // Roll 3 choices (with replacement). Mutate in place: clear+push.
+    player.levelUpChoices.length = 0;
+    const choicesArr: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const k = Math.floor(rng() * WEAPON_KINDS.length);
+      player.levelUpChoices.push(k);
+      choicesArr.push(k);
+    }
+
+    player.pendingLevelUp = true;
+    player.levelUpDeadlineTick = state.tick + LEVEL_UP_DEADLINE_TICKS;
+
+    emit({
+      type: "level_up_offered",
+      playerId: player.sessionId,
+      newLevel: player.level,
+      choices: choicesArr,
+      deadlineTick: player.levelUpDeadlineTick,
+    });
+  });
+}
+
+/**
+ * Auto-pick choice 0 for any player whose level-up deadline has passed.
+ * Per spec §AD9 — same resolveLevelUp path, autoPicked=true.
+ */
+export function tickLevelUpDeadlines(state: RoomState, emit: Emit): void {
+  state.players.forEach((player: Player) => {
+    if (!player.pendingLevelUp) return;
+    if (state.tick < player.levelUpDeadlineTick) return;
+    if (player.levelUpChoices.length === 0) {
+      // Pending but no choices — defensive recovery; clear and bail.
+      player.pendingLevelUp = false;
+      player.levelUpDeadlineTick = 0;
+      return;
+    }
+    const weaponKind = player.levelUpChoices[0]!;
+    resolveLevelUp(player, weaponKind, emit, /* autoPicked */ true);
   });
 }

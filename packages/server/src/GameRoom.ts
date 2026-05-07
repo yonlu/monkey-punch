@@ -8,11 +8,15 @@ import {
   tickWeapons,
   tickProjectiles,
   tickGems,
+  tickXp,
+  tickLevelUpDeadlines,
   tickSpawner,
+  resolveLevelUp,
   spawnDebugBurst,
   PROJECTILE_MAX_CAPACITY,
   SIM_DT_S,
   MAX_ENEMIES,
+  WEAPON_KINDS,
   mulberry32,
   type Rng,
   type SpawnerState,
@@ -25,17 +29,28 @@ import {
 import type {
   InputMessage,
   PingMessage,
+  LevelUpChoiceMessage,
   DebugSpawnMessage,
   DebugClearEnemiesMessage,
+  DebugGrantWeaponMessage,
+  DebugGrantXpMessage,
 } from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
 import { clampDirection } from "./input.js";
+import {
+  createOrbitHitCooldownStore,
+  maxOrbitHitCooldownMs,
+  type OrbitHitCooldownStore,
+} from "./orbitHitCooldown.js";
 
 const TICK_INTERVAL_MS = SIM_DT_S * 1000; // 50 ms — must equal shared SIM_DT_S
 const MAX_PLAYERS = 10;
 const DEFAULT_RECONNECTION_GRACE_S = 30;
 const ALLOW_DEBUG_MESSAGES = true;     // becomes runtime config later
 const SNAPSHOT_LOG_INTERVAL_MS = 5_000;
+// 100 ticks = 5s at 20Hz. Sweep is a safety net; tryHit/evictEnemy/
+// evictPlayer cover the common cases, so this is conservative.
+const ORBIT_COOLDOWN_SWEEP_INTERVAL_TICKS = 100;
 
 // MP_RECONNECTION_GRACE_S overrides the grace window in seconds. Tests set
 // it to "1" so reconnect.test.ts runs in ~1.5s instead of ~31s. Anything
@@ -70,6 +85,12 @@ export class GameRoom extends Room<RoomState> {
   private weaponCtx!: WeaponContext;
   private projectileCtx!: ProjectileContext;
   private projectileCapacityWarned = false;
+  private orbitHitCooldown!: OrbitHitCooldownStore;
+  private maxOrbitHitCooldownMs!: number;
+  private cooldownSweepCounter = 0;
+  // Hoisted so onMessage handlers (e.g. level_up_choice) can share the
+  // same emit lambda used by tick(). Assigned in onCreate.
+  private emit!: Emit;
 
   private snapshotLogTimer: NodeJS.Timeout | null = null;
   private patchByteCount = 0;
@@ -90,7 +111,11 @@ export class GameRoom extends Room<RoomState> {
     state.tick = 0;
     console.log(`[room ${code}] created seed=${state.seed}`);
     this.setState(state);
+    this.emit = (e: CombatEvent) => this.broadcast(e.type, e);
     this.rng = mulberry32(state.seed);
+    this.orbitHitCooldown = createOrbitHitCooldownStore();
+    this.maxOrbitHitCooldownMs = maxOrbitHitCooldownMs(WEAPON_KINDS);
+
     this.weaponCtx = {
       nextFireId: () => this.nextFireId++,
       serverNowMs: () => Date.now(),
@@ -106,8 +131,13 @@ export class GameRoom extends Room<RoomState> {
         }
         this.activeProjectiles.push(p);
       },
+      nextGemId: () => this.nextGemId++,
+      orbitHitCooldown: this.orbitHitCooldown,
     };
-    this.projectileCtx = { nextGemId: () => this.nextGemId++ };
+    this.projectileCtx = {
+      nextGemId: () => this.nextGemId++,
+      orbitHitCooldown: this.orbitHitCooldown,
+    };
 
     // The matchmaker's filterBy(["code"]) matches against the room listing's
     // top-level fields, which Colyseus initializes from the CREATING client's
@@ -141,6 +171,15 @@ export class GameRoom extends Room<RoomState> {
       client.send("pong", { type: "pong", t, serverNow: Date.now() });
     });
 
+    this.onMessage<LevelUpChoiceMessage>("level_up_choice", (client, message) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || !player.pendingLevelUp) return;
+      const idx = Number(message?.choiceIndex);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= player.levelUpChoices.length) return;
+      const weaponKind = player.levelUpChoices[idx]!;
+      resolveLevelUp(player, weaponKind, this.emit, /* autoPicked */ false);
+    });
+
     if (ALLOW_DEBUG_MESSAGES) {
       this.onMessage<DebugSpawnMessage>("debug_spawn", (client, message) => {
         const player = this.state.players.get(client.sessionId);
@@ -164,6 +203,36 @@ export class GameRoom extends Room<RoomState> {
 
       this.onMessage<DebugClearEnemiesMessage>("debug_clear_enemies", () => {
         this.state.enemies.clear();
+      });
+
+      this.onMessage<DebugGrantWeaponMessage>("debug_grant_weapon", (client, message) => {
+        const player = this.state.players.get(client.sessionId);
+        if (!player) return;
+        const kindRaw = Number(message?.weaponKind);
+        if (!Number.isFinite(kindRaw) || kindRaw < 0 || kindRaw >= WEAPON_KINDS.length) return;
+        const kind = Math.floor(kindRaw);
+
+        const existing = player.weapons.find((w) => w.kind === kind);
+        if (existing) {
+          const def = WEAPON_KINDS[kind]!;
+          existing.level = Math.min(existing.level + 1, def.levels.length);
+          return;
+        }
+
+        const fresh = new WeaponState();
+        fresh.kind = kind;
+        fresh.level = 1;
+        fresh.cooldownRemaining = 0;
+        player.weapons.push(fresh);
+      });
+
+      this.onMessage<DebugGrantXpMessage>("debug_grant_xp", (client, message) => {
+        const player = this.state.players.get(client.sessionId);
+        if (!player) return;
+        const raw = Number(message?.amount);
+        if (!Number.isFinite(raw) || raw <= 0) return;
+        // Cap at 10000 per call to prevent runaway XP from a typo.
+        player.xp += Math.min(Math.floor(raw), 10_000);
       });
     }
 
@@ -199,6 +268,7 @@ export class GameRoom extends Room<RoomState> {
 
     if (consented) {
       this.state.players.delete(client.sessionId);
+      this.orbitHitCooldown.evictPlayer(client.sessionId);
       return;
     }
 
@@ -211,6 +281,7 @@ export class GameRoom extends Room<RoomState> {
         `[room ${this.state.code}] reconnect grace ended for ${client.sessionId}: ${err === false ? "timeout" : err}`,
       );
       this.state.players.delete(client.sessionId);
+      this.orbitHitCooldown.evictPlayer(client.sessionId);
     }
   }
 
@@ -220,15 +291,25 @@ export class GameRoom extends Room<RoomState> {
 
   private tick(): void {
     this.state.tick += 1;
-    const emit: Emit = (e: CombatEvent) => this.broadcast(e.type, e);
-
-    // AD6: players → enemies → weapons → projectiles → gems → spawner.
+    // AD5 (M5): tick order is load-bearing for RNG determinism AND for
+    // fairness. tickXp consumes the same rng as tickSpawner, so reordering
+    // forks the seed schedule. xp after gems so this-tick gem pickups feed
+    // the threshold check; deadlines immediately after xp so an auto-pick
+    // that fires this tick uses fresh choices.
     tickPlayers(this.state, SIM_DT_S);
     tickEnemies(this.state, SIM_DT_S);
-    tickWeapons(this.state, SIM_DT_S, this.weaponCtx, emit);
-    tickProjectiles(this.state, this.activeProjectiles, SIM_DT_S, this.projectileCtx, emit);
-    tickGems(this.state, emit);
+    tickWeapons(this.state, SIM_DT_S, this.weaponCtx, this.emit);
+    tickProjectiles(this.state, this.activeProjectiles, SIM_DT_S, this.projectileCtx, this.emit);
+    tickGems(this.state, this.emit);
+    tickXp(this.state, this.rng, this.emit);
+    tickLevelUpDeadlines(this.state, this.emit);
     tickSpawner(this.state, this.spawner, SIM_DT_S, this.rng);
+
+    this.cooldownSweepCounter += 1;
+    if (this.cooldownSweepCounter >= ORBIT_COOLDOWN_SWEEP_INTERVAL_TICKS) {
+      this.cooldownSweepCounter = 0;
+      this.orbitHitCooldown.sweep(Date.now(), this.maxOrbitHitCooldownMs);
+    }
   }
 
   private installSnapshotLogger(): void {

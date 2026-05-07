@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { InstancedMesh, Matrix4 } from "three";
-import { PROJECTILE_MAX_CAPACITY, WEAPON_KINDS } from "@mp/shared";
+import { PROJECTILE_MAX_CAPACITY, WEAPON_KINDS, statsAt, isProjectileWeapon } from "@mp/shared";
 import type { FireEvent } from "@mp/shared";
 import { hudState } from "../net/hudState.js";
 import type { ServerTime } from "../net/serverTime.js";
@@ -44,13 +44,13 @@ export function ProjectileSwarm({ fires, serverTime }: ProjectileSwarmProps) {
 
     for (const [fireId, fe] of fires) {
       const elapsedSec = (renderServerTimeMs - fe.serverFireTimeMs) / 1000;
-      const kind = WEAPON_KINDS[fe.weaponKind];
-      if (!kind) {
-        // Unknown kind from a future server: drop quietly.
+      const def = WEAPON_KINDS[fe.weaponKind];
+      if (!def || !isProjectileWeapon(def)) {
         fires.delete(fireId);
         continue;
       }
-      if (elapsedSec >= kind.projectileLifetime + 0.5) {
+      const stats = statsAt(def, 1);
+      if (elapsedSec >= stats.projectileLifetime + 0.5) {
         // Past lifetime + small grace; the GameView setTimeout cleanup
         // should have fired by now, but if it was missed (tab backgrounded,
         // throttled), drop here as a backstop.
@@ -60,9 +60,9 @@ export function ProjectileSwarm({ fires, serverTime }: ProjectileSwarmProps) {
       if (i >= PROJECTILE_MAX_CAPACITY) break; // defense
       const t = elapsedSec > 0 ? elapsedSec : 0;
       matrix.makeTranslation(
-        fe.originX + fe.dirX * kind.projectileSpeed * t,
+        fe.originX + fe.dirX * stats.projectileSpeed * t,
         PROJECTILE_RENDER_Y,
-        fe.originZ + fe.dirZ * kind.projectileSpeed * t,
+        fe.originZ + fe.dirZ * stats.projectileSpeed * t,
       );
       mesh.setMatrixAt(i, matrix);
       i++;

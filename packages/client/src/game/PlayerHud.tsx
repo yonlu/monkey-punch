@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Room } from "colyseus.js";
 import type { Player, RoomState, WeaponState } from "@mp/shared";
-import { WEAPON_KINDS } from "@mp/shared";
+import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "@mp/shared";
 
 const HUD_STYLE: React.CSSProperties = {
   position: "fixed",
@@ -20,9 +20,10 @@ const BAR_LEN = 5;
 
 function cooldownBar(weapon: WeaponState | undefined): string {
   if (!weapon) return "·".repeat(BAR_LEN);
-  const kind = WEAPON_KINDS[weapon.kind];
-  if (!kind) return "·".repeat(BAR_LEN);
-  const frac = 1 - Math.max(0, Math.min(1, weapon.cooldownRemaining / kind.cooldown));
+  const def = WEAPON_KINDS[weapon.kind];
+  if (!def || !isProjectileWeapon(def)) return "·".repeat(BAR_LEN);
+  const stats = statsAt(def, weapon.level);
+  const frac = 1 - Math.max(0, Math.min(1, weapon.cooldownRemaining / stats.cooldown));
   const filled = Math.round(frac * BAR_LEN);
   return "▓".repeat(filled) + "░".repeat(BAR_LEN - filled);
 }
@@ -56,14 +57,28 @@ export function PlayerHud({ room }: PlayerHudProps) {
 
   const rows: string[] = [];
   room.state.players.forEach((p: Player) => {
-    const w = p.weapons[0];
-    const kindName = w !== undefined && WEAPON_KINDS[w.kind] != null
-      ? WEAPON_KINDS[w.kind]!.name
-      : "—";
     const namePad = (p.name || "Anon").padEnd(8).slice(0, 8);
     const xpStr = String(p.xp).padStart(4);
     const levelStr = String(p.level).padStart(2);
-    rows.push(`${namePad} XP ${xpStr}  Lv ${levelStr}  ${cooldownBar(w)}  ${kindName}`);
+
+    // Cooldown bar uses the *first* projectile-behavior weapon in the list,
+    // for visual continuity with M4. Orbit weapons have no cooldown.
+    const projWeapon = p.weapons.find((w) => {
+      const def = WEAPON_KINDS[w.kind];
+      return def?.behavior.kind === "projectile";
+    });
+    const cd = cooldownBar(projWeapon);
+
+    // Weapon list, comma-joined: "Bolt L2, Orbit L1".
+    const weaponList: string[] = [];
+    p.weapons.forEach((w) => {
+      const def = WEAPON_KINDS[w.kind];
+      if (!def) return;
+      weaponList.push(`${def.name} L${w.level}`);
+    });
+    const weaponsStr = weaponList.length > 0 ? weaponList.join(", ") : "—";
+
+    rows.push(`${namePad} XP ${xpStr}  Lv ${levelStr}  ${cd}  ${weaponsStr}`);
   });
 
   if (rows.length === 0) return null;

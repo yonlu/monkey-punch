@@ -24,3 +24,26 @@ export const GEM_PICKUP_RADIUS = 1.5;
 export const GEM_VALUE = 1;
 export const PROJECTILE_MAX_CAPACITY = 256; // server cap + client InstancedMesh capacity
 export const TARGETING_MAX_RANGE = 20;
+
+// M5 — XP / level-up
+/**
+ * XP required to advance from `level` to `level + 1`.
+ * Canonical formula: level*5 + level² → 6, 14, 24, 36, 50, ...
+ * Tests assert monotonicity, not specific values, so retuning is free.
+ */
+export function xpForLevel(level: number): number {
+  return level * 5 + level * level;
+}
+
+/** 10 seconds at 20Hz = 200 ticks. The window before auto-pick fires. */
+export const LEVEL_UP_DEADLINE_TICKS = 10 * TICK_RATE;
+
+// M5 — orbit rendering
+/**
+ * Upper bound on simultaneous orbs across all weapon levels in WEAPON_KINDS.
+ * Sets the InstancedMesh capacity on the client and is asserted at module
+ * load (see the bare module-load block in `shared/index.ts`). Bumping
+ * this is safe; lowering it past the actual data trips the assertion at
+ * import time.
+ */
+export const MAX_ORB_COUNT_EVER = 6;
