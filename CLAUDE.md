@@ -59,15 +59,19 @@ binding — violations are bugs.
     instance, not on RoomState — server-only counters do not pollute the
     schema.
 11. **Tick order.** Each server tick runs in this fixed order:
-    `tickPlayers → tickEnemies → tickWeapons → tickProjectiles → tickGems → tickSpawner`.
+    `tickPlayers → tickEnemies → tickWeapons → tickProjectiles → tickGems
+    → tickXp → tickLevelUpDeadlines → tickSpawner`.
     Players first so weapons see fresh positions; weapons before
     projectiles so a same-tick fire is integrated next tick (it starts
     with `age = 0` and the projectile's first movement is in the
     *following* `tickProjectiles` call); gems after projectiles so
-    this-tick deaths drop pickups before pickup checks run; spawner last
-    so freshly-spawned enemies get one tick of grace before any other
-    system touches them. This order is load-bearing for fairness — do
-    not reorder.
+    this-tick deaths drop pickups before pickup checks run; xp after
+    gems so this-tick gem pickups feed the level-up threshold check;
+    deadlines immediately after xp so an auto-pick that fires this
+    tick uses fresh choices; spawner last so the rng schedule is
+    fixed (xp + spawner both consume the room rng — reordering forks
+    the seed). This order is load-bearing for fairness AND for cross-
+    client determinism — do not reorder.
 12. **Combat events are server→client only and time-based, not state.**
     `fire`, `hit`, `enemy_died`, `gem_collected`, `level_up_offered`,
     `level_up_resolved` are broadcast events, not schema entries.

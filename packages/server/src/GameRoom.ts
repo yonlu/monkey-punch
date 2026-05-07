@@ -291,9 +291,11 @@ export class GameRoom extends Room<RoomState> {
 
   private tick(): void {
     this.state.tick += 1;
-    // AD5 (M5): tick order is load-bearing for RNG determinism.
-    // tickXp consumes the same rng as tickSpawner, so reordering forks
-    // the seed schedule. tickLevelUpDeadlines lands here in Task 8.
+    // AD5 (M5): tick order is load-bearing for RNG determinism AND for
+    // fairness. tickXp consumes the same rng as tickSpawner, so reordering
+    // forks the seed schedule. xp after gems so this-tick gem pickups feed
+    // the threshold check; deadlines immediately after xp so an auto-pick
+    // that fires this tick uses fresh choices.
     tickPlayers(this.state, SIM_DT_S);
     tickEnemies(this.state, SIM_DT_S);
     tickWeapons(this.state, SIM_DT_S, this.weaponCtx, this.emit);

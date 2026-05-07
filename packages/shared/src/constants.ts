@@ -42,7 +42,8 @@ export const LEVEL_UP_DEADLINE_TICKS = 10 * TICK_RATE;
 /**
  * Upper bound on simultaneous orbs across all weapon levels in WEAPON_KINDS.
  * Sets the InstancedMesh capacity on the client and is asserted at module
- * load (see the IIFE block in `shared/index.ts`). Bumping this is safe;
- * lowering it past the actual data trips the assertion at import time.
+ * load (see the bare module-load block in `shared/index.ts`). Bumping
+ * this is safe; lowering it past the actual data trips the assertion at
+ * import time.
  */
 export const MAX_ORB_COUNT_EVER = 6;

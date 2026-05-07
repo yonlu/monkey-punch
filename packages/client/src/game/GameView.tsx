@@ -326,6 +326,11 @@ export function GameView({
         e.preventDefault();
         // Orbit is index 1 in WEAPON_KINDS. Granting at L1, or upgrading +1.
         room.send("debug_grant_weapon", { type: "debug_grant_weapon", weaponKind: 1 });
+      } else if (e.code === "KeyX" && e.shiftKey) {
+        e.preventDefault();
+        // Push 100 XP into the player so the next tickXp triggers a level-up.
+        // Server caps amount at 10_000 per call.
+        room.send("debug_grant_xp", { type: "debug_grant_xp", amount: 100 });
       }
     };
     window.addEventListener("keydown", keyHandler);
