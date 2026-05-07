@@ -1,9 +1,9 @@
 import { useFrame } from "@react-three/fiber";
 import { Billboard, Text } from "@react-three/drei";
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { Mesh, Group } from "three";
+import { useEffect, useRef, useState } from "react";
+import type { Group } from "three";
 import type { Room } from "colyseus.js";
-import type { Player, RoomState } from "@mp/shared";
+import type { RoomState } from "@mp/shared";
 import { PLAYER_SPEED } from "@mp/shared";
 import { SnapshotBuffer } from "../net/snapshots.js";
 import { hudState } from "../net/hudState.js";
@@ -12,22 +12,12 @@ import {
   SMOOTHING_TAU_S,
   type LocalPredictor,
 } from "../net/prediction.js";
-import { getLiveInputDir, getLiveFacing } from "./input.js";
-import { useThree } from "@react-three/fiber";
-import type { PerspectiveCamera } from "three";
+import { getLiveInputDir } from "./input.js";
+import { PlayerCharacter, type AnimName } from "./PlayerCharacter.js";
 
 const STEP_INTERVAL_S = STEP_INTERVAL_MS / 1000;
-const RENDER_Y = 0.5;
-const DOWN_COLOR = "#6a6a6a";
-
-function colorFor(sessionId: string): string {
-  let hash = 0;
-  for (let i = 0; i < sessionId.length; i++) {
-    hash = (hash * 31 + sessionId.charCodeAt(i)) | 0;
-  }
-  const hue = ((hash % 360) + 360) % 360;
-  return `hsl(${hue}, 70%, 55%)`;
-}
+const RENDER_Y = 0;
+const RUN_SPEED_THRESHOLD = 0.5;
 
 function localPlayerRenderPos(predictor: LocalPredictor, delta: number): { x: number; z: number } {
   const decay = Math.exp(-delta / SMOOTHING_TAU_S);
@@ -59,13 +49,15 @@ export type PlayerCubeProps = {
 
 export function PlayerCube({ room, sessionId, name, buffer, predictor }: PlayerCubeProps) {
   const groupRef = useRef<Group>(null);
-  const cubeRef = useRef<Mesh>(null);
-  const camera = useThree((s) => s.camera) as PerspectiveCamera;
-  const baseColor = useMemo(() => colorFor(sessionId), [sessionId]);
 
   const [hp, setHp] = useState<number>(100);
   const [maxHp, setMaxHp] = useState<number>(100);
   const [downed, setDowned] = useState<boolean>(false);
+  const [anim, setAnim] = useState<AnimName>("Idle");
+  const [facingY, setFacingY] = useState<number>(0);
+
+  // Per-frame velocity tracker for Idle/Run detection.
+  const lastPos = useRef<{ x: number; z: number; t: number } | null>(null);
 
   useEffect(() => {
     const player = room.state.players.get(sessionId);
@@ -79,7 +71,7 @@ export function PlayerCube({ room, sessionId, name, buffer, predictor }: PlayerC
   }, [room, sessionId]);
 
   useFrame((_, delta) => {
-    if (!groupRef.current || !cubeRef.current) return;
+    if (!groupRef.current) return;
 
     const player = room.state.players.get(sessionId);
     const isDowned = !!player?.downed;
@@ -103,41 +95,57 @@ export function PlayerCube({ room, sessionId, name, buffer, predictor }: PlayerC
 
     groupRef.current.position.set(posX, RENDER_Y, posZ);
 
-    let facingX = 0, facingZ = 1;
-    if (predictor) {
-      const f = getLiveFacing(camera, posX, posZ);
-      facingX = f.x; facingZ = f.z;
-    } else if (player) {
-      facingX = player.facingX; facingZ = player.facingZ;
+    // Anim + body facing: Death overrides everything; otherwise pick Run vs
+    // Idle from rendered-position rate of change, and rotate the body to
+    // match walk direction. Body facing is decoupled from the schema's
+    // facingX/Z (which serves weapon firing).
+    let nextAnim: AnimName;
+    if (isDowned) {
+      nextAnim = "Death";
+    } else {
+      const nowMs = performance.now();
+      const last = lastPos.current;
+      let speed = 0;
+      let dx = 0, dz = 0;
+      if (last) {
+        const dt = Math.max(0.001, (nowMs - last.t) / 1000);
+        dx = posX - last.x;
+        dz = posZ - last.z;
+        speed = Math.hypot(dx, dz) / dt;
+      }
+      lastPos.current = { x: posX, z: posZ, t: nowMs };
+
+      // Walk direction. Local: live input dir (noise-free); remote: snapshot
+      // delta. Only update facing when actually moving — keep last facing
+      // when standing still.
+      let walkX = 0, walkZ = 0, walkMag = 0;
+      if (predictor) {
+        const dir = getLiveInputDir();
+        walkX = dir.x; walkZ = dir.z;
+        walkMag = Math.hypot(walkX, walkZ);
+      } else if (speed > RUN_SPEED_THRESHOLD) {
+        walkX = dx; walkZ = dz;
+        walkMag = Math.hypot(walkX, walkZ);
+      }
+      if (walkMag > 0.01) {
+        // Quaternius mannequin's default forward is -Z (FBX2glTF export
+        // convention), so flip 180° to align with our walk vector.
+        const newFacingY = Math.atan2(walkX, walkZ) + Math.PI;
+        if (newFacingY !== facingY) setFacingY(newFacingY);
+      }
+
+      nextAnim = speed > RUN_SPEED_THRESHOLD ? "Run" : "Idle";
     }
-
-    cubeRef.current.rotation.y = Math.atan2(facingX, facingZ);
-    cubeRef.current.rotation.x = isDowned ? Math.PI / 2 : 0;
+    if (nextAnim !== anim) setAnim(nextAnim);
   });
-
-  // Color update on downed change — accessing material via cubeRef. The
-  // initial color is set on mount via the JSX prop; subsequent changes use
-  // material.color.set in this effect.
-  useEffect(() => {
-    const m = cubeRef.current?.material as unknown as { color: { set: (c: string) => void } } | undefined;
-    if (m) m.color.set(downed ? DOWN_COLOR : baseColor);
-  }, [downed, baseColor]);
 
   const isLocal = !!predictor;
   const hpFrac = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
 
   return (
     <group ref={groupRef}>
-      <mesh ref={cubeRef} castShadow>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color={baseColor} />
-        {/* Nose — child mesh in cube's local space, sticking out along +Z */}
-        <mesh position={[0, 0, 0.7]}>
-          <boxGeometry args={[0.2, 0.2, 0.6]} />
-          <meshStandardMaterial color="#ffffff" />
-        </mesh>
-      </mesh>
-      <Billboard position={[0, 1.4, 0]}>
+      <PlayerCharacter anim={anim} facingY={facingY} />
+      <Billboard position={[0, 1.95, 0]}>
         <Text
           fontSize={0.35}
           color={isLocal ? "#ffd34a" : "#ffffff"}

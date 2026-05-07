@@ -66,6 +66,13 @@ export function Landing({ onJoined, initialName = "", initialCode = "", banner }
         </button>
       </div>
       <div className="error">{error}</div>
+      <div className="credits">
+        Character &amp; animations by{" "}
+        <a href="https://quaternius.com/" target="_blank" rel="noreferrer">
+          Quaternius
+        </a>{" "}
+        (CC-BY 3.0)
+      </div>
     </div>
   );
 }
