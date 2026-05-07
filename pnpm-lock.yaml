@@ -60,6 +60,9 @@ importers:
       '@colyseus/schema':
         specifier: ^3.0.0
         version: 3.0.76
+      '@colyseus/tools':
+        specifier: ^0.16.0
+        version: 0.16.20(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/ws-transport@0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0)))
       '@mp/shared':
         specifier: workspace:*
         version: link:../shared
@@ -218,6 +221,13 @@ packages:
 
   '@colyseus/timer@1.0.3':
     resolution: {integrity: sha512-Vy8FGTt2vbmkXn2RzMkCGphcDIdCeYeZx2CADdQM/0EWEBrFM67FTcSJATB2q/lm2vlZfvkBjEDtJHePSePB1A==}
+
+  '@colyseus/tools@0.16.20':
+    resolution: {integrity: sha512-tfWF7/c1nbjV+y8IKw382QnzHnyB9mmolMxeykFZ5HA4bjCVRk3RS39wyrpNd1gzp7JnZ0iQf7546eJ1hlegYA==}
+    hasBin: true
+    peerDependencies:
+      '@colyseus/core': 0.16.x
+      '@colyseus/ws-transport': 0.16.x
 
   '@colyseus/uwebsockets-transport@0.16.10':
     resolution: {integrity: sha512-AgAcMNWaguN7QjTENZm0e604sjpXa6By17MYGDMrqlYKkVtKKHCx8rIPfB7WPWXRmEZbgPQP3Z6rte+dgjtBgw==}
@@ -1019,6 +1029,10 @@ packages:
     resolution: {integrity: sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w==}
     engines: {node: '>= 0.6'}
 
+  cors@2.8.6:
+    resolution: {integrity: sha512-tJtZBBHA6vjIAaF6EnIaq6laBBP9aq/Y3ouVJjEfoHbRBcHBAHYcMh/w8LDrk2PvIMMq8gmopa5D4V8RmbrxGw==}
+    engines: {node: '>= 0.10'}
+
   cross-env@7.0.3:
     resolution: {integrity: sha512-+/HKd6EgcQCJGh2PSjZuUitQBQynKor4wrFbRg4DtAgS1aWO+gU52xpH7M9ScGgXSYmAVS9bIJ8EzuaGw0oNAw==}
     engines: {node: '>=10.14', npm: '>=6', yarn: '>=1'}
@@ -1083,6 +1097,10 @@ packages:
   diff-sequences@29.6.3:
     resolution: {integrity: sha512-EjePK1srD3P08o2j4f0ExnylqRs5B9tJjcp9t1krH2qRi8CCdsYfwe9JgSLurFBWwq4uOlipzfk5fHNvwFKr8Q==}
     engines: {node: ^14.15.0 || ^16.10.0 || >=18.0.0}
+
+  dotenv@17.4.2:
+    resolution: {integrity: sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw==}
+    engines: {node: '>=12'}
 
   draco3d@1.5.7:
     resolution: {integrity: sha512-m6WCKt/erDXcw+70IJXnG7M3awwQPAsZvJGX5zY7beBqpELw6RDGkYVU0W43AFxye4pDZ5i2Lbyc/NNGqwjUVQ==}
@@ -2201,6 +2219,17 @@ snapshots:
     dependencies:
       '@colyseus/clock': 1.0.1
 
+  '@colyseus/tools@0.16.20(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/ws-transport@0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0)))':
+    dependencies:
+      '@colyseus/core': 0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0)
+      '@colyseus/ws-transport': 0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))
+      '@pm2/io': 6.1.0
+      cors: 2.8.6
+      dotenv: 17.4.2
+      express: 4.22.1
+    transitivePeerDependencies:
+      - supports-color
+
   '@colyseus/uwebsockets-transport@0.16.10(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))':
     dependencies:
       '@colyseus/core': 0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0)
@@ -2871,6 +2900,11 @@ snapshots:
 
   cookie@0.7.2: {}
 
+  cors@2.8.6:
+    dependencies:
+      object-assign: 4.1.1
+      vary: 1.1.2
+
   cross-env@7.0.3:
     dependencies:
       cross-spawn: 7.0.6
@@ -2913,6 +2947,8 @@ snapshots:
     optional: true
 
   diff-sequences@29.6.3: {}
+
+  dotenv@17.4.2: {}
 
   draco3d@1.5.7: {}
 

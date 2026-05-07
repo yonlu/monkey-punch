@@ -6,11 +6,13 @@ module.exports = {
       script: "packages/server/dist/index.js",
       time: true,
       watch: false,
-      // Single fork: server uses `new Server()` (not defineServer + cluster
-      // transport), so multiple forks would race to bind the same port.
       instances: 1,
       exec_mode: "fork",
-      wait_ready: false,
+      // listen() from @colyseus/tools emits process.send("ready") once the
+      // socket is bound; PM2 only swaps traffic to a new fork after that
+      // signal, which is what enables zero-downtime rolling deploys on
+      // Colyseus Cloud (pm2.scale 1→2→1).
+      wait_ready: true,
     },
   ],
 };

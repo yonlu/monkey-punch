@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@colyseus/schema": "^3.0.0",
+    "@colyseus/tools": "^0.16.0",
     "@mp/shared": "workspace:*",
     "colyseus": "^0.16.0"
   },
