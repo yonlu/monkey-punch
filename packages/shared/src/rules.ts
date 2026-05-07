@@ -25,6 +25,8 @@ import type {
   HitEvent,
   EnemyDiedEvent,
   GemCollectedEvent,
+  LevelUpOfferedEvent,
+  LevelUpResolvedEvent,
 } from "./messages.js";
 
 export function tickPlayers(state: RoomState, dt: number): void {
@@ -179,7 +181,13 @@ export type Projectile = {
   z: number;
 };
 
-export type CombatEvent = FireEvent | HitEvent | EnemyDiedEvent | GemCollectedEvent;
+export type CombatEvent =
+  | FireEvent
+  | HitEvent
+  | EnemyDiedEvent
+  | GemCollectedEvent
+  | LevelUpOfferedEvent
+  | LevelUpResolvedEvent;
 export type Emit = (event: CombatEvent) => void;
 
 /**
