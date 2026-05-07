@@ -268,23 +268,42 @@ Pure: no side effects beyond mutating `player` and calling `emit`. Same
 shape will carry every future "player gains a thing" flow (passives,
 relics, etc., when those exist).
 
-### AD10. Level-up overlay dismisses optimistically
+### AD10. Level-up overlay visibility is schema-driven
 
-On 1/2/3 keypress (or click), the client immediately sends the
-`level_up_choice` message and immediately hides the overlay. The
-overlay does not wait for `level_up_resolved` to dismiss — that event
-arrives within ~50ms over a healthy connection but could be longer
-under throttled network (verification step 9). UI feels responsive;
-worst-case under packet loss is "I clicked, choice didn't take" which
-is recoverable: schema still shows `pendingLevelUp = true` next snapshot
-and the overlay re-shows.
+**Revised after implementation review.** Originally specified as
+"optimistic dismiss" — click hides the overlay immediately, with a
+re-show if schema still showed `pendingLevelUp = true` on the next
+snapshot. The implementation chose the simpler schema-only path:
+visibility is `pendingLevelUp && levelUpChoices.length > 0` read
+directly from `room.state.players.get(localSessionId)` each rAF,
+with no transient client state.
 
-If the client flap-happens to send a `level_up_choice` *and* the
-deadline fires server-side at the same tick, the message handler runs
-before `tickLevelUpDeadlines` (handlers fire on receipt; tick fires on
-the simulation interval); the player's choice wins. If the deadline
-fires first, the choice arrives as "no longer pending" and is rejected
-silently — the player gets the auto-picked result.
+Trade-offs of the schema-only approach:
+
+- **Plus**: reconnection-during-overlay falls out for free — schema
+  arrives on resync, the rAF reader sees `pendingLevelUp = true` and
+  the overlay re-shows with the deadlineTick still ticking down. No
+  state-machine logic on the client. The
+  `levelUpReconnect.test.ts` integration test verifies this.
+- **Plus**: there is exactly one source of truth. A future contributor
+  cannot accidentally desync the overlay from the player's actual
+  level-up state.
+- **Minus**: click → dismiss latency is one snapshot (~50–100ms on a
+  healthy connection, longer under throttled network). Imperceptible
+  to most users; under heavy packet loss the overlay can linger
+  visibly.
+
+The latency cost is acceptable for M5; if user feedback reveals it
+as a real UX issue, an "optimistic dismiss with deadline-keyed
+re-show fallback" pattern can be layered on top of the schema check
+without further architectural changes.
+
+If the client sends `level_up_choice` *and* the deadline fires
+server-side at the same tick, the message handler runs before
+`tickLevelUpDeadlines` (handlers fire on receipt; tick fires on the
+simulation interval); the player's choice wins. If the deadline
+fires first, the choice arrives as "no longer pending" and is
+rejected silently — the player gets the auto-picked result.
 
 ### AD11. The "no per-name branches" rule is enforced in code review
 
