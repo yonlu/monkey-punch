@@ -366,7 +366,7 @@ export function GameView({
           />
         ))}
         <EnemySwarm enemyIds={enemyIds} buffers={enemyBuffers} />
-        <OrbitSwarm room={room} predictor={predictor} buffers={buffers} />
+        <OrbitSwarm room={room} predictor={predictor} buffers={buffers} serverTime={serverTime} />
         <ProjectileSwarm fires={fires} serverTime={serverTime} />
         <GemSwarm room={room} />
         {vfxJsx}
