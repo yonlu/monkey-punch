@@ -30,7 +30,6 @@ import {
   type ProjectileContext,
   type Emit,
   type CombatEvent,
-  type ContactCooldownLike,
 } from "@mp/shared";
 import type {
   InputMessage,
