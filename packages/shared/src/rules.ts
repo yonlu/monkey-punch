@@ -32,6 +32,7 @@ import type {
 } from "./messages.js";
 
 export function tickPlayers(state: RoomState, dt: number): void {
+  if (state.runEnded) return;
   state.players.forEach((p) => {
     p.x += p.inputDir.x * PLAYER_SPEED * dt;
     p.z += p.inputDir.z * PLAYER_SPEED * dt;
@@ -47,6 +48,7 @@ export function tickPlayers(state: RoomState, dt: number): void {
  * Allocates only function-scope locals.
  */
 export function tickEnemies(state: RoomState, dt: number): void {
+  if (state.runEnded) return;
   if (state.players.size === 0) return;
 
   state.enemies.forEach((enemy: Enemy) => {
@@ -94,6 +96,7 @@ export function tickSpawner(
   dt: number,
   rng: Rng,
 ): void {
+  if (state.runEnded) return;
   if (state.players.size === 0) return;
 
   spawner.accumulator += dt;
@@ -230,6 +233,7 @@ export function tickWeapons(
   ctx: WeaponContext,
   emit: Emit,
 ): void {
+  if (state.runEnded) return;
   const rangeSq = TARGETING_MAX_RANGE * TARGETING_MAX_RANGE;
 
   state.players.forEach((player: Player) => {
@@ -425,6 +429,7 @@ export function tickProjectiles(
   ctx: ProjectileContext,
   emit: Emit,
 ): void {
+  if (state.runEnded) return;
   let w = 0;
   for (let r = 0; r < active.length; r++) {
     const proj = active[r]!;
@@ -523,6 +528,7 @@ export function tickProjectiles(
  * dependency-free.
  */
 export function tickGems(state: RoomState, emit: Emit): void {
+  if (state.runEnded) return;
   const radiusSq = GEM_PICKUP_RADIUS * GEM_PICKUP_RADIUS;
   state.gems.forEach((gem: Gem, key: string) => {
     let collector: Player | undefined;
@@ -614,6 +620,7 @@ export function resolveLevelUp(
  * rng, fixed tick order).
  */
 export function tickXp(state: RoomState, rng: Rng, emit: Emit): void {
+  if (state.runEnded) return;
   state.players.forEach((player: Player) => {
     if (player.pendingLevelUp) return;
     const need = xpForLevel(player.level);
@@ -649,6 +656,7 @@ export function tickXp(state: RoomState, rng: Rng, emit: Emit): void {
  * Per spec §AD9 — same resolveLevelUp path, autoPicked=true.
  */
 export function tickLevelUpDeadlines(state: RoomState, emit: Emit): void {
+  if (state.runEnded) return;
   state.players.forEach((player: Player) => {
     if (!player.pendingLevelUp) return;
     if (state.tick < player.levelUpDeadlineTick) return;

@@ -1114,3 +1114,53 @@ describe("tickLevelUpDeadlines", () => {
     expect(events.length).toBe(0);
   });
 });
+
+describe("runEnded universal early-out", () => {
+  function makeFrozenState(): RoomState {
+    const state = new RoomState();
+    state.runEnded = true;
+    const p = addPlayer(state, "a", 1, 0);
+    p.x = 0; p.z = 0;
+    addEnemy(state, 1, 5, 0);
+    return state;
+  }
+
+  function noopEmit() {}
+
+  it("tickPlayers does not move players when runEnded", () => {
+    const state = makeFrozenState();
+    const p = state.players.get("a")!;
+    tickPlayers(state, 0.05);
+    expect(p.x).toBe(0);
+    expect(p.z).toBe(0);
+  });
+
+  it("tickEnemies does not move enemies when runEnded", () => {
+    const state = makeFrozenState();
+    const e = state.enemies.get("1")!;
+    tickEnemies(state, 0.05);
+    expect(e.x).toBe(5);
+    expect(e.z).toBe(0);
+  });
+
+  it("tickGems does not collect gems when runEnded", () => {
+    const state = makeFrozenState();
+    const p = state.players.get("a")!;
+    const g = new Gem();
+    g.id = 1; g.x = 0; g.z = 0; g.value = 5;
+    state.gems.set("1", g);
+    tickGems(state, noopEmit);
+    expect(state.gems.size).toBe(1);
+    expect(p.xp).toBe(0);
+  });
+
+  it("tickXp does not advance xp threshold when runEnded", () => {
+    const state = makeFrozenState();
+    const p = state.players.get("a")!;
+    p.xp = 10_000;
+    p.level = 1;
+    tickXp(state, mulberry32(1), noopEmit);
+    expect(p.level).toBe(1);
+    expect(p.pendingLevelUp).toBe(false);
+  });
+});
