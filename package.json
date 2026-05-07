@@ -12,7 +12,9 @@
     "build": "pnpm -r run build",
     "test": "pnpm -r run test",
     "typecheck": "tsc -b",
-    "clean": "pnpm -r exec rm -rf dist && rm -rf node_modules/.cache"
+    "clean": "pnpm -r exec rm -rf dist && rm -rf node_modules/.cache",
+    "deploy:client": "bash scripts/deploy-client.sh",
+    "deploy:server": "bash scripts/deploy-server.sh"
   },
   "devDependencies": {
     "typescript": "^5.4.5"
