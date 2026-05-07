@@ -643,3 +643,22 @@ export function tickXp(state: RoomState, rng: Rng, emit: Emit): void {
     });
   });
 }
+
+/**
+ * Auto-pick choice 0 for any player whose level-up deadline has passed.
+ * Per spec §AD9 — same resolveLevelUp path, autoPicked=true.
+ */
+export function tickLevelUpDeadlines(state: RoomState, emit: Emit): void {
+  state.players.forEach((player: Player) => {
+    if (!player.pendingLevelUp) return;
+    if (state.tick < player.levelUpDeadlineTick) return;
+    if (player.levelUpChoices.length === 0) {
+      // Pending but no choices — defensive recovery; clear and bail.
+      player.pendingLevelUp = false;
+      player.levelUpDeadlineTick = 0;
+      return;
+    }
+    const weaponKind = player.levelUpChoices[0]!;
+    resolveLevelUp(player, weaponKind, emit, /* autoPicked */ true);
+  });
+}

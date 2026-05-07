@@ -9,6 +9,7 @@ import {
   tickProjectiles,
   tickGems,
   tickXp,
+  tickLevelUpDeadlines,
   resolveLevelUp,
   type SpawnerState,
   type Projectile,
@@ -1062,5 +1063,54 @@ describe("tickXp", () => {
       expect(c).toBeGreaterThanOrEqual(0);
       expect(c).toBeLessThan(WEAPON_KINDS.length);
     });
+  });
+});
+
+describe("tickLevelUpDeadlines", () => {
+  it("does not fire before the deadline tick", () => {
+    const state = new RoomState();
+    state.tick = 100;
+    const p = addPlayer(state, "p1", 0, 0);
+    p.pendingLevelUp = true;
+    p.levelUpChoices.push(0, 0, 0);
+    p.levelUpDeadlineTick = 200;
+
+    const events: CombatEvent[] = [];
+    tickLevelUpDeadlines(state, (e) => events.push(e));
+
+    expect(p.pendingLevelUp).toBe(true);
+    expect(events.length).toBe(0);
+  });
+
+  it("fires exactly when state.tick === deadline (auto-picks choice 0)", () => {
+    const state = new RoomState();
+    state.tick = 200;
+    const p = addPlayer(state, "p1", 0, 0);
+    p.pendingLevelUp = true;
+    p.levelUpChoices.push(1, 0, 0);
+    p.levelUpDeadlineTick = 200;
+
+    const events: CombatEvent[] = [];
+    tickLevelUpDeadlines(state, (e) => events.push(e));
+
+    expect(p.pendingLevelUp).toBe(false);
+    expect(p.weapons.length).toBe(1);
+    expect(p.weapons[0]!.kind).toBe(1); // chose Orbit (choice 0)
+    const resolved = events.find((e) => e.type === "level_up_resolved")!;
+    if (resolved.type === "level_up_resolved") {
+      expect(resolved.autoPicked).toBe(true);
+    }
+  });
+
+  it("ignores players without pendingLevelUp", () => {
+    const state = new RoomState();
+    state.tick = 200;
+    const p = addPlayer(state, "p1", 0, 0);
+    p.pendingLevelUp = false;
+    p.levelUpDeadlineTick = 100; // would be past, but pending is false
+
+    const events: CombatEvent[] = [];
+    tickLevelUpDeadlines(state, (e) => events.push(e));
+    expect(events.length).toBe(0);
   });
 });

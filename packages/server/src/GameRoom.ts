@@ -9,6 +9,7 @@ import {
   tickProjectiles,
   tickGems,
   tickXp,
+  tickLevelUpDeadlines,
   tickSpawner,
   resolveLevelUp,
   spawnDebugBurst,
@@ -289,7 +290,7 @@ export class GameRoom extends Room<RoomState> {
     tickProjectiles(this.state, this.activeProjectiles, SIM_DT_S, this.projectileCtx, this.emit);
     tickGems(this.state, this.emit);
     tickXp(this.state, this.rng, this.emit);
-    // tickLevelUpDeadlines goes here in Phase 8.
+    tickLevelUpDeadlines(this.state, this.emit);
     tickSpawner(this.state, this.spawner, SIM_DT_S, this.rng);
 
     this.cooldownSweepCounter += 1;
