@@ -278,6 +278,7 @@ export function tickWeapons(
   const rangeSq = TARGETING_MAX_RANGE * TARGETING_MAX_RANGE;
 
   state.players.forEach((player: Player) => {
+    if (player.downed) return;                 // M6 — downed players don't fire
     player.weapons.forEach((weapon: WeaponState) => {
       const def: WeaponDef | undefined = WEAPON_KINDS[weapon.kind];
       if (!def) return; // unknown kind — skip silently
@@ -418,6 +419,7 @@ export function tickWeapons(
                 const deathZ = enemy.z;
                 const deathId = enemy.id;
                 state.enemies.delete(String(enemy.id));
+                player.kills += 1;
                 ctx.orbitHitCooldown.evictEnemy(deathId);
 
                 emit({

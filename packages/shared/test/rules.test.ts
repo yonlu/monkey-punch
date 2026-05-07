@@ -1336,3 +1336,46 @@ describe("tickRunEndCheck", () => {
     expect(events.filter((e) => e.type === "run_ended").length).toBe(1);
   });
 });
+
+describe("tickWeapons — M6", () => {
+  it("skips downed players entirely (no fire emitted, no cooldown decrement)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0); p.downed = true;
+    const w = new WeaponState();
+    w.kind = 0; w.level = 1; w.cooldownRemaining = 0;
+    p.weapons.push(w);
+    addEnemy(state, 1, 5, 0);
+    const events: CombatEvent[] = [];
+    const ctx: WeaponContext = {
+      nextFireId: () => 1,
+      serverNowMs: () => 0,
+      pushProjectile: () => {},
+      nextGemId: () => 1,
+      orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+    };
+    tickWeapons(state, 0.05, ctx, (e) => events.push(e));
+    expect(events.find((e) => e.type === "fire")).toBeUndefined();
+    expect(w.cooldownRemaining).toBe(0);
+  });
+
+  it("increments owner.kills on orbit-killing-blow", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.x = 0; p.z = 0;
+    const w = new WeaponState();
+    w.kind = 1; w.level = 1; w.cooldownRemaining = 0;   // orbit
+    p.weapons.push(w);
+    // At state.tick=0 and orbRadius=2.0, orb 0 sits at (2.0, 0).
+    const e = addEnemy(state, 1, 2.0, 0);
+    e.hp = 1;   // dies in one orbit hit
+    const ctx: WeaponContext = {
+      nextFireId: () => 1,
+      serverNowMs: () => 0,
+      pushProjectile: () => {},
+      nextGemId: () => 1,
+      orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+    };
+    tickWeapons(state, 0.05, ctx, () => {});
+    expect(p.kills).toBe(1);
+  });
+});
