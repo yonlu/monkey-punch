@@ -80,7 +80,8 @@ binding — violations are bugs.
     state is one branch in each function, not a per-system gate.
 12. **Combat events are server→client only and time-based, not state.**
     `fire`, `hit`, `enemy_died`, `gem_collected`, `level_up_offered`,
-    `level_up_resolved` are broadcast events, not schema entries.
+    `level_up_resolved`, `player_damaged`, `player_downed`, `run_ended`
+    are broadcast events, not schema entries.
     Projectile-behavior weapons are simulated client-side as a closed-form
     function of the `fire` event payload. Orbit-behavior weapons are
     simulated client-side as a closed-form function of `(state.tick,
