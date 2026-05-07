@@ -17,6 +17,8 @@ import {
   SIM_DT_S,
   MAX_ENEMIES,
   WEAPON_KINDS,
+  PLAYER_MAX_HP,
+  PLAYER_NAME_MAX_LEN,
   mulberry32,
   type Rng,
   type SpawnerState,
@@ -243,10 +245,19 @@ export class GameRoom extends Room<RoomState> {
   override onJoin(client: Client, options: JoinOptions): void {
     const player = new Player();
     player.sessionId = client.sessionId;
-    player.name = (options?.name ?? "Anon").slice(0, 24);
+    player.name =
+      ((options?.name ?? "").trim().slice(0, PLAYER_NAME_MAX_LEN) || "Player");
     player.x = 0;
     player.y = 0;
     player.z = 0;
+    player.hp = PLAYER_MAX_HP;
+    player.maxHp = PLAYER_MAX_HP;
+    player.downed = false;
+    player.facingX = 0;
+    player.facingZ = 1;
+    player.kills = 0;
+    player.xpGained = 0;
+    player.joinTick = this.state.tick;
 
     const bolt = new WeaponState();
     bolt.kind = 0;
