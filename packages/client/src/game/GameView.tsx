@@ -20,6 +20,7 @@ import { OrbitSwarm } from "./OrbitSwarm.js";
 import { ProjectileSwarm } from "./ProjectileSwarm.js";
 import { GemSwarm } from "./GemSwarm.js";
 import { PlayerHud } from "./PlayerHud.js";
+import { LevelUpOverlay } from "./LevelUpOverlay.js";
 import { useCombatVfxRef } from "./CombatVfx.js";
 import { SnapshotBuffer } from "../net/snapshots.js";
 import { ServerTime } from "../net/serverTime.js";
@@ -298,6 +299,17 @@ export function GameView({
         hudState.visible = !hudState.visible;
         return;
       }
+      if (e.code === "Digit1" || e.code === "Digit2" || e.code === "Digit3") {
+        const localPlayer = room.state.players.get(room.sessionId);
+        if (localPlayer?.pendingLevelUp && localPlayer.levelUpChoices.length > 0) {
+          e.preventDefault();
+          const idx = e.code === "Digit1" ? 0 : e.code === "Digit2" ? 1 : 2;
+          if (idx < localPlayer.levelUpChoices.length) {
+            room.send("level_up_choice", { type: "level_up_choice", choiceIndex: idx });
+          }
+        }
+        return;
+      }
       if (!hudState.visible) return;
 
       if (e.code === "BracketRight" && !e.shiftKey) {
@@ -372,6 +384,7 @@ export function GameView({
         {vfxJsx}
       </Canvas>
       <PlayerHud room={room} />
+      <LevelUpOverlay room={room} />
       <DebugHud />
     </div>
   );
