@@ -5,6 +5,8 @@ import {
   RoomState,
   tickPlayers,
   tickEnemies,
+  tickContactDamage,
+  tickRunEndCheck,
   tickWeapons,
   tickProjectiles,
   tickGems,
@@ -14,6 +16,7 @@ import {
   resolveLevelUp,
   spawnDebugBurst,
   PROJECTILE_MAX_CAPACITY,
+  ENEMY_CONTACT_COOLDOWN_S,
   SIM_DT_S,
   MAX_ENEMIES,
   WEAPON_KINDS,
@@ -27,6 +30,7 @@ import {
   type ProjectileContext,
   type Emit,
   type CombatEvent,
+  type ContactCooldownLike,
 } from "@mp/shared";
 import type {
   InputMessage,
@@ -45,6 +49,10 @@ import {
   maxOrbitHitCooldownMs,
   type OrbitHitCooldownStore,
 } from "./orbitHitCooldown.js";
+import {
+  createContactCooldownStore,
+  type ContactCooldownStore,
+} from "./contactCooldown.js";
 
 const TICK_INTERVAL_MS = SIM_DT_S * 1000; // 50 ms — must equal shared SIM_DT_S
 const MAX_PLAYERS = 10;
@@ -89,6 +97,7 @@ export class GameRoom extends Room<RoomState> {
   private projectileCtx!: ProjectileContext;
   private projectileCapacityWarned = false;
   private orbitHitCooldown!: OrbitHitCooldownStore;
+  private contactCooldown!: ContactCooldownStore;
   private maxOrbitHitCooldownMs!: number;
   private cooldownSweepCounter = 0;
   // Hoisted so onMessage handlers (e.g. level_up_choice) can share the
@@ -117,6 +126,7 @@ export class GameRoom extends Room<RoomState> {
     this.emit = (e: CombatEvent) => this.broadcast(e.type, e);
     this.rng = mulberry32(state.seed);
     this.orbitHitCooldown = createOrbitHitCooldownStore();
+    this.contactCooldown = createContactCooldownStore();
     this.maxOrbitHitCooldownMs = maxOrbitHitCooldownMs(WEAPON_KINDS);
 
     this.weaponCtx = {
@@ -309,6 +319,7 @@ export class GameRoom extends Room<RoomState> {
     if (consented) {
       this.state.players.delete(client.sessionId);
       this.orbitHitCooldown.evictPlayer(client.sessionId);
+      this.contactCooldown.evictPlayer(client.sessionId);
       return;
     }
 
@@ -322,6 +333,7 @@ export class GameRoom extends Room<RoomState> {
       );
       this.state.players.delete(client.sessionId);
       this.orbitHitCooldown.evictPlayer(client.sessionId);
+      this.contactCooldown.evictPlayer(client.sessionId);
     }
   }
 
@@ -331,13 +343,13 @@ export class GameRoom extends Room<RoomState> {
 
   private tick(): void {
     this.state.tick += 1;
-    // AD5 (M5): tick order is load-bearing for RNG determinism AND for
-    // fairness. tickXp consumes the same rng as tickSpawner, so reordering
-    // forks the seed schedule. xp after gems so this-tick gem pickups feed
-    // the threshold check; deadlines immediately after xp so an auto-pick
-    // that fires this tick uses fresh choices.
+    // M6: tickContactDamage after tickEnemies sees fresh positions; tickRunEndCheck
+    // immediately after so weapons/projectiles/spawner all observe the post-end
+    // state via their `state.runEnded` early-out.
     tickPlayers(this.state, SIM_DT_S);
     tickEnemies(this.state, SIM_DT_S);
+    tickContactDamage(this.state, this.contactCooldown, SIM_DT_S, Date.now(), this.emit);
+    tickRunEndCheck(this.state, this.emit);
     tickWeapons(this.state, SIM_DT_S, this.weaponCtx, this.emit);
     tickProjectiles(this.state, this.activeProjectiles, SIM_DT_S, this.projectileCtx, this.emit);
     tickGems(this.state, this.emit);
@@ -348,7 +360,9 @@ export class GameRoom extends Room<RoomState> {
     this.cooldownSweepCounter += 1;
     if (this.cooldownSweepCounter >= ORBIT_COOLDOWN_SWEEP_INTERVAL_TICKS) {
       this.cooldownSweepCounter = 0;
-      this.orbitHitCooldown.sweep(Date.now(), this.maxOrbitHitCooldownMs);
+      const now = Date.now();
+      this.orbitHitCooldown.sweep(now, this.maxOrbitHitCooldownMs);
+      this.contactCooldown.sweep(now, ENEMY_CONTACT_COOLDOWN_S * 1000);
     }
   }
 
