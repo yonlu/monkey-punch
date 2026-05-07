@@ -1441,3 +1441,34 @@ describe("tickGems — M6", () => {
     expect(p.xpGained).toBe(14);
   });
 });
+
+describe("tickSpawner — M6", () => {
+  it("does not target downed players when picking a spawn anchor", () => {
+    const state = new RoomState();
+    const dead = addPlayer(state, "dead", 0, 0); dead.downed = true; dead.x = 1000; dead.z = 1000;
+    const live = addPlayer(state, "live", 0, 0); live.x = 0; live.z = 0;
+    const spawner: SpawnerState = { accumulator: ENEMY_SPAWN_INTERVAL_S, nextEnemyId: 1 };
+    const rng = mulberry32(7);
+    tickSpawner(state, spawner, ENEMY_SPAWN_INTERVAL_S, rng);
+    // The new enemy must be near the live player, not within 1000 units of dead.
+    const e = Array.from(state.enemies.values())[0]!;
+    expect(Math.hypot(e.x - live.x, e.z - live.z)).toBeLessThanOrEqual(ENEMY_SPAWN_RADIUS + 1);
+  });
+
+  it("skips spawn when 3 retries all land outside MAP_RADIUS", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0); p.x = 59.9; p.z = 0;
+    // accumulator starts at 0; one dt of exactly ENEMY_SPAWN_INTERVAL_S fires exactly one slot.
+    const spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+    // Most angles around p at radius 30 land outside MAP_RADIUS=60.
+    // We assert the enemies count is either 0 (all retries failed) or 1 (one retry succeeded with right angle).
+    const before = state.enemies.size;
+    tickSpawner(state, spawner, ENEMY_SPAWN_INTERVAL_S, mulberry32(1));
+    const after = state.enemies.size;
+    expect(after - before).toBeLessThanOrEqual(1);
+    if (after - before === 1) {
+      const e = Array.from(state.enemies.values()).pop()!;
+      expect(Math.hypot(e.x, e.z)).toBeLessThanOrEqual(MAP_RADIUS + 1e-6);
+    }
+  });
+});

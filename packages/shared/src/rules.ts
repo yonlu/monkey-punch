@@ -116,6 +116,11 @@ export type SpawnerState = {
  * same call. Reasoning: if it stalled, the moment one enemy was removed
  * (next milestone, when combat lands) we'd flood. Drain is the right
  * default.
+ *
+ * M6: Only non-downed players are eligible spawn anchors. If all players
+ * are downed, bail early (run will end this tick anyway). Spawn positions
+ * are clamped to MAP_RADIUS via a retry-3 loop; if all retries land
+ * outside the map, the slot is skipped (accumulator still decremented).
  */
 export function tickSpawner(
   state: RoomState,
@@ -126,7 +131,13 @@ export function tickSpawner(
   if (state.runEnded) return;
   if (state.players.size === 0) return;
 
+  // Count non-downed players; bail if all are downed (run will end this tick anyway).
+  let liveCount = 0;
+  state.players.forEach((p) => { if (!p.downed) liveCount += 1; });
+  if (liveCount === 0) return;
+
   spawner.accumulator += dt;
+  const map2 = MAP_RADIUS * MAP_RADIUS;
 
   while (spawner.accumulator >= ENEMY_SPAWN_INTERVAL_S) {
     if (state.enemies.size >= MAX_ENEMIES) {
@@ -134,32 +145,37 @@ export function tickSpawner(
       return;
     }
 
-    const playerIdx = Math.floor(rng() * state.players.size);
+    // Pick a random non-downed player.
+    const liveIdx = Math.floor(rng() * liveCount);
     let i = 0;
     let target: Player | undefined;
     state.players.forEach((p) => {
-      if (i === playerIdx) target = p;
+      if (p.downed) return;
+      if (i === liveIdx) target = p;
       i++;
     });
     if (!target) {
-      // Unreachable given mulberry32's [0,1) output range and the size>0
-      // check above (state.players.size === 0 short-circuits at the top).
-      // Throw rather than silently swallow so a future refactor that
-      // breaks the index math surfaces immediately instead of degrading
-      // determinism by consuming RNG calls in an asymmetric pattern.
       throw new Error(
-        `tickSpawner: unreachable — playerIdx=${playerIdx} out of range for size=${state.players.size}`,
+        `tickSpawner: unreachable — liveIdx=${liveIdx} out of range for liveCount=${liveCount}`,
       );
     }
 
-    const angle = rng() * Math.PI * 2;
-    const enemy = new Enemy();
-    enemy.id = spawner.nextEnemyId++;
-    enemy.kind = 0;
-    enemy.x = target.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
-    enemy.z = target.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
-    enemy.hp = ENEMY_HP;
-    state.enemies.set(String(enemy.id), enemy);
+    // Try up to 3 angles to land inside MAP_RADIUS; skip this slot if all fail.
+    let placed = false;
+    for (let attempt = 0; attempt < 3 && !placed; attempt++) {
+      const angle = rng() * Math.PI * 2;
+      const x = target.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
+      const z = target.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
+      if (x * x + z * z > map2) continue;
+      const enemy = new Enemy();
+      enemy.id = spawner.nextEnemyId++;
+      enemy.kind = 0;
+      enemy.x = x;
+      enemy.z = z;
+      enemy.hp = ENEMY_HP;
+      state.enemies.set(String(enemy.id), enemy);
+      placed = true;
+    }
 
     spawner.accumulator -= ENEMY_SPAWN_INTERVAL_S;
   }
