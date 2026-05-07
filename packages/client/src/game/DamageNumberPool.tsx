@@ -1,6 +1,6 @@
 import { Text } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
-import { useEffect, useImperativeHandle, forwardRef, useRef } from "react";
+import { useEffect, forwardRef, useRef } from "react";
 import type { Group } from "three";
 import type { Room } from "colyseus.js";
 import type { HitEvent, PlayerDamagedEvent, RoomState } from "@mp/shared";
