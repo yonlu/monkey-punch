@@ -47,3 +47,12 @@ export const LEVEL_UP_DEADLINE_TICKS = 10 * TICK_RATE;
  * import time.
  */
 export const MAX_ORB_COUNT_EVER = 6;
+
+// M6 — playability pass
+export const MAP_RADIUS = 60;                  // world units
+export const PLAYER_RADIUS = 0.5;              // matches cube half-extent
+export const PLAYER_MAX_HP = 100;
+export const ENEMY_CONTACT_DAMAGE = 5;         // hp per contact
+export const ENEMY_CONTACT_COOLDOWN_S = 0.5;   // per-(player, enemy) pair
+export const ENEMY_DESPAWN_RADIUS = 50;        // beyond this from any non-downed player
+export const PLAYER_NAME_MAX_LEN = 16;
