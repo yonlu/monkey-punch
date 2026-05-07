@@ -12,6 +12,7 @@ import {
   tickLevelUpDeadlines,
   resolveLevelUp,
   tickContactDamage,
+  tickRunEndCheck,
   type SpawnerState,
   type Projectile,
   type WeaponContext,
@@ -1298,5 +1299,40 @@ describe("tickContactDamage", () => {
     tickContactDamage(state, fc.store, 0.05, 0, (e) => events.push(e));
     expect(p.hp).toBe(100);
     expect(events.length).toBe(0);
+  });
+});
+
+describe("tickRunEndCheck", () => {
+  it("flips runEnded only when all players are downed", () => {
+    const state = new RoomState();
+    const a = addPlayer(state, "a", 0, 0); a.downed = true;
+    const b = addPlayer(state, "b", 0, 0); b.downed = false;
+    const events: CombatEvent[] = [];
+    tickRunEndCheck(state, (e) => events.push(e));
+    expect(state.runEnded).toBe(false);
+    expect(events.length).toBe(0);
+
+    b.downed = true;
+    tickRunEndCheck(state, (e) => events.push(e));
+    expect(state.runEnded).toBe(true);
+    expect(state.runEndedTick).toBe(state.tick);
+    expect(events.filter((e) => e.type === "run_ended").length).toBe(1);
+  });
+
+  it("does not fire on empty room", () => {
+    const state = new RoomState();
+    const events: CombatEvent[] = [];
+    tickRunEndCheck(state, (e) => events.push(e));
+    expect(state.runEnded).toBe(false);
+    expect(events.length).toBe(0);
+  });
+
+  it("fires only once across multiple ticks", () => {
+    const state = new RoomState();
+    const a = addPlayer(state, "a", 0, 0); a.downed = true;
+    const events: CombatEvent[] = [];
+    tickRunEndCheck(state, (e) => events.push(e));
+    tickRunEndCheck(state, (e) => events.push(e));
+    expect(events.filter((e) => e.type === "run_ended").length).toBe(1);
   });
 });

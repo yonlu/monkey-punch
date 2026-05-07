@@ -770,3 +770,23 @@ export function tickContactDamage(
     });
   });
 }
+
+/**
+ * If every player is downed, set state.runEnded=true, snapshot
+ * state.runEndedTick, and emit `run_ended`. No-op on empty room or if
+ * runEnded is already true.
+ */
+export function tickRunEndCheck(state: RoomState, emit: Emit): void {
+  if (state.runEnded) return;
+  if (state.players.size === 0) return;
+
+  let allDowned = true;
+  state.players.forEach((p: Player) => {
+    if (!p.downed) allDowned = false;
+  });
+  if (!allDowned) return;
+
+  state.runEnded = true;
+  state.runEndedTick = state.tick;
+  emit({ type: "run_ended", serverTick: state.tick });
+}
