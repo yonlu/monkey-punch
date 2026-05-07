@@ -31,6 +31,7 @@ import {
   TARGETING_MAX_RANGE,
   LEVEL_UP_DEADLINE_TICKS,
   xpForLevel,
+  MAP_RADIUS,
 } from "../src/constants.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "../src/weapons.js";
 import { mulberry32 } from "../src/rng.js";
@@ -1112,6 +1113,27 @@ describe("tickLevelUpDeadlines", () => {
     const events: CombatEvent[] = [];
     tickLevelUpDeadlines(state, (e) => events.push(e));
     expect(events.length).toBe(0);
+  });
+});
+
+describe("tickPlayers — M6", () => {
+  it("clamps player position to MAP_RADIUS when integration would exceed it", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 1, 0);
+    p.x = 59;
+    p.z = 0;
+    // Step would push past MAP_RADIUS=60.
+    for (let i = 0; i < 100; i++) tickPlayers(state, 0.05);
+    expect(Math.hypot(p.x, p.z)).toBeLessThanOrEqual(60 + 1e-9);
+    expect(p.x).toBeCloseTo(60);
+  });
+
+  it("does not move downed players", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 1, 0);
+    p.downed = true;
+    tickPlayers(state, 0.5);
+    expect(p.x).toBe(0);
   });
 });
 

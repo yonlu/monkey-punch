@@ -14,6 +14,7 @@ import {
   GEM_PICKUP_RADIUS,
   GEM_VALUE,
   LEVEL_UP_DEADLINE_TICKS,
+  MAP_RADIUS,
   MAX_ENEMIES,
   PLAYER_SPEED,
   TARGETING_MAX_RANGE,
@@ -33,9 +34,17 @@ import type {
 
 export function tickPlayers(state: RoomState, dt: number): void {
   if (state.runEnded) return;
+  const max2 = MAP_RADIUS * MAP_RADIUS;
   state.players.forEach((p) => {
+    if (p.downed) return;
     p.x += p.inputDir.x * PLAYER_SPEED * dt;
     p.z += p.inputDir.z * PLAYER_SPEED * dt;
+    const r2 = p.x * p.x + p.z * p.z;
+    if (r2 > max2) {
+      const scale = MAP_RADIUS / Math.sqrt(r2);
+      p.x *= scale;
+      p.z *= scale;
+    }
   });
 }
 
