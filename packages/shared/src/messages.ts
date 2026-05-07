@@ -24,6 +24,11 @@ export type DebugGrantWeaponMessage = {
   weaponKind: number;
 };
 
+export type DebugGrantXpMessage = {
+  type: "debug_grant_xp";
+  amount: number;
+};
+
 export type LevelUpChoiceMessage = {
   type: "level_up_choice";
   choiceIndex: number; // 0/1/2
@@ -35,6 +40,7 @@ export type ClientMessage =
   | DebugSpawnMessage
   | DebugClearEnemiesMessage
   | DebugGrantWeaponMessage
+  | DebugGrantXpMessage
   | LevelUpChoiceMessage;
 
 // Server→client one-shot, NOT a ClientMessage variant (rule 3 governs
@@ -114,6 +120,7 @@ export const MessageType = {
   DebugSpawn: "debug_spawn",
   DebugClearEnemies: "debug_clear_enemies",
   DebugGrantWeapon: "debug_grant_weapon",
+  DebugGrantXp: "debug_grant_xp",
   Fire: "fire",
   Hit: "hit",
   EnemyDied: "enemy_died",

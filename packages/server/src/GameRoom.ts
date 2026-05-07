@@ -33,6 +33,7 @@ import type {
   DebugSpawnMessage,
   DebugClearEnemiesMessage,
   DebugGrantWeaponMessage,
+  DebugGrantXpMessage,
 } from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
 import { clampDirection } from "./input.js";
@@ -223,6 +224,15 @@ export class GameRoom extends Room<RoomState> {
         fresh.level = 1;
         fresh.cooldownRemaining = 0;
         player.weapons.push(fresh);
+      });
+
+      this.onMessage<DebugGrantXpMessage>("debug_grant_xp", (client, message) => {
+        const player = this.state.players.get(client.sessionId);
+        if (!player) return;
+        const raw = Number(message?.amount);
+        if (!Number.isFinite(raw) || raw <= 0) return;
+        // Cap at 10000 per call to prevent runaway XP from a typo.
+        player.xp += Math.min(Math.floor(raw), 10_000);
       });
     }
 
