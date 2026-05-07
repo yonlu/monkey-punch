@@ -384,7 +384,7 @@ export function GameView({
       window.removeEventListener("keydown", keyHandler);
       detachInput();
     };
-  }, [room, buffers, predictor, enemyBuffers, serverTime, fires, vfx, onUnexpectedLeave]);
+  }, [room, buffers, predictor, enemyBuffers, serverTime, fires, vfx, onUnexpectedLeave, onConsentLeave]);
 
   return (
     <div style={{ position: "relative", width: "100vw", height: "100vh" }}>
