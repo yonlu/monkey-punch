@@ -21,6 +21,7 @@ import { ProjectileSwarm } from "./ProjectileSwarm.js";
 import { GemSwarm } from "./GemSwarm.js";
 import { PlayerHud } from "./PlayerHud.js";
 import { LevelUpOverlay } from "./LevelUpOverlay.js";
+import { LevelUpFlashVfx } from "./LevelUpFlashVfx.js";
 import { useCombatVfxRef } from "./CombatVfx.js";
 import { SnapshotBuffer } from "../net/snapshots.js";
 import { ServerTime } from "../net/serverTime.js";
@@ -379,6 +380,7 @@ export function GameView({
         ))}
         <EnemySwarm enemyIds={enemyIds} buffers={enemyBuffers} />
         <OrbitSwarm room={room} predictor={predictor} buffers={buffers} serverTime={serverTime} />
+        <LevelUpFlashVfx room={room} predictor={predictor} buffers={buffers} />
         <ProjectileSwarm fires={fires} serverTime={serverTime} />
         <GemSwarm room={room} />
         {vfxJsx}
