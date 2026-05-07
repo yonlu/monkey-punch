@@ -1415,3 +1415,29 @@ describe("tickWeapons — M6", () => {
     expect(p.kills).toBe(1);
   });
 });
+
+describe("tickGems — M6", () => {
+  it("increments xpGained alongside xp on collect", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0); p.x = 0; p.z = 0; p.xp = 0; p.xpGained = 0;
+    const g = new Gem(); g.id = 1; g.x = 0; g.z = 0; g.value = 5;
+    state.gems.set("1", g);
+    tickGems(state, () => {});
+    expect(p.xp).toBe(5);
+    expect(p.xpGained).toBe(5);
+  });
+
+  it("xpGained is monotone (never drained when xp is)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0); p.x = 0; p.z = 0; p.xp = 0; p.xpGained = 0;
+    const g1 = new Gem(); g1.id = 1; g1.x = 0; g1.z = 0; g1.value = 10;
+    state.gems.set("1", g1);
+    tickGems(state, () => {});
+    p.xp = 0;   // simulate level-up drain
+    const g2 = new Gem(); g2.id = 2; g2.x = 0; g2.z = 0; g2.value = 4;
+    state.gems.set("2", g2);
+    tickGems(state, () => {});
+    expect(p.xp).toBe(4);
+    expect(p.xpGained).toBe(14);
+  });
+});

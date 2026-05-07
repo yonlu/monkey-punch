@@ -586,6 +586,7 @@ export function tickGems(state: RoomState, emit: Emit): void {
     if (!collector) return;
 
     collector.xp += gem.value;
+    collector.xpGained += gem.value;
     state.gems.delete(key);
     emit({
       type: "gem_collected",
