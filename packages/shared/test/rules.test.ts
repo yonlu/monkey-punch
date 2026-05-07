@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { RoomState, Player, Enemy, WeaponState, Gem } from "../src/schema.js";
 import {
   tickPlayers,
@@ -11,12 +11,14 @@ import {
   tickXp,
   tickLevelUpDeadlines,
   resolveLevelUp,
+  tickContactDamage,
   type SpawnerState,
   type Projectile,
   type WeaponContext,
   type ProjectileContext,
   type Emit,
   type CombatEvent,
+  type ContactCooldownLike,
 } from "../src/rules.js";
 import {
   PLAYER_SPEED,
@@ -1213,5 +1215,88 @@ describe("runEnded universal early-out", () => {
     tickXp(state, mulberry32(1), noopEmit);
     expect(p.level).toBe(1);
     expect(p.pendingLevelUp).toBe(false);
+  });
+});
+
+function makeFakeContactCooldown() {
+  const tryHit = vi.fn().mockReturnValue(true);
+  return {
+    store: { tryHit, evictEnemy: vi.fn(), evictPlayer: vi.fn(), sweep: vi.fn() },
+    tryHit,
+  };
+}
+
+describe("tickContactDamage", () => {
+  it("applies damage when player and enemy overlap and cooldown allows", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.hp = 100; p.maxHp = 100;
+    p.x = 0; p.z = 0;
+    addEnemy(state, 1, 0.5, 0);   // touching: dist = 0.5 < (PLAYER_RADIUS + ENEMY_RADIUS = 1)
+    const fc = makeFakeContactCooldown();
+    const events: CombatEvent[] = [];
+    const emit: Emit = (e) => { events.push(e); };
+
+    tickContactDamage(state, fc.store, 0.05, 0, emit);
+
+    expect(p.hp).toBe(95);
+    expect(events.find((e) => e.type === "player_damaged")).toBeDefined();
+  });
+
+  it("does not apply damage when cooldown rejects", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.hp = 100; p.x = 0; p.z = 0;
+    addEnemy(state, 1, 0.5, 0);
+    const fc = makeFakeContactCooldown();
+    fc.tryHit.mockReturnValue(false);
+    const events: CombatEvent[] = [];
+    tickContactDamage(state, fc.store, 0.05, 0, (e) => events.push(e));
+
+    expect(p.hp).toBe(100);
+    expect(events.length).toBe(0);
+  });
+
+  it("flips downed and emits player_downed when hp crosses 0", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 1, 0);
+    p.hp = 5; p.maxHp = 100; p.x = 0; p.z = 0;
+    p.inputDir.x = 1;   // moving when hit
+    addEnemy(state, 1, 0.5, 0);
+    const fc = makeFakeContactCooldown();
+    const events: CombatEvent[] = [];
+
+    tickContactDamage(state, fc.store, 0.05, 0, (e) => events.push(e));
+
+    expect(p.hp).toBe(0);
+    expect(p.downed).toBe(true);
+    expect(p.inputDir.x).toBe(0);
+    expect(p.inputDir.z).toBe(0);
+    expect(events.filter((e) => e.type === "player_damaged").length).toBe(1);
+    expect(events.filter((e) => e.type === "player_downed").length).toBe(1);
+  });
+
+  it("does not damage already-downed players", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.hp = 0; p.downed = true; p.x = 0; p.z = 0;
+    addEnemy(state, 1, 0.5, 0);
+    const fc = makeFakeContactCooldown();
+    const events: CombatEvent[] = [];
+    tickContactDamage(state, fc.store, 0.05, 0, (e) => events.push(e));
+    expect(events.length).toBe(0);
+  });
+
+  it("early-outs on runEnded", () => {
+    const state = new RoomState();
+    state.runEnded = true;
+    const p = addPlayer(state, "a", 0, 0);
+    p.hp = 100; p.x = 0; p.z = 0;
+    addEnemy(state, 1, 0.5, 0);
+    const fc = makeFakeContactCooldown();
+    const events: CombatEvent[] = [];
+    tickContactDamage(state, fc.store, 0.05, 0, (e) => events.push(e));
+    expect(p.hp).toBe(100);
+    expect(events.length).toBe(0);
   });
 });

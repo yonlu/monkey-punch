@@ -6,6 +6,8 @@ import {
   type RoomState,
 } from "./schema.js";
 import {
+  ENEMY_CONTACT_COOLDOWN_S,
+  ENEMY_CONTACT_DAMAGE,
   ENEMY_DESPAWN_RADIUS,
   ENEMY_HP,
   ENEMY_RADIUS,
@@ -17,6 +19,7 @@ import {
   LEVEL_UP_DEADLINE_TICKS,
   MAP_RADIUS,
   MAX_ENEMIES,
+  PLAYER_RADIUS,
   PLAYER_SPEED,
   TARGETING_MAX_RANGE,
   TICK_RATE,
@@ -231,6 +234,17 @@ export type Emit = (event: CombatEvent) => void;
 export interface OrbitHitCooldownLike {
   tryHit(playerId: string, weaponIndex: number, enemyId: number, nowMs: number, cooldownMs: number): boolean;
   evictEnemy(enemyId: number): void;
+}
+
+/**
+ * Server-supplied per-(player, enemy) contact-damage cooldown. Structural —
+ * the concrete implementation lives in server/src/contactCooldown.ts.
+ */
+export interface ContactCooldownLike {
+  tryHit(playerId: string, enemyId: number, nowMs: number, cooldownMs: number): boolean;
+  evictEnemy(enemyId: number): void;
+  evictPlayer(playerId: string): void;
+  sweep(nowMs: number, maxCooldownMs: number): void;
 }
 
 export type WeaponContext = {
@@ -695,5 +709,64 @@ export function tickLevelUpDeadlines(state: RoomState, emit: Emit): void {
     }
     const weaponKind = player.levelUpChoices[0]!;
     resolveLevelUp(player, weaponKind, emit, /* autoPicked */ true);
+  });
+}
+
+/**
+ * For each non-downed player, find every enemy whose center-to-center
+ * distance is within (PLAYER_RADIUS + ENEMY_RADIUS). Each touching pair
+ * tries to hit through `cooldown.tryHit(...)`; on success, apply
+ * ENEMY_CONTACT_DAMAGE, emit `player_damaged`, and (if hp crosses 0) flip
+ * `downed` + zero inputDir + emit `player_downed`.
+ *
+ * `nowMs` is the server's wall-clock; the cooldown store is the only
+ * consumer of it. Determinism: outcomes (damage, downed) depend on the
+ * cooldown decision, which depends on wall-clock — same pattern as orbit
+ * hits in tickWeapons. Clients don't run this function, so cross-client
+ * divergence is impossible by construction (server is authoritative).
+ */
+export function tickContactDamage(
+  state: RoomState,
+  cooldown: ContactCooldownLike,
+  _dt: number,
+  nowMs: number,
+  emit: Emit,
+): void {
+  if (state.runEnded) return;
+  const cooldownMs = ENEMY_CONTACT_COOLDOWN_S * 1000;
+  const radiusSum = PLAYER_RADIUS + ENEMY_RADIUS;
+  const radiusSumSq = radiusSum * radiusSum;
+
+  state.players.forEach((player: Player) => {
+    if (player.downed) return;
+
+    state.enemies.forEach((enemy: Enemy) => {
+      const dx = enemy.x - player.x;
+      const dz = enemy.z - player.z;
+      if (dx * dx + dz * dz > radiusSumSq) return;
+      if (!cooldown.tryHit(player.sessionId, enemy.id, nowMs, cooldownMs)) return;
+
+      const damage = Math.min(player.hp, ENEMY_CONTACT_DAMAGE);
+      player.hp -= damage;
+      emit({
+        type: "player_damaged",
+        playerId: player.sessionId,
+        damage,
+        x: player.x,
+        z: player.z,
+        serverTick: state.tick,
+      });
+
+      if (player.hp <= 0 && !player.downed) {
+        player.downed = true;
+        player.inputDir.x = 0;
+        player.inputDir.z = 0;
+        emit({
+          type: "player_downed",
+          playerId: player.sessionId,
+          serverTick: state.tick,
+        });
+      }
+    });
   });
 }
