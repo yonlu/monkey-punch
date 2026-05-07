@@ -87,7 +87,12 @@ export function LevelUpOverlay({ room }: LevelUpOverlayProps) {
   }, []);
 
   const localPlayer = room.state.players.get(room.sessionId);
-  if (!localPlayer || !localPlayer.pendingLevelUp || localPlayer.levelUpChoices.length === 0) {
+  if (
+    !localPlayer ||
+    localPlayer.downed ||
+    !localPlayer.pendingLevelUp ||
+    localPlayer.levelUpChoices.length === 0
+  ) {
     return null;
   }
 
