@@ -1337,6 +1337,42 @@ describe("tickRunEndCheck", () => {
   });
 });
 
+describe("tickProjectiles — M6 kills", () => {
+  it("credits owner.kills when a projectile kills an enemy", () => {
+    const state = new RoomState();
+    const owner = addPlayer(state, "owner", 0, 0); owner.x = 0; owner.z = 0;
+    const e = addEnemy(state, 1, 1, 0); e.hp = 1;
+    const projectiles: Projectile[] = [{
+      fireId: 1, ownerId: "owner", weaponKind: 0,
+      damage: 10, speed: 20, radius: 0.4, lifetime: 1,
+      age: 0, dirX: 1, dirZ: 0,
+      prevX: 0, prevZ: 0, x: 0, z: 0,
+    }];
+    const ctx: ProjectileContext = {
+      nextGemId: () => 1,
+      orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+    };
+    tickProjectiles(state, projectiles, 0.05, ctx, () => {});
+    expect(owner.kills).toBe(1);
+  });
+
+  it("does not crash when projectile owner has left", () => {
+    const state = new RoomState();
+    addEnemy(state, 1, 1, 0).hp = 1;
+    const projectiles: Projectile[] = [{
+      fireId: 1, ownerId: "ghost", weaponKind: 0,
+      damage: 10, speed: 20, radius: 0.4, lifetime: 1,
+      age: 0, dirX: 1, dirZ: 0,
+      prevX: 0, prevZ: 0, x: 0, z: 0,
+    }];
+    const ctx: ProjectileContext = {
+      nextGemId: () => 1,
+      orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+    };
+    expect(() => tickProjectiles(state, projectiles, 0.05, ctx, () => {})).not.toThrow();
+  });
+});
+
 describe("tickWeapons — M6", () => {
   it("skips downed players entirely (no fire emitted, no cooldown decrement)", () => {
     const state = new RoomState();

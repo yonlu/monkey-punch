@@ -542,6 +542,8 @@ export function tickProjectiles(
         const deathX = hitEnemy.x;
         const deathZ = hitEnemy.z;
         const deathId = hitEnemy.id;
+        const owner = state.players.get(proj.ownerId);
+        if (owner) owner.kills += 1;
         state.enemies.delete(String(hitEnemy.id));
         ctx.orbitHitCooldown.evictEnemy(deathId);
 
