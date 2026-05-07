@@ -1,6 +1,6 @@
 import { Text } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
-import { useEffect, forwardRef, useRef } from "react";
+import { useEffect, forwardRef, useRef, useState } from "react";
 import type { Group } from "three";
 import type { Room } from "colyseus.js";
 import type { HitEvent, PlayerDamagedEvent, RoomState } from "@mp/shared";
@@ -37,6 +37,13 @@ export const DamageNumberPool = forwardRef<unknown, Props>(function DamageNumber
     })),
   );
   const groupRefs = useRef<(Group | null)[]>(Array.from({ length: POOL_SIZE }, () => null));
+
+  // Re-render driver — slot text/color live in a ref (mutated by useFrame +
+  // spawn), so React doesn't see them change unless we force a re-render.
+  // Without this, the JSX `<Text>{s.text}</Text>` reads stale props,
+  // particularly during a runEnded frozen state where parent re-renders stop.
+  // Pattern mirrors CombatVfx.tsx.
+  const [, forceRender] = useState(0);
 
   function spawn(text: string, x: number, z: number, color: string) {
     let idx = slots.current.findIndex((s) => !s.active);
@@ -92,6 +99,8 @@ export const DamageNumberPool = forwardRef<unknown, Props>(function DamageNumber
         text.material.opacity = Math.max(0, 1 - s.age / LIFETIME_S);
       }
     }
+    // Re-evaluate JSX so each slot's text/color reflects the latest spawn().
+    forceRender((n) => (n + 1) & 0x7fffffff);
   });
 
   return (
