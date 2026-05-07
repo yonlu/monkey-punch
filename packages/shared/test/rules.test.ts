@@ -8,6 +8,7 @@ import {
   tickWeapons,
   tickProjectiles,
   tickGems,
+  resolveLevelUp,
   type SpawnerState,
   type Projectile,
   type WeaponContext,
@@ -896,5 +897,71 @@ describe("tickWeapons orbit arm", () => {
     expect(state.gems.size).toBe(1);
     expect(events.some((e) => e.type === "enemy_died" && e.enemyId === 7)).toBe(true);
     expect(evictedId).toBe(7);
+  });
+});
+
+describe("resolveLevelUp", () => {
+  it("upgrades existing weapon: increments level, no new WeaponState pushed, emits resolved", () => {
+    const p = new Player();
+    p.sessionId = "p1";
+    p.pendingLevelUp = true;
+    p.levelUpChoices.push(0, 1, 0);
+    p.levelUpDeadlineTick = 200;
+    const w = new WeaponState();
+    w.kind = 0; w.level = 1; w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const events: CombatEvent[] = [];
+    resolveLevelUp(p, /* weaponKind */ 0, (e) => events.push(e), /* autoPicked */ false);
+
+    expect(p.weapons.length).toBe(1);
+    expect(p.weapons[0]!.level).toBe(2);
+    expect(p.pendingLevelUp).toBe(false);
+    expect(p.levelUpChoices.length).toBe(0);
+    expect(p.levelUpDeadlineTick).toBe(0);
+
+    const resolved = events.find((e) => e.type === "level_up_resolved")!;
+    expect(resolved).toBeDefined();
+    if (resolved.type === "level_up_resolved") {
+      expect(resolved.playerId).toBe("p1");
+      expect(resolved.weaponKind).toBe(0);
+      expect(resolved.newWeaponLevel).toBe(2);
+      expect(resolved.autoPicked).toBe(false);
+    }
+  });
+
+  it("adds new weapon at level 1 if not present", () => {
+    const p = new Player();
+    p.sessionId = "p1";
+    p.pendingLevelUp = true;
+    p.levelUpChoices.push(1, 0, 1);
+
+    const events: CombatEvent[] = [];
+    resolveLevelUp(p, /* Orbit */ 1, (e) => events.push(e), /* autoPicked */ true);
+
+    expect(p.weapons.length).toBe(1);
+    expect(p.weapons[0]!.kind).toBe(1);
+    expect(p.weapons[0]!.level).toBe(1);
+    expect(p.weapons[0]!.cooldownRemaining).toBe(0);
+
+    const resolved = events.find((e) => e.type === "level_up_resolved")!;
+    if (resolved.type === "level_up_resolved") {
+      expect(resolved.newWeaponLevel).toBe(1);
+      expect(resolved.autoPicked).toBe(true);
+    }
+  });
+
+  it("caps level at WEAPON_KINDS[kind].levels.length", () => {
+    const p = new Player();
+    p.sessionId = "p1";
+    const def = WEAPON_KINDS[0]!; // Bolt: 5 levels
+    const w = new WeaponState();
+    w.kind = 0; w.level = def.levels.length; w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const events: CombatEvent[] = [];
+    resolveLevelUp(p, 0, (e) => events.push(e), false);
+
+    expect(p.weapons[0]!.level).toBe(def.levels.length); // capped, not 6
   });
 });

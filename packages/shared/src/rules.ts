@@ -1,9 +1,9 @@
 import {
   Enemy,
   Gem,
+  WeaponState,
   type Player,
   type RoomState,
-  type WeaponState,
 } from "./schema.js";
 import {
   ENEMY_HP,
@@ -540,5 +540,63 @@ export function tickGems(state: RoomState, emit: Emit): void {
       playerId: collector.sessionId,
       value: gem.value,
     });
+  });
+}
+
+/**
+ * Pure: mutate `player` to apply the chosen level-up, then emit
+ * `level_up_resolved`. Called from both the `level_up_choice` message
+ * handler (autoPicked=false) and `tickLevelUpDeadlines` (autoPicked=true).
+ *
+ * Per spec §AD9. If the player already has a weapon of `weaponKind`,
+ * increments its level (capped at WEAPON_KINDS[kind].levels.length).
+ * Otherwise pushes a new WeaponState at level 1.
+ */
+export function resolveLevelUp(
+  player: Player,
+  weaponKind: number,
+  emit: Emit,
+  autoPicked: boolean,
+): void {
+  const def = WEAPON_KINDS[weaponKind];
+  if (!def) {
+    // Unknown kind; clear pending state to avoid wedging the player and bail.
+    player.pendingLevelUp = false;
+    player.levelUpChoices.length = 0;
+    player.levelUpDeadlineTick = 0;
+    return;
+  }
+
+  let newWeaponLevel: number;
+  let existingIdx = -1;
+  for (let i = 0; i < player.weapons.length; i++) {
+    if (player.weapons[i]!.kind === weaponKind) {
+      existingIdx = i;
+      break;
+    }
+  }
+  if (existingIdx >= 0) {
+    const w = player.weapons[existingIdx]!;
+    w.level = Math.min(w.level + 1, def.levels.length);
+    newWeaponLevel = w.level;
+  } else {
+    const w = new WeaponState();
+    w.kind = weaponKind;
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    player.weapons.push(w);
+    newWeaponLevel = 1;
+  }
+
+  player.pendingLevelUp = false;
+  player.levelUpChoices.length = 0;
+  player.levelUpDeadlineTick = 0;
+
+  emit({
+    type: "level_up_resolved",
+    playerId: player.sessionId,
+    weaponKind,
+    newWeaponLevel,
+    autoPicked,
   });
 }
