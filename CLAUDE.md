@@ -69,14 +69,16 @@ binding — violations are bugs.
     system touches them. This order is load-bearing for fairness — do
     not reorder.
 12. **Combat events are server→client only and time-based, not state.**
-    `fire`, `hit`, `enemy_died`, `gem_collected` are broadcast events,
-    not schema entries. Projectiles are simulated client-side as a
-    closed-form function of the `fire` event payload and a synced server
-    clock (extended `pong` carries `serverNow`; client smooths
-    `serverTimeOffsetMs`). Projectiles render at the same `interpDelayMs`
-    as state interpolation, so hit feedback aligns with the rendered
-    enemy. Adding a new weapon means adding a row to `WEAPON_KINDS` and
-    (if non-trivial) a new `targeting` mode — never new sync logic.
+    `fire`, `hit`, `enemy_died`, `gem_collected`, `level_up_offered`,
+    `level_up_resolved` are broadcast events, not schema entries.
+    Projectile-behavior weapons are simulated client-side as a closed-form
+    function of the `fire` event payload. Orbit-behavior weapons are
+    simulated client-side as a closed-form function of `(state.tick,
+    player position, weapon level)` — no per-frame syncing. Adding a new
+    weapon means adding a row to `WEAPON_KINDS` against an existing
+    `WeaponBehavior` kind; adding a new behavior kind means one new arm
+    in `tickWeapons` and one new client renderer. Never name-based
+    branching in tick or render code.
 
 ## Things NOT to do
 
