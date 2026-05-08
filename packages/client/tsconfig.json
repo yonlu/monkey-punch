@@ -12,7 +12,8 @@
     "noEmit": false,
     "baseUrl": ".",
     "paths": {
-      "@mp/shared": ["../shared/src/index.ts"]
+      "@mp/shared": ["../shared/src/index.ts"],
+      "@/*": ["src/*"]
     },
     "types": ["vite/client"]
   },
