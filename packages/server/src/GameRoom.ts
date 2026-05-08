@@ -159,7 +159,7 @@ export class GameRoom extends Room<RoomState> {
     // updates listing.metadata, which the matchmaker's driver query does
     // NOT read — it would not be sufficient on its own.
     this.listing.code = code;
-    await this.setMetadata({ code });
+    await this.setMetadata({ code, hostName: null });
 
     this.onMessage<InputMessage>("input", (client, message) => {
       const player = this.state.players.get(client.sessionId);
@@ -280,7 +280,7 @@ export class GameRoom extends Room<RoomState> {
     this.setSimulationInterval(() => this.tick(), TICK_INTERVAL_MS);
   }
 
-  override onJoin(client: Client, options: JoinOptions): void {
+  override async onJoin(client: Client, options: JoinOptions): Promise<void> {
     const player = new Player();
     player.sessionId = client.sessionId;
     player.name =
@@ -304,6 +304,13 @@ export class GameRoom extends Room<RoomState> {
     player.weapons.push(bolt);
 
     this.state.players.set(client.sessionId, player);
+
+    // Listing metadata exposes the host name so the matchmaker's room list
+    // shows "hosted by <name>" without exposing schema state. First joiner
+    // becomes host (onCreate runs before any onJoin — see AD4 in the spec).
+    if ((this.metadata as { hostName?: string | null } | undefined)?.hostName == null) {
+      await this.setMetadata({ code: this.state.code, hostName: player.name });
+    }
   }
 
   override async onLeave(client: Client, consented: boolean): Promise<void> {
@@ -319,6 +326,7 @@ export class GameRoom extends Room<RoomState> {
       this.state.players.delete(client.sessionId);
       this.orbitHitCooldown.evictPlayer(client.sessionId);
       this.contactCooldown.evictPlayer(client.sessionId);
+      await this.rotateHostIfNeeded(player.name);
       return;
     }
 
@@ -333,11 +341,26 @@ export class GameRoom extends Room<RoomState> {
       this.state.players.delete(client.sessionId);
       this.orbitHitCooldown.evictPlayer(client.sessionId);
       this.contactCooldown.evictPlayer(client.sessionId);
+      await this.rotateHostIfNeeded(player.name);
     }
   }
 
   override onDispose(): void {
     if (this.snapshotLogTimer) clearInterval(this.snapshotLogTimer);
+  }
+
+  // If the leaving player was the host, promote the next remaining player
+  // (deterministic by MapSchema iteration order — insertion order in
+  // Colyseus 0.16). If the room is now empty, hostName becomes null.
+  // Cosmetic: the matchmaker listing reflects this; nothing in gameplay
+  // depends on it. Safe to call even when the leaver was not the host —
+  // it no-ops in that case.
+  private async rotateHostIfNeeded(leaverName: string): Promise<void> {
+    const md = this.metadata as { code?: string; hostName?: string | null } | undefined;
+    if (!md || md.hostName !== leaverName) return;
+    const next = this.state.players.values().next();
+    const nextName: string | null = next.done ? null : (next.value as { name: string }).name;
+    await this.setMetadata({ code: this.state.code, hostName: nextName });
   }
 
   private tick(): void {
