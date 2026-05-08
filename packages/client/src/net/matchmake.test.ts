@@ -4,31 +4,31 @@ import { matchmakeUrl, fetchAvailableRooms } from "./matchmake.js";
 describe("matchmakeUrl", () => {
   it("converts ws:// to http://", () => {
     expect(matchmakeUrl("ws://localhost:2567")).toBe(
-      "http://localhost:2567/matchmake/game",
+      "http://localhost:2567/rooms/game",
     );
   });
 
   it("converts wss:// to https://", () => {
     expect(matchmakeUrl("wss://example.com")).toBe(
-      "https://example.com/matchmake/game",
+      "https://example.com/rooms/game",
     );
   });
 
   it("preserves http:// unchanged", () => {
     expect(matchmakeUrl("http://localhost:2567")).toBe(
-      "http://localhost:2567/matchmake/game",
+      "http://localhost:2567/rooms/game",
     );
   });
 
   it("preserves https:// unchanged", () => {
     expect(matchmakeUrl("https://example.com")).toBe(
-      "https://example.com/matchmake/game",
+      "https://example.com/rooms/game",
     );
   });
 
   it("handles trailing slashes on the base URL", () => {
     expect(matchmakeUrl("ws://localhost:2567/")).toBe(
-      "http://localhost:2567/matchmake/game",
+      "http://localhost:2567/rooms/game",
     );
   });
 });

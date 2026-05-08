@@ -17,7 +17,7 @@ export function matchmakeUrl(serverUrl: string): string {
   else if (u.protocol === "wss:") u.protocol = "https:";
   // Strip any trailing slash on the pathname so the join below is clean.
   const base = u.toString().replace(/\/$/, "");
-  return `${base}/matchmake/game`;
+  return `${base}/rooms/game`;
 }
 
 export async function fetchAvailableRooms(
