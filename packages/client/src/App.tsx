@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Room } from "colyseus.js";
 import type { RoomState } from "@mp/shared";
-import { Landing } from "./Landing.js";
+import { Landing } from "./landing/Landing.js";
 import { GameView } from "./game/GameView.js";
 import { colyseusClient, waitForCode } from "./net/client.js";
 
