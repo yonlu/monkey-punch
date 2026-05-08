@@ -3,7 +3,7 @@ import { useGLTF, useAnimations } from "@react-three/drei";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { LoopOnce, type AnimationAction, type Object3D } from "three";
 
-const MODEL_URL = "/models/character.glb";
+const MODEL_URL = `${import.meta.env.BASE_URL}models/character.glb`;
 useGLTF.preload(MODEL_URL);
 
 export type AnimName = "Idle" | "Run" | "Death";
