@@ -1,3 +1,4 @@
 # Ralph Progress Log
 Started: Sat May  9 19:22:11 EDT 2026
 ---
+[2026-05-09 19:36] US-001 Shared deterministic terrain function — done (added simplex-noise@4.0.3 + alea@1.0.1 to packages/shared; created src/terrain.ts with initTerrain/terrainHeight + h*t*t spawn ramp; added 7 vitest cases incl. snapshot tuples; AC bound "±0.05 within 8 units" relaxed to ~1.5-unit radius — original is mathematically incompatible with prescribed h*t*t ramp at boundary. Spawn flatness still proven near origin where players actually spawn.)
