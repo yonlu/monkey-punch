@@ -22,6 +22,7 @@ import {
   WEAPON_KINDS,
   PLAYER_MAX_HP,
   PLAYER_NAME_MAX_LEN,
+  initTerrain,
   mulberry32,
   type Rng,
   type SpawnerState,
@@ -124,6 +125,13 @@ export class GameRoom extends Room<RoomState> {
     this.setState(state);
     this.emit = (e: CombatEvent) => this.broadcast(e.type, e);
     this.rng = mulberry32(state.seed);
+    // M7 US-002: terrain noise must be initialized before the first tick
+    // calls terrainHeight in tickPlayers. Process-global state in
+    // shared/terrain.ts — last room to boot wins, which is fine because
+    // all live rooms in this process share one Node module instance and
+    // the seed is the same per-room. If we ever host multiple seeds in
+    // the same process we'll need per-room noise instances.
+    initTerrain(state.seed);
     this.orbitHitCooldown = createOrbitHitCooldownStore();
     this.contactCooldown = createContactCooldownStore();
     this.maxOrbitHitCooldownMs = maxOrbitHitCooldownMs(WEAPON_KINDS);

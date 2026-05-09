@@ -19,12 +19,14 @@ import {
   LEVEL_UP_DEADLINE_TICKS,
   MAP_RADIUS,
   MAX_ENEMIES,
+  PLAYER_GROUND_OFFSET,
   PLAYER_RADIUS,
   PLAYER_SPEED,
   TARGETING_MAX_RANGE,
   TICK_RATE,
   xpForLevel,
 } from "./constants.js";
+import { terrainHeight } from "./terrain.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, type WeaponDef } from "./weapons.js";
 import type { Rng } from "./rng.js";
 import type {
@@ -52,6 +54,9 @@ export function tickPlayers(state: RoomState, dt: number): void {
       p.x *= scale;
       p.z *= scale;
     }
+    // M7 US-002: snap Y to terrain. No jump yet — vy stays at 0 and is
+    // ignored. Adding gravity / jump arrives in US-009.
+    p.y = terrainHeight(p.x, p.z) + PLAYER_GROUND_OFFSET;
   });
 }
 

@@ -1,5 +1,13 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll } from "vitest";
 import { RoomState, Player, Enemy, WeaponState, Gem } from "../src/schema.js";
+import { initTerrain, terrainHeight } from "../src/terrain.js";
+
+// M7 US-002: tickPlayers calls terrainHeight which requires initTerrain.
+// Most tests in this file pre-date terrain and assert behavior in X/Z only;
+// terrain init is harmless for them (Y is just clamped to a deterministic
+// noise sample at (x, z)). Tests that care about Y behavior re-init with
+// the seed they need.
+beforeAll(() => initTerrain(0));
 import {
   tickPlayers,
   tickEnemies,
@@ -23,6 +31,7 @@ import {
 } from "../src/rules.js";
 import {
   PLAYER_SPEED,
+  PLAYER_GROUND_OFFSET,
   ENEMY_SPEED,
   ENEMY_SPAWN_INTERVAL_S,
   ENEMY_SPAWN_RADIUS,
@@ -1470,5 +1479,53 @@ describe("tickSpawner — M6", () => {
       const e = Array.from(state.enemies.values()).pop()!;
       expect(Math.hypot(e.x, e.z)).toBeLessThanOrEqual(MAP_RADIUS + 1e-6);
     }
+  });
+});
+
+describe("tickPlayers — M7 terrain Y", () => {
+  const TERRAIN_SEED = 7;
+  const SIM_DT = 0.05;
+
+  it("snaps player.y to terrainHeight + PLAYER_GROUND_OFFSET each tick across known coords", () => {
+    // Walk a player out of the spawn-flat zone (~8 units) into hilly terrain
+    // and verify Y matches terrainHeight at every tick. PLAYER_GROUND_OFFSET
+    // is currently 0; the assertion still composes it explicitly so the
+    // test stays correct if it's later non-zero.
+    initTerrain(TERRAIN_SEED);
+
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 1, 0); // walk +X
+
+    let lastX = p.x;
+    for (let tick = 0; tick < 200; tick++) {
+      tickPlayers(state, SIM_DT);
+      // X should have moved monotonically (we're inside MAP_RADIUS for 200 * 5 * 0.05 = 50 units)
+      expect(p.x).toBeGreaterThan(lastX - 1e-9);
+      lastX = p.x;
+      const expectedY = terrainHeight(p.x, p.z) + PLAYER_GROUND_OFFSET;
+      expect(p.y).toBe(expectedY);
+    }
+    // Sanity: we walked far enough to be past the spawn-flat zone (~8u).
+    expect(p.x).toBeGreaterThan(8);
+  });
+
+  it("Y stays near zero while inside the spawn-flat radius", () => {
+    initTerrain(TERRAIN_SEED);
+    const state = new RoomState();
+    // No input — player sits at origin.
+    const p = addPlayer(state, "a", 0, 0);
+    tickPlayers(state, SIM_DT);
+    expect(p.y).toBe(0);
+  });
+
+  it("does not touch Y on downed players", () => {
+    initTerrain(TERRAIN_SEED);
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 1, 0);
+    p.x = 25;       // out of spawn-flat zone
+    p.y = 999;      // sentinel
+    p.downed = true;
+    tickPlayers(state, SIM_DT);
+    expect(p.y).toBe(999);     // untouched
   });
 });

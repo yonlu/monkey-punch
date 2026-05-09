@@ -56,3 +56,14 @@ export const ENEMY_CONTACT_DAMAGE = 5;         // hp per contact
 export const ENEMY_CONTACT_COOLDOWN_S = 0.5;   // per-(player, enemy) pair
 export const ENEMY_DESPAWN_RADIUS = 50;        // beyond this from any non-downed player
 export const PLAYER_NAME_MAX_LEN = 16;
+
+// M7 — verticality
+/**
+ * Vertical offset from the terrain surface to the player's reported `y`.
+ * Starts at 0 because the current cube mesh has its origin at the cube
+ * center and the renderer offsets visually for now (see PRD Q2 — revisit
+ * if a future mesh has its origin at the feet, then this becomes
+ * meshHeight / 2). Server-side code adds this to `terrainHeight(x, z)`
+ * when snapping the player to the ground.
+ */
+export const PLAYER_GROUND_OFFSET = 0;

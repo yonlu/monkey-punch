@@ -57,6 +57,8 @@ export class Player extends Schema {
   declare x: number;
   declare y: number;
   declare z: number;
+  declare vy: number;
+  declare grounded: boolean;
   declare inputDir: Vec2;
   declare lastProcessedInput: number;
   declare xp: number;
@@ -80,6 +82,8 @@ export class Player extends Schema {
     this.x = 0;
     this.y = 0;
     this.z = 0;
+    this.vy = 0;
+    this.grounded = true;
     this.inputDir = new Vec2();
     this.lastProcessedInput = 0;
     this.xp = 0;
@@ -104,6 +108,8 @@ defineTypes(Player, {
   x: "number",
   y: "number",
   z: "number",
+  vy: "number",
+  grounded: "boolean",
   inputDir: Vec2,
   lastProcessedInput: "uint32",
   xp: "uint32",
