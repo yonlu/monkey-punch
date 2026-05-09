@@ -10,3 +10,6 @@ dist
 !.env.example
 .superpowers/
 .worktrees/
+
+# Ralph local-state file — tracks branch between runs, regenerated each launch
+.last-branch
