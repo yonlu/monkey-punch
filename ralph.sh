@@ -102,6 +102,15 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     echo "Completed at iteration $i of $MAX_ITERATIONS"
     exit 0
   fi
+
+  # Check for human-gate pause signal (stop-the-line)
+  if echo "$OUTPUT" | grep -q "<promise>PAUSED</promise>"; then
+    echo ""
+    echo "Ralph paused at human gate. Review prd.json, complete the manual"
+    echo "story, flip its passes:true, then re-launch ralph.sh."
+    echo "Paused at iteration $i of $MAX_ITERATIONS"
+    exit 0
+  fi
   
   echo "Iteration $i complete. Continuing..."
   sleep 2

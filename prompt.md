@@ -14,17 +14,23 @@ Then invoke the `monkey-punch` skill via the Skill tool. It encodes the load-bea
 
 ## 2. Pick the next story
 
-Find the FIRST story in `prd.json.userStories` (in array order) where BOTH:
-- `passes` is `false`, AND
-- `notes` does NOT contain the substring `MANUAL`
+Find the FIRST story in `prd.json.userStories` (in array order) where `passes` is `false`. Then:
 
-If no such story exists, output exactly this on its own line and exit:
+- **If that story's `notes` contains `MANUAL`** — STOP. This is a human gate. Output:
+  ```
+  <promise>PAUSED</promise>
+  Next story US-XXX requires human review (notes: MANUAL). Loop halted.
+  ```
+  Do NOT skip past it. Do NOT implement later stories. The human will flip `passes: true` for the manual story and re-launch the loop.
 
-```
-<promise>COMPLETE</promise>
-```
+- **If that story's `notes` does NOT contain `MANUAL`** — implement it (continue to step 3).
 
-Stories whose `notes` contain `MANUAL` are human-gated (camera review, polish tuning, friend playtest). Skip them entirely — they will be flipped to `passes: true` by the human, not by you.
+- **If no story has `passes: false`** — all work is done. Output exactly this on its own line and exit:
+  ```
+  <promise>COMPLETE</promise>
+  ```
+
+The MANUAL stories (camera review, polish tuning, friend playtest) are stop-the-line gates. Subsequent stories may depend on the human's tuning decisions — barreling past them would build on a foundation that may need to change.
 
 ## 3. Implement the story
 
