@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Group } from "three";
 import type { Room } from "colyseus.js";
 import type { RoomState } from "@mp/shared";
-import { PLAYER_SPEED } from "@mp/shared";
+import { PLAYER_SPEED, PLAYER_GROUND_OFFSET, terrainHeight } from "@mp/shared";
 import { SnapshotBuffer } from "../net/snapshots.js";
 import { hudState } from "../net/hudState.js";
 import {
@@ -16,7 +16,6 @@ import { getLiveInputDir } from "./input.js";
 import { PlayerCharacter, type AnimName } from "./PlayerCharacter.js";
 
 const STEP_INTERVAL_S = STEP_INTERVAL_MS / 1000;
-const RENDER_Y = 0;
 const RUN_SPEED_THRESHOLD = 0.5;
 
 function localPlayerRenderPos(predictor: LocalPredictor, delta: number): { x: number; z: number } {
@@ -81,19 +80,23 @@ export function PlayerCube({ room, sessionId, name, buffer, predictor }: PlayerC
       if (player.maxHp !== maxHp) setMaxHp(player.maxHp);
     }
 
-    let posX: number, posZ: number;
+    let posX: number, posY: number, posZ: number;
     if (predictor) {
       const pos = localPlayerRenderPos(predictor, delta);
       posX = pos.x; posZ = pos.z;
       predictor.renderX = pos.x;
       predictor.renderZ = pos.z;
+      // US-004: predicted Y is purely terrain-derived (no jump until US-009).
+      // Same function the server uses to snap player.y in tickPlayers, so the
+      // local cube sits flush with the rendered terrain mesh.
+      posY = terrainHeight(posX, posZ) + PLAYER_GROUND_OFFSET;
     } else {
       const sample = buffer.sample(performance.now() - hudState.interpDelayMs);
       if (!sample) return;
-      posX = sample.x; posZ = sample.z;
+      posX = sample.x; posY = sample.y; posZ = sample.z;
     }
 
-    groupRef.current.position.set(posX, RENDER_Y, posZ);
+    groupRef.current.position.set(posX, posY, posZ);
 
     // Anim + body facing: Death overrides everything; otherwise pick Run vs
     // Idle from rendered-position rate of change, and rotate the body to

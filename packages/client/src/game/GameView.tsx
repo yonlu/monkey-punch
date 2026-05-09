@@ -124,7 +124,7 @@ export function GameView({
         buf = new SnapshotBuffer();
         buffers.set(sessionId, buf);
       }
-      buf.push({ t: performance.now(), x: player.x, z: player.z });
+      buf.push({ t: performance.now(), x: player.x, y: player.y, z: player.z });
 
       const existing = perPlayerDisposers.get(sessionId);
       if (existing) existing();
@@ -145,7 +145,7 @@ export function GameView({
             }
           }
         } else {
-          buf!.push({ t: performance.now(), x: player.x, z: player.z });
+          buf!.push({ t: performance.now(), x: player.x, y: player.y, z: player.z });
         }
       });
       perPlayerDisposers.set(sessionId, offChange);
@@ -187,13 +187,15 @@ export function GameView({
         buf = new SnapshotBuffer();
         enemyBuffers.set(id, buf);
       }
-      buf.push({ t: performance.now(), x: enemy.x, z: enemy.z });
+      // Enemy.y is added in US-012; for now push 0 so the snapshot buffer
+      // stays type-correct after Snapshot gained `y` for player Y interp.
+      buf.push({ t: performance.now(), x: enemy.x, y: 0, z: enemy.z });
 
       const existing = perEnemyDisposers.get(id);
       if (existing) existing();
 
       const offChange = $(enemy).onChange(() => {
-        buf!.push({ t: performance.now(), x: enemy.x, z: enemy.z });
+        buf!.push({ t: performance.now(), x: enemy.x, y: 0, z: enemy.z });
       });
       perEnemyDisposers.set(id, offChange);
 
