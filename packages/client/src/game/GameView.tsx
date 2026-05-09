@@ -12,7 +12,7 @@ import type {
   PongMessage,
   RoomState,
 } from "@mp/shared";
-import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "@mp/shared";
+import { WEAPON_KINDS, statsAt, isProjectileWeapon, initTerrain } from "@mp/shared";
 import type { PerspectiveCamera } from "three";
 import { Ground } from "./Ground.js";
 import { PlayerCube } from "./PlayerCube.js";
@@ -78,6 +78,16 @@ export function GameView({
   const { api: vfx, component: vfxJsx } = useCombatVfxRef();
 
   const canvasCameraRef = useRef<PerspectiveCamera | null>(null);
+
+  // Terrain noise must be initialized before the first child render queries
+  // terrainHeight (Ground builds its geometry in a useMemo). useMemo runs
+  // synchronously inside this component's render, so children mount with
+  // the noise table already populated. Same `seed` → same float on every
+  // call (CLAUDE.md rule 6), so calling more than once with an unchanged
+  // seed is a no-op-equivalent. Server already calls initTerrain in its
+  // own onCreate (GameRoom.ts) — this is the symmetric client init that
+  // makes prediction's terrain queries match the server bit-for-bit.
+  useMemo(() => initTerrain(room.state.seed), [room.state.seed]);
 
   useEffect(() => {
     const detachInput = attachInput(

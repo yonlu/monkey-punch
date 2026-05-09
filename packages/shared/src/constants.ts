@@ -67,3 +67,14 @@ export const PLAYER_NAME_MAX_LEN = 16;
  * when snapping the player to the ground.
  */
 export const PLAYER_GROUND_OFFSET = 0;
+
+/**
+ * Side length (world units) of the rendered terrain mesh on the client.
+ * Larger than `MAP_RADIUS * 2` so the visible ground extends well past
+ * the playable boundary; once US-016 lands fog with `far = MAP_RADIUS *
+ * 1.5`, the extra width is what gives the horizon its smooth fade
+ * instead of a hard edge. Server gameplay does not consume this — the
+ * pure `terrainHeight(x, z)` is queried by coordinate, not constrained
+ * by mesh extents.
+ */
+export const TERRAIN_SIZE = 200;
