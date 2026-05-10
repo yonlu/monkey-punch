@@ -58,6 +58,55 @@ describe("Orbit weapon", () => {
   });
 });
 
+describe("Claymore — M8 US-007", () => {
+  it("is at index 4 and is a melee_arc with NO crit and POSITIVE knockback", () => {
+    const def = WEAPON_KINDS[4]!;
+    expect(def.name).toBe("Claymore");
+    expect(def.behavior.kind).toBe("melee_arc");
+    if (def.behavior.kind !== "melee_arc") throw new Error("expected melee_arc");
+    const stats = statsAt(def, 1);
+    expect(stats.critChance).toBe(0); // no crit at any level
+    expect(stats.knockback).toBeGreaterThan(0);
+    expect(stats.arcAngle).toBeGreaterThan(Math.PI * 0.85); // wide swing identity
+  });
+
+  it("knockback strictly grows L1 → L5", () => {
+    const def = WEAPON_KINDS[4]!;
+    if (def.behavior.kind !== "melee_arc") throw new Error("expected melee_arc");
+    for (let lvl = 2; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).knockback).toBeGreaterThan(statsAt(def, lvl - 1).knockback);
+    }
+  });
+
+  it("damage strictly grows L1 → L5 (and L5 hits hard — at least 2× Damascus L5)", () => {
+    const claymore = WEAPON_KINDS[4]!;
+    if (claymore.behavior.kind !== "melee_arc") throw new Error("expected melee_arc");
+    for (let lvl = 2; lvl <= claymore.levels.length; lvl++) {
+      expect(statsAt(claymore, lvl).damage).toBeGreaterThan(statsAt(claymore, lvl - 1).damage);
+    }
+    // Identity: Claymore is the high-damage melee. Damascus L5 = 24; Claymore
+    // L5 should land somewhere around 4× of that to compensate for the slow cadence.
+    const damascus = WEAPON_KINDS[3]!;
+    if (damascus.behavior.kind !== "melee_arc") throw new Error("expected melee_arc");
+    expect(statsAt(claymore, 5).damage).toBeGreaterThan(2 * statsAt(damascus, 5).damage);
+  });
+
+  it("cooldown is significantly slower than Damascus (slow heavy swing identity)", () => {
+    const claymore = WEAPON_KINDS[4]!;
+    const damascus = WEAPON_KINDS[3]!;
+    if (claymore.behavior.kind !== "melee_arc" || damascus.behavior.kind !== "melee_arc") throw new Error();
+    expect(statsAt(claymore, 1).cooldown).toBeGreaterThan(2 * statsAt(damascus, 1).cooldown);
+  });
+
+  it("range strictly grows L1 → L5 (longer reach at higher levels)", () => {
+    const def = WEAPON_KINDS[4]!;
+    if (def.behavior.kind !== "melee_arc") throw new Error("expected melee_arc");
+    for (let lvl = 2; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).range).toBeGreaterThan(statsAt(def, lvl - 1).range);
+    }
+  });
+});
+
 describe("Damascus — M8 US-006", () => {
   it("is at index 3 and is a melee_arc with crit (no knockback)", () => {
     const def = WEAPON_KINDS[3]!;
@@ -105,8 +154,8 @@ describe("Damascus — M8 US-006", () => {
 });
 
 describe("Ahlspiess — M8 US-004", () => {
-  it("is at index 4 and is a projectile with targeting=facing, no homing, mesh=spear", () => {
-    const def = WEAPON_KINDS[4]!;
+  it("is at index 5 and is a projectile with targeting=facing, no homing, mesh=spear", () => {
+    const def = WEAPON_KINDS[5]!;
     expect(def.name).toBe("Ahlspiess");
     if (def.behavior.kind !== "projectile") throw new Error("expected projectile behavior");
     expect(def.behavior.targeting).toBe("facing");
@@ -115,7 +164,7 @@ describe("Ahlspiess — M8 US-004", () => {
   });
 
   it("has infinite pierce (-1) at every level", () => {
-    const def = WEAPON_KINDS[4]!;
+    const def = WEAPON_KINDS[5]!;
     if (def.behavior.kind !== "projectile") throw new Error("expected projectile");
     for (let lvl = 1; lvl <= def.levels.length; lvl++) {
       expect(statsAt(def, lvl).pierceCount).toBe(-1);
@@ -123,7 +172,7 @@ describe("Ahlspiess — M8 US-004", () => {
   });
 
   it("has hitCooldownPerEnemyMs > 0 at every level (avoids same-enemy double-hit)", () => {
-    const def = WEAPON_KINDS[4]!;
+    const def = WEAPON_KINDS[5]!;
     if (def.behavior.kind !== "projectile") throw new Error("expected projectile");
     for (let lvl = 1; lvl <= def.levels.length; lvl++) {
       expect(statsAt(def, lvl).hitCooldownPerEnemyMs).toBeGreaterThan(0);
@@ -131,7 +180,7 @@ describe("Ahlspiess — M8 US-004", () => {
   });
 
   it("hitRadius strictly increases across levels (gives visible per-level growth)", () => {
-    const def = WEAPON_KINDS[4]!;
+    const def = WEAPON_KINDS[5]!;
     if (def.behavior.kind !== "projectile") throw new Error("expected projectile");
     for (let lvl = 2; lvl <= def.levels.length; lvl++) {
       expect(statsAt(def, lvl).hitRadius).toBeGreaterThan(statsAt(def, lvl - 1).hitRadius);
@@ -139,7 +188,7 @@ describe("Ahlspiess — M8 US-004", () => {
   });
 
   it("damage strictly increases per level", () => {
-    const def = WEAPON_KINDS[4]!;
+    const def = WEAPON_KINDS[5]!;
     if (def.behavior.kind !== "projectile") throw new Error("expected projectile");
     for (let lvl = 2; lvl <= def.levels.length; lvl++) {
       expect(statsAt(def, lvl).damage).toBeGreaterThan(statsAt(def, lvl - 1).damage);

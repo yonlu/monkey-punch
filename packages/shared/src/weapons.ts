@@ -145,7 +145,26 @@ export const WEAPON_KINDS: readonly WeaponDef[] = [
     ],
   },
   {
-    // M8 US-004: Ahlspiess (kind index 4). Piercing line projectile —
+    // M8 US-007: Claymore (kind index 4). Wide slow heavy arc — the "big
+    // swing" archetype. Distinct from Damascus by being slower, wider,
+    // and hitting harder. NO crit (critChance: 0; reliable big hits is
+    // the identity). Knockback grows per level (1.2 → 1.6) — pushes
+    // hit enemies back enough to break melee chains. arcAngle is nearly
+    // 180° (Math.PI * 0.90 ≈ 162°), so a single swing covers a full
+    // half-circle in front of the player. Cadence stays slow (1.4s →
+    // 1.2s) so each swing is committed; you trade tempo for damage.
+    name: "Claymore",
+    behavior: { kind: "melee_arc" },
+    levels: [
+      { damage:  45, cooldown: 1.40, arcAngle: Math.PI * 0.90, range: 3.5, critChance: 0, critMultiplier: 1, knockback: 1.2 },
+      { damage:  55, cooldown: 1.40, arcAngle: Math.PI * 0.91, range: 3.6, critChance: 0, critMultiplier: 1, knockback: 1.3 },
+      { damage:  70, cooldown: 1.30, arcAngle: Math.PI * 0.93, range: 3.7, critChance: 0, critMultiplier: 1, knockback: 1.4 },
+      { damage:  85, cooldown: 1.30, arcAngle: Math.PI * 0.95, range: 3.8, critChance: 0, critMultiplier: 1, knockback: 1.5 },
+      { damage: 100, cooldown: 1.20, arcAngle: Math.PI * 0.97, range: 4.0, critChance: 0, critMultiplier: 1, knockback: 1.6 },
+    ],
+  },
+  {
+    // M8 US-004: Ahlspiess (kind index 5). Piercing line projectile —
     // travels along player.facing at fire (no homing), pierces ALL enemies
     // in its path (pierceCount: -1), and uses per-enemy hit cooldown so the
     // same enemy isn't double-hit on consecutive ticks while still in the

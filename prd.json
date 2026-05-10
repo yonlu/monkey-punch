@@ -147,8 +147,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Done 2026-05-10. Claymore added at WEAPON_KINDS index 4 — INSERTED before Ahlspiess to match design doc kind ordering. Ahlspiess shifts from index 4 to 5; existing tests + integration test updated. behavior:{kind:'melee_arc'}; perLevel L1–L5: damage 45→55→70→85→100 (heavy, ~4× Damascus L5 to compensate for slow cadence), cooldown 1.40→1.40→1.30→1.30→1.20 (slow heavy swing identity), arcAngle Math.PI*0.90→0.97 (162°→175°, nearly full half-circle), range 3.5→4.0 (long reach), critChance 0 + critMultiplier 1 (no crit — reliable big hits is the identity), knockback 1.2→1.6 (grows per level — pushes enemies enough to break melee chains). No client work — MeleeSwipeSwarm renders Claymore via the same generic dispatch as Damascus (color stays default white-blue since isCrit always false). Tests: 5 in weapons.test.ts (kind index 4, behavior shape + crit=0 + knockback>0 + arc>0.85π wide, knockback strictly grows L1→L5, damage strictly grows + L5 > 2× Damascus L5, cadence > 2× Damascus, range strictly grows); 1 in rules.test.ts (Claymore swing knocks enemies back along player→enemy XZ vector for two enemies — one ahead at (2,0), one at 45° offset at (√2,√2) — both inside the 162° arc; isCrit false; per-enemy positions correct after knockback). Test geometry note: 90°-perpendicular enemy tests have to be placed at <81° from facing because Claymore L1 half-arc = 81°. NO name-based branching (rule 12 grep clean). pnpm typecheck + 202 shared (was 196) / 34 client / 43 server tests pass."
     },
     {
       "id": "US-008",

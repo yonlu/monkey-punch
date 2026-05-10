@@ -2710,6 +2710,54 @@ describe("runMeleeArcSwing — M8 US-005", () => {
   });
 });
 
+describe("tickWeapons — M8 US-007 Claymore integration", () => {
+  it("Claymore swing knocks enemies back along player→enemy XZ vector and never crits", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    addEnemy(state, 1, 2.0, 0).hp = 1000;
+    // Enemy 2 at 45° off-axis from facing — well within Claymore's
+    // ~162° arc (half-arc ~81° from facing). Perpendicular (90°) is
+    // just outside.
+    addEnemy(state, 2, Math.SQRT1_2 * 2.0, Math.SQRT1_2 * 2.0).hp = 1000;
+
+    const w = new WeaponState();
+    w.kind = 4; // Claymore per design doc kind index
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+    tickWeapons(state, 0.05, ctx, (e) => events.push(e));
+
+    const swipes = events.filter((e) => e.type === "melee_swipe");
+    expect(swipes.length).toBe(1);
+    const swipe = swipes[0]!;
+    if (swipe.type !== "melee_swipe") throw new Error("expected melee_swipe");
+    // Claymore never crits (critChance=0).
+    expect(swipe.isCrit).toBe(false);
+
+    // Both enemies hit (wide arc covers ~162° at L1).
+    const hits = events.filter((e) => e.type === "hit");
+    expect(hits.length).toBe(2);
+
+    // Knockback: enemy 1 was at (2, 0) — vector from player (0,0) is +X.
+    // Knockback 1.2 → enemy.x = 2 + 1.2 = 3.2.
+    const e1 = state.enemies.get("1")!;
+    expect(e1.x).toBeCloseTo(3.2);
+    expect(e1.z).toBeCloseTo(0);
+
+    // Enemy 2 was at (√2, √2). Player→enemy vector unit = (√2/2, √2/2) =
+    // ~0.707 each. Knockback 1.2 along that → enemy.x = √2 + 0.707*1.2,
+    // enemy.z = √2 + 0.707*1.2.
+    const e2 = state.enemies.get("2")!;
+    expect(e2.x).toBeCloseTo(Math.SQRT2 + 0.707 * 1.2, 2);
+    expect(e2.z).toBeCloseTo(Math.SQRT2 + 0.707 * 1.2, 2);
+  });
+});
+
 describe("tickWeapons — M8 US-006 Damascus integration", () => {
   it("fires Damascus through tickWeapons; emits melee_swipe + per-hit HitEvents (fireId=0)", () => {
     const state = new RoomState();
@@ -2813,7 +2861,7 @@ describe("tickWeapons — M8 US-004 Ahlspiess integration", () => {
     addEnemy(state, 1, 5, 0); // off to the side, but in range — gates fire
 
     const w = new WeaponState();
-    w.kind = 4; // Ahlspiess per design doc kind index (Damascus inserted at 3 in US-006)
+    w.kind = 5; // Ahlspiess (Damascus=3, Claymore=4 inserted ahead)
     w.level = 1;
     w.cooldownRemaining = 0;
     p.weapons.push(w);
@@ -2824,7 +2872,7 @@ describe("tickWeapons — M8 US-004 Ahlspiess integration", () => {
 
     expect(projectiles.length).toBe(1);
     const proj = projectiles[0]!;
-    expect(proj.weaponKind).toBe(4);
+    expect(proj.weaponKind).toBe(5);
     // facing mode: dir is player.facing, not toward the enemy.
     expect(proj.dirX).toBe(0);
     expect(proj.dirZ).toBe(1);
@@ -2845,7 +2893,7 @@ describe("tickWeapons — M8 US-004 Ahlspiess integration", () => {
     // No enemies anywhere: facing-mode fire still gates on any enemy in range.
 
     const w = new WeaponState();
-    w.kind = 4; // Ahlspiess (was 3 pre-Damascus insertion in US-006)
+    w.kind = 5; // Ahlspiess (Damascus=3, Claymore=4 inserted ahead)
     w.level = 1;
     w.cooldownRemaining = 0;
     p.weapons.push(w);
