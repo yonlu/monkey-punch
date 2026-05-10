@@ -23,7 +23,21 @@ type Slot = {
   text: string;
   x: number; y: number; z: number;
   color: string;
+  fontSize: number;
+  outline: number;
 };
+
+// M8 US-013: damage-number style by hit tag. Crit hits (Damascus) pop
+// in yellow at 1.4× font size — the "this hit mattered" cue. Status
+// hits (Kronos slow ticks) read in icy blue. Pierce hits (Ahlspiess)
+// stay white but with a thicker outline that reads as a subtle glow.
+// Default is plain white. Render dispatches on `tag` only — never on
+// weaponKind (rule 12).
+const STYLE_DEFAULT = { color: "#ffffff", fontSize: 0.35, outline: 0.02 };
+const STYLE_CRIT    = { color: "#ffe066", fontSize: 0.49, outline: 0.025 };
+const STYLE_STATUS  = { color: "#7ec8ff", fontSize: 0.35, outline: 0.02 };
+const STYLE_PIERCE  = { color: "#ffffff", fontSize: 0.35, outline: 0.04 }; // thicker outline = subtle glow
+const STYLE_PLAYER_DAMAGED = { color: "#ff5a5a", fontSize: 0.35, outline: 0.02 };
 
 type Props = {
   room: Room<RoomState>;
@@ -38,7 +52,8 @@ export const DamageNumberPool = forwardRef<unknown, Props>(function DamageNumber
 ) {
   const slots = useRef<Slot[]>(
     Array.from({ length: POOL_SIZE }, () => ({
-      active: false, age: 0, text: "", x: 0, y: 0, z: 0, color: "#ffffff",
+      active: false, age: 0, text: "", x: 0, y: 0, z: 0,
+      color: "#ffffff", fontSize: 0.35, outline: 0.02,
     })),
   );
   const groupRefs = useRef<(Group | null)[]>(Array.from({ length: POOL_SIZE }, () => null));
@@ -50,7 +65,7 @@ export const DamageNumberPool = forwardRef<unknown, Props>(function DamageNumber
   // Pattern mirrors CombatVfx.tsx.
   const [, forceRender] = useState(0);
 
-  function spawn(text: string, x: number, y: number, z: number, color: string) {
+  function spawn(text: string, x: number, y: number, z: number, style: { color: string; fontSize: number; outline: number }) {
     let idx = slots.current.findIndex((s) => !s.active);
     if (idx === -1) {
       // Drop oldest.
@@ -58,7 +73,10 @@ export const DamageNumberPool = forwardRef<unknown, Props>(function DamageNumber
       slots.current.forEach((s, i) => { if (s.age > oldestAge) { oldestAge = s.age; oldestIdx = i; } });
       idx = oldestIdx;
     }
-    slots.current[idx] = { active: true, age: 0, text, x, y, z, color };
+    slots.current[idx] = {
+      active: true, age: 0, text, x, y, z,
+      color: style.color, fontSize: style.fontSize, outline: style.outline,
+    };
   }
 
   useEffect(() => {
@@ -71,7 +89,17 @@ export const DamageNumberPool = forwardRef<unknown, Props>(function DamageNumber
       const sample = buf?.sample(performance.now() - hudState.interpDelayMs);
       const x = sample?.x ?? msg.x;
       const z = sample?.z ?? msg.z;
-      spawn(String(msg.damage), x, msg.y, z, "#ffffff");
+      // M8 US-013: dispatch style on the server-tagged hit. Switch on
+      // the enum value, never on weaponKind/name (rule 12).
+      let style;
+      switch (msg.tag) {
+        case "crit":   style = STYLE_CRIT; break;
+        case "status": style = STYLE_STATUS; break;
+        case "pierce": style = STYLE_PIERCE; break;
+        case "default":
+        default:       style = STYLE_DEFAULT; break;
+      }
+      spawn(String(msg.damage), x, msg.y, z, style);
     });
     const offPlayerDamaged = room.onMessage("player_damaged", (msg: PlayerDamagedEvent) => {
       // M7 US-013: per-axis fallback. msg.y is the player's authoritative
@@ -85,7 +113,7 @@ export const DamageNumberPool = forwardRef<unknown, Props>(function DamageNumber
         const sample = buffers.get(msg.playerId)?.sample(performance.now() - hudState.interpDelayMs);
         if (sample) { x = sample.x; y = sample.y; z = sample.z; }
       }
-      spawn(String(msg.damage), x, y, z, "#ff5a5a");
+      spawn(String(msg.damage), x, y, z, STYLE_PLAYER_DAMAGED);
     });
     return () => { offHit(); offPlayerDamaged(); };
   }, [room, predictor, buffers, enemyBuffers]);
@@ -122,7 +150,7 @@ export const DamageNumberPool = forwardRef<unknown, Props>(function DamageNumber
     <>
       {slots.current.map((s, i) => (
         <group key={i} ref={(el) => { groupRefs.current[i] = el; }}>
-          <Text fontSize={0.35} color={s.color} outlineColor="#000" outlineWidth={0.02}>
+          <Text fontSize={s.fontSize} color={s.color} outlineColor="#000" outlineWidth={s.outline}>
             {s.text}
           </Text>
         </group>

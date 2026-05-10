@@ -813,6 +813,8 @@ export function tickWeapons(
                 y: enemy.y,
                 z: enemy.z,
                 serverTick: state.tick,
+                tag: "default",
+                weaponKind: weapon.kind,
               });
 
               if (enemy.hp <= 0) {
@@ -1002,6 +1004,10 @@ export function runMeleeArcSwing(
       y: enemy.y,
       z: enemy.z,
       serverTick: state.tick,
+      // M8 US-013: per-hit crit tagging drives yellow/larger damage
+      // numbers on the client (Damascus crit = yellow 1.4× font).
+      tag: isCrit ? "crit" : "default",
+      weaponKind: WEAPON_KINDS.indexOf(def),
     });
 
     if (enemy.hp <= 0) {
@@ -1116,6 +1122,10 @@ export function runAuraTick(
       y: enemy.y,
       z: enemy.z,
       serverTick: state.tick,
+      // M8 US-013: aura ticks apply slow → "status" tag (icy blue
+      // damage numbers on the client).
+      tag: "status",
+      weaponKind: WEAPON_KINDS.indexOf(def),
     });
 
     if (enemy.hp <= 0) {
@@ -1402,6 +1412,8 @@ export function tickBoomerangs(
         y: enemy.y,
         z: enemy.z,
         serverTick: state.tick,
+        tag: "default",
+        weaponKind: boomerang.weaponKind,
       });
 
       if (enemy.hp <= 0) {
@@ -1497,6 +1509,10 @@ export function tickBloodPools(
         y: enemy.y,
         z: enemy.z,
         serverTick: state.tick,
+        // M8 US-013: blood-pool DoT is plain damage (not slow-applying);
+        // "default" white numbers, not "status" blue.
+        tag: "default",
+        weaponKind: pool.weaponKind,
       });
 
       if (enemy.hp <= 0) {
@@ -1707,6 +1723,12 @@ export function tickProjectiles(
           y: enemy.y,
           z: enemy.z,
           serverTick: state.tick,
+          // M8 US-013: infinite-pierce projectiles (Ahlspiess) are
+          // tagged "pierce" — drives a subtle additive glow on the
+          // damage number. Finite-pierce/single-hit projectiles
+          // (Bolt, Gakkung Bow) are "default".
+          tag: proj.pierceRemaining === -1 ? "pierce" : "default",
+          weaponKind: proj.weaponKind,
         });
 
         if (enemy.hp <= 0) {

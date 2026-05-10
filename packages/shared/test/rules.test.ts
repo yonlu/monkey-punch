@@ -3858,3 +3858,109 @@ describe("tickBloodPools — M8 US-011", () => {
     expect(state.enemies.get("1")!.hp).toBe(100);
   });
 });
+
+describe("HitEvent.tag — M8 US-013 damage-number style coverage", () => {
+  it("Bolt projectile hits emit tag='default' (white damage numbers)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    addEnemy(state, 1, 0.5, 0).hp = 100;
+
+    const proj = makeProjectile({ x: 0, z: 0, prevX: 0, prevZ: 0, speed: 18, radius: 0.4, weaponKind: 0 });
+    const events: CombatEvent[] = [];
+    const { ctx } = makeProjCtx();
+    tickProjectiles(state, [proj], 0.05, ctx, (e) => events.push(e));
+
+    const hit = events.find((e) => e.type === "hit");
+    if (!hit || hit.type !== "hit") throw new Error("expected hit");
+    expect(hit.tag).toBe("default");
+    expect(hit.weaponKind).toBe(0);
+  });
+
+  it("Ahlspiess (infinite-pierce) emits tag='pierce' (white-with-glow damage numbers)", () => {
+    const state = new RoomState();
+    addEnemy(state, 1, 0.5, 0).hp = 100;
+    const proj = makeProjectile({
+      x: 0, z: 0, prevX: 0, prevZ: 0,
+      speed: 22, radius: 0.5,
+      pierceRemaining: -1, // infinite — Ahlspiess identity
+      hitCooldownPerEnemyMs: 200,
+      weaponKind: 5, // Ahlspiess kind index
+    });
+    const events: CombatEvent[] = [];
+    const { ctx } = makeProjCtx();
+    tickProjectiles(state, [proj], 0.05, ctx, (e) => events.push(e));
+
+    const hit = events.find((e) => e.type === "hit");
+    if (!hit || hit.type !== "hit") throw new Error("expected hit");
+    expect(hit.tag).toBe("pierce");
+    expect(hit.weaponKind).toBe(5);
+  });
+
+  it("Damascus crit hit emits tag='crit' (yellow 1.4× damage numbers)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    addEnemy(state, 1, 1.5, 0).hp = 1000;
+
+    const def = makeMeleeArcDef({ damage: 10, critChance: 1, critMultiplier: 2 }); // always crit
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+    runMeleeArcSwing(state, p, def, 1, ctx, (e) => events.push(e));
+
+    const hit = events.find((e) => e.type === "hit");
+    if (!hit || hit.type !== "hit") throw new Error("expected hit");
+    expect(hit.tag).toBe("crit");
+  });
+
+  it("Damascus non-crit hit emits tag='default'", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    addEnemy(state, 1, 1.5, 0).hp = 1000;
+
+    const def = makeMeleeArcDef({ damage: 10, critChance: 0 }); // never crit
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+    runMeleeArcSwing(state, p, def, 1, ctx, (e) => events.push(e));
+
+    const hit = events.find((e) => e.type === "hit");
+    if (!hit || hit.type !== "hit") throw new Error("expected hit");
+    expect(hit.tag).toBe("default");
+  });
+
+  it("Kronos aura tick emits tag='status' (icy blue damage numbers)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    addEnemy(state, 1, 1, 0).hp = 100;
+
+    const def = makeAuraDef({ damage: 5, radius: 3 });
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+    runAuraTick(state, p, def, 1, ctx, (e) => events.push(e));
+
+    const hit = events.find((e) => e.type === "hit");
+    if (!hit || hit.type !== "hit") throw new Error("expected hit");
+    expect(hit.tag).toBe("status");
+  });
+
+  it("Blood pool DoT emits tag='default' (NOT status — pool damage isn't status-applying)", () => {
+    const state = new RoomState();
+    const pool = new BloodPool();
+    pool.id = 1; pool.x = 0; pool.z = 0; pool.expiresAt = 9999;
+    pool.damagePerTick = 5; pool.tickIntervalMs = 300; pool.weaponKind = 6;
+    state.bloodPools.set("1", pool);
+    addEnemy(state, 1, 0.5, 0).hp = 100;
+
+    const events: CombatEvent[] = [];
+    tickBloodPools(state, makeBloodPoolCtx(), (e) => events.push(e));
+
+    const hit = events.find((e) => e.type === "hit");
+    if (!hit || hit.type !== "hit") throw new Error("expected hit");
+    expect(hit.tag).toBe("default");
+    expect(hit.weaponKind).toBe(6);
+  });
+});

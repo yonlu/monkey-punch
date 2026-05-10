@@ -103,6 +103,16 @@ export type FireEvent = {
   serverFireTimeMs: number; // server Date.now() at fire (drives client closed-form sim)
 };
 
+// M8 US-013: damage-number color coding is driven by `tag`, not by
+// weaponKind. The tag is set by the server at emit time based on the
+// nature of the hit (crit roll, pierce hit, status-applying tick) and
+// the client maps tag → color/size in DamageNumberPool. weaponKind is
+// available for future VFX selection (e.g. weapon-specific particle
+// theme on a hit) but MUST NOT drive damage-number color — that's
+// what tag is for, and adding name/kind branches in the renderer would
+// violate CLAUDE.md rule 12.
+export type HitTag = "default" | "crit" | "status" | "pierce";
+
 // M7 US-013: hit events carry the impact position so floating damage
 // numbers spawn at the right altitude (the server is the authority on
 // where the enemy was when its hp ticked down — clients only have an
@@ -116,6 +126,11 @@ export type HitEvent = {
   y: number;
   z: number;
   serverTick: number;
+  // M8 US-013: drives damage-number color/size on the client.
+  tag: HitTag;
+  // M8 US-013: source weapon kind. Client uses for non-color VFX cues
+  // (future polish-pass particles); damage-number color uses `tag`.
+  weaponKind: number;
 };
 
 export type EnemyDiedEvent = {
