@@ -1529,3 +1529,42 @@ describe("tickPlayers — M7 terrain Y", () => {
     expect(p.y).toBe(999);     // untouched
   });
 });
+
+describe("tickPlayers — M7 US-006 facing derived from movement", () => {
+  it("sets facing to the normalized inputDir when moving", () => {
+    const state = new RoomState();
+    // 3-4-5 triangle inputDir (length 5) — server pre-clamps to length 1
+    // before this point, but tickPlayers normalizes for facing too.
+    const p = addPlayer(state, "a", 0.6, 0.8);
+    p.facingX = 0; p.facingZ = 1;       // schema default
+    tickPlayers(state, 0.05);
+    expect(p.facingX).toBeCloseTo(0.6);
+    expect(p.facingZ).toBeCloseTo(0.8);
+  });
+
+  it("holds last facing when input is zero (player stops)", () => {
+    const state = new RoomState();
+    // Walk for one tick to set facing, then stop.
+    const p = addPlayer(state, "a", 1, 0);
+    tickPlayers(state, 0.05);
+    expect(p.facingX).toBeCloseTo(1);
+    expect(p.facingZ).toBeCloseTo(0);
+
+    p.inputDir.x = 0;
+    p.inputDir.z = 0;
+    tickPlayers(state, 0.05);
+    // Facing must NOT reset — it holds the last movement direction.
+    expect(p.facingX).toBeCloseTo(1);
+    expect(p.facingZ).toBeCloseTo(0);
+  });
+
+  it("does not touch facing on downed players", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 1, 0);
+    p.facingX = 0; p.facingZ = 1;       // sentinel
+    p.downed = true;
+    tickPlayers(state, 0.05);
+    expect(p.facingX).toBe(0);
+    expect(p.facingZ).toBe(1);
+  });
+});

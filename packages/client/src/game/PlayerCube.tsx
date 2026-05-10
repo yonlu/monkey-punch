@@ -100,8 +100,9 @@ export function PlayerCube({ room, sessionId, name, buffer, predictor }: PlayerC
 
     // Anim + body facing: Death overrides everything; otherwise pick Run vs
     // Idle from rendered-position rate of change, and rotate the body to
-    // match walk direction. Body facing is decoupled from the schema's
-    // facingX/Z (which serves weapon firing).
+    // match walk direction. Body facing follows movement (US-006), NOT the
+    // camera — pressing W rotates the player into the screen regardless
+    // of camera angle because getLiveInputDir() returns world-space dir.
     let nextAnim: AnimName;
     if (isDowned) {
       nextAnim = "Death";

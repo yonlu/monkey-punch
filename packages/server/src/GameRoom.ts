@@ -43,7 +43,7 @@ import type {
   DebugDamageSelfMessage,
 } from "@mp/shared";
 import { generateJoinCode } from "./joinCode.js";
-import { clampDirection, clampFacing } from "./input.js";
+import { clampDirection } from "./input.js";
 import {
   createOrbitHitCooldownStore,
   maxOrbitHitCooldownMs,
@@ -179,11 +179,10 @@ export class GameRoom extends Room<RoomState> {
       if (!Number.isFinite(seq) || seq <= player.lastProcessedInput) return;
 
       const dir = clampDirection(Number(message?.dir?.x), Number(message?.dir?.z));
-      const facing = clampFacing(Number(message?.facing?.x), Number(message?.facing?.z));
       player.inputDir.x = dir.x;
       player.inputDir.z = dir.z;
-      player.facingX = facing.x;
-      player.facingZ = facing.z;
+      // M7 US-006: facingX/Z is now derived in tickPlayers from inputDir.
+      // The handler stays thin per CLAUDE.md rule 4.
       player.lastProcessedInput = seq;
     });
 

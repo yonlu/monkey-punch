@@ -57,6 +57,18 @@ export function tickPlayers(state: RoomState, dt: number): void {
     // M7 US-002: snap Y to terrain. No jump yet — vy stays at 0 and is
     // ignored. Adding gravity / jump arrives in US-009.
     p.y = terrainHeight(p.x, p.z) + PLAYER_GROUND_OFFSET;
+
+    // M7 US-006: derive facing from movement direction. Input no longer
+    // carries facing (clients send camera-relative WASD transformed to
+    // world space; server is the only authority that decides where the
+    // player faces). When stopped (zero inputDir), the previous facing
+    // is held — this keeps the body rotation stable between bursts of
+    // movement.
+    const dirLen = Math.hypot(p.inputDir.x, p.inputDir.z);
+    if (dirLen > 0) {
+      p.facingX = p.inputDir.x / dirLen;
+      p.facingZ = p.inputDir.z / dirLen;
+    }
   });
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clampDirection, clampFacing } from "../src/input.js";
+import { clampDirection } from "../src/input.js";
 
 describe("clampDirection", () => {
   it("returns zero for non-finite components", () => {
@@ -39,25 +39,3 @@ describe("clampDirection", () => {
   });
 });
 
-describe("clampFacing", () => {
-  it("returns (0,1) for zero input", () => {
-    expect(clampFacing(0, 0)).toEqual({ x: 0, z: 1 });
-  });
-
-  it("returns (0,1) for non-finite input", () => {
-    expect(clampFacing(NaN, 0)).toEqual({ x: 0, z: 1 });
-    expect(clampFacing(0, Infinity)).toEqual({ x: 0, z: 1 });
-  });
-
-  it("normalizes a non-unit vector", () => {
-    const v = clampFacing(3, 4);
-    expect(v.x).toBeCloseTo(0.6);
-    expect(v.z).toBeCloseTo(0.8);
-  });
-
-  it("preserves a unit vector", () => {
-    const v = clampFacing(0.6, 0.8);
-    expect(v.x).toBeCloseTo(0.6);
-    expect(v.z).toBeCloseTo(0.8);
-  });
-});

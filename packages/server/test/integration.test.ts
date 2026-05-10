@@ -319,7 +319,6 @@ describe("integration: M6 player_damaged → player_downed → run_ended", () =>
       type: "input",
       seq: seqBefore + 1,
       dir: { x: 1, z: 0 },
-      facing: { x: 0, z: 1 },
     });
     await new Promise((r) => setTimeout(r, 200));
     const meAfterInput = room.state.players.get(room.sessionId);

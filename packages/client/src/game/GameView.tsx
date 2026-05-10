@@ -1,4 +1,4 @@
-import { Canvas, useThree } from "@react-three/fiber";
+import { Canvas } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Room } from "colyseus.js";
 import { getStateCallbacks } from "colyseus.js";
@@ -13,7 +13,6 @@ import type {
   RoomState,
 } from "@mp/shared";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon, initTerrain } from "@mp/shared";
-import type { PerspectiveCamera } from "three";
 import { Ground } from "./Ground.js";
 import { PlayerCube } from "./PlayerCube.js";
 import { EnemySwarm } from "./EnemySwarm.js";
@@ -31,7 +30,6 @@ import { LocalPredictor } from "../net/prediction.js";
 import { hudState } from "../net/hudState.js";
 import { DebugHud } from "./DebugHud.js";
 import { CameraRig } from "./CameraRig.js";
-import { Crosshair } from "./Crosshair.js";
 import { BoundaryRing } from "./BoundaryRing.js";
 import { DamageNumberPool } from "./DamageNumberPool.js";
 import { MinimapCanvas } from "./MinimapCanvas.js";
@@ -51,12 +49,6 @@ type PlayerEntry = {
   name: string;
   buffer: SnapshotBuffer;
 };
-
-function CaptureCamera({ camRef }: { camRef: React.MutableRefObject<PerspectiveCamera | null> }) {
-  const cam = useThree((s) => s.camera) as PerspectiveCamera;
-  camRef.current = cam;
-  return null;
-}
 
 export function GameView({
   room,
@@ -79,7 +71,6 @@ export function GameView({
   const fires = useMemo(() => new Map<number, FireEvent>(), []);
   const { api: vfx, component: vfxJsx } = useCombatVfxRef();
 
-  const canvasCameraRef = useRef<PerspectiveCamera | null>(null);
   const canvasDomRef = useRef<HTMLCanvasElement | null>(null);
   const [canvasReady, setCanvasReady] = useState(false);
 
@@ -104,12 +95,7 @@ export function GameView({
   useMemo(() => initTerrain(room.state.seed), [room.state.seed]);
 
   useEffect(() => {
-    const detachInput = attachInput(
-      room,
-      predictor,
-      () => canvasCameraRef.current,
-      () => ({ x: predictor.renderX, z: predictor.renderZ }),
-    );
+    const detachInput = attachInput(room, predictor);
 
     const $ = getStateCallbacks(room);
 
@@ -424,7 +410,6 @@ export function GameView({
           setCanvasReady(true);
         }}
       >
-        <CaptureCamera camRef={canvasCameraRef} />
         <CameraRig room={room} predictor={predictor} buffers={buffers} />
         <ambientLight intensity={0.5} />
         <directionalLight position={[10, 20, 5]} intensity={1.0} castShadow />
@@ -445,7 +430,6 @@ export function GameView({
         <LevelUpFlashVfx room={room} predictor={predictor} buffers={buffers} />
         <ProjectileSwarm fires={fires} serverTime={serverTime} />
         <GemSwarm room={room} />
-        <Crosshair room={room} />
         <DamageNumberPool room={room} predictor={predictor} buffers={buffers} enemyBuffers={enemyBuffers} />
         {vfxJsx}
       </Canvas>

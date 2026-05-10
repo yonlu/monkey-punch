@@ -85,7 +85,6 @@ export class LocalPredictor {
       type: "input" as const,
       seq: this.seq,
       dir: { x: dir.x, z: dir.z },
-      facing: { x: 0, z: 1 },
     };
     send(msg);
     this.unacked.push({ seq: this.seq, dir: msg.dir });

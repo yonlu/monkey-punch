@@ -1,8 +1,7 @@
 export type InputMessage = {
   type: "input";
   seq: number;                            // monotonic per client (required)
-  dir: { x: number; z: number };
-  facing: { x: number; z: number };       // unit vector; server clamps; defaults (0,1)
+  dir: { x: number; z: number };          // world-space movement direction (client transforms WASD via camera yaw)
 };
 
 export type PingMessage = {
