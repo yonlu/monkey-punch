@@ -16,7 +16,12 @@ import { hudState } from "../net/hudState.js";
 // (US-006 + US-007) will exercise this code path in playtest; a polish
 // pass after the milestone can refine the slash mesh + shader.
 
-export const MELEE_SWIPE_LIFETIME_MS = 80;
+// US-008 playtest tuning: 80ms was too brief — the slash flashed and was
+// gone before you could read which weapon hit. 250ms gives the brain a
+// moment to register the swing direction and the crit cue. Server-side
+// timing is unaffected (damage and cooldown are unchanged); only the VFX
+// duration on the client extends.
+export const MELEE_SWIPE_LIFETIME_MS = 250;
 const MELEE_SWIPE_GRACE_MS = 50;
 
 // Capacity bound — far more than typical concurrent swipes (a high-tempo
@@ -77,15 +82,22 @@ export function MeleeSwipeSwarm({ swipes, serverTime }: MeleeSwipeSwarmProps) {
       if (i >= MELEE_SWIPE_MAX_CAPACITY) break;
 
       const t = elapsedMs / MELEE_SWIPE_LIFETIME_MS; // 0..1
-      const fade = t < 1 ? 1 - t : 0;
+      // Two-phase brightness: the first 30% of the lifetime is the bright
+      // strike flash (peak intensity); the remaining 70% fades out. Gives
+      // a visible "pop then trail" feel rather than a linear fade.
+      const intensity = t < 0.3 ? 1.0 : 1.0 - (t - 0.3) / 0.7;
+      // Slash visibly EXPANDS over its lifetime — the swing extends through
+      // the arc rather than appearing as a static stamp. Grows from 80% to
+      // 110% of full size.
+      const scaleEnvelope = 0.8 + 0.3 * t;
 
       // Position the slash centered on the player at half-range distance
-      // along the facing vector. Y is bumped slightly above the origin
-      // so the disc sits visibly above terrain rather than z-fighting.
+      // along the facing vector. Y bumped above origin so the disc sits
+      // visibly above terrain rather than z-fighting.
       const halfRange = sw.msg.range * 0.5;
       position.set(
         sw.msg.originX + sw.msg.facingX * halfRange,
-        sw.msg.originY + 0.05,
+        sw.msg.originY + 0.15,
         sw.msg.originZ + sw.msg.facingZ * halfRange,
       );
 
@@ -97,21 +109,20 @@ export function MeleeSwipeSwarm({ swipes, serverTime }: MeleeSwipeSwarmProps) {
       tiltQuat.setFromAxisAngle(new Vector3(1, 0, 0), -Math.PI / 2);
       composedQuat.copy(yawQuat).multiply(tiltQuat);
 
-      // Scale by range — Damascus L1 range 2.2 → scale 2.2; Claymore range
-      // 3.5 → scale 3.5. The base disc is unit-sized.
-      scaleVec.set(sw.msg.range, sw.msg.range, sw.msg.range);
+      // Scale by range × expanding envelope. Damascus L1 range 2.2 →
+      // base scale 2.2; Claymore range 3.5 → 3.5. Envelope multiplies on
+      // top so the visible swing reads as a "swooping" motion.
+      const visualScale = sw.msg.range * scaleEnvelope;
+      scaleVec.set(visualScale, visualScale, visualScale);
 
       matrix.compose(position, composedQuat, scaleVec);
       mesh.setMatrixAt(i, matrix);
-      // Per-instance color; brighter on crit. Fade applied via opacity in
-      // the material's `transparent` mode is simpler than per-instance
-      // alpha, and crit-vs-default is a binary visual cue, not gradient.
+      // Per-instance color; brighter on crit. Multiply by intensity for
+      // emissive-like dimming.
       const color = sw.msg.isCrit ? COLOR_CRIT : COLOR_DEFAULT;
-      // Multiply by fade for emissive-like dimming; not an alpha but visually
-      // signals time-decay on the slash.
-      const r = color.r * fade;
-      const g = color.g * fade;
-      const b = color.b * fade;
+      const r = color.r * intensity;
+      const g = color.g * intensity;
+      const b = color.b * intensity;
       mesh.setColorAt(i, new Color(r, g, b));
       i++;
     }
@@ -127,10 +138,13 @@ export function MeleeSwipeSwarm({ swipes, serverTime }: MeleeSwipeSwarmProps) {
       args={[undefined, undefined, MELEE_SWIPE_MAX_CAPACITY]}
       frustumCulled={false}
     >
-      {/* Flat disc — placeholder geometry. Polish-pass replacement: a
-          curved arc fragment rendered with a slash texture. */}
-      <circleGeometry args={[0.5, 16, -Math.PI / 2, Math.PI]} />
-      <meshBasicMaterial color="#ffffff" transparent opacity={0.5} depthWrite={false} />
+      {/* US-008 playtest tuning: bigger base disc (radius 0.7 vs 0.5) +
+          higher segment count for smoother arc edge. The half-circle
+          sector (theta -π/2 → π/2 around the disc's local +Y axis after
+          tilt) reads as a fan-shaped slash centered on player facing.
+          Polish-pass replacement: an animated trail texture. */}
+      <circleGeometry args={[0.7, 24, -Math.PI / 2, Math.PI]} />
+      <meshBasicMaterial color="#ffffff" transparent opacity={0.7} depthWrite={false} />
     </instancedMesh>
   );
 }

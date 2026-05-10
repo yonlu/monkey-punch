@@ -166,26 +166,28 @@ export function ProjectileSwarm({ fires, serverTime }: ProjectileSwarmProps) {
         args={[undefined, undefined, PROJECTILE_MAX_CAPACITY]}
         frustumCulled={false}
       >
-        {/* M8 US-003: thin elongated arrow body. radTop=radBottom=0.05,
-            height=0.6 along Y; per-frame quaternion rotates it onto the
-            dir vector. Color is light wood/brown per the Ragnarok bow
-            visual identity. */}
-        <cylinderGeometry args={[0.05, 0.05, 0.6, 6]} />
-        <meshStandardMaterial color="#a86b3c" emissive="#a86b3c" emissiveIntensity={0.5} />
+        {/* M8 US-003: arrow body. US-008 playtest tuning bumped from
+            0.05x0.05x0.6 to 0.10x0.10x1.0 — original was too thin to
+            read at the speeds Gakkung travels (28 u/s). Light wood/brown
+            material with high emissive intensity so it pops at distance. */}
+        <cylinderGeometry args={[0.10, 0.10, 1.0, 8]} />
+        <meshStandardMaterial color="#c88a4a" emissive="#a86b3c" emissiveIntensity={1.0} />
       </instancedMesh>
       <instancedMesh
         ref={spearMeshRef}
         args={[undefined, undefined, PROJECTILE_MAX_CAPACITY]}
         frustumCulled={false}
       >
-        {/* M8 US-004: long thin spear body — narrower and longer than
-            Gakkung's elongated arrow (0.04 vs 0.05 radius, 1.2 vs 0.6
-            length). Gold material for the Ragnarok auger-spear visual
-            identity. Per-frame quaternion + per-instance uniform scale
-            from stats.hitRadius / 0.4 give Ahlspiess visible level
-            growth (L1 scale 1.25 → L5 scale 2.0). */}
-        <cylinderGeometry args={[0.04, 0.04, 1.2, 6]} />
-        <meshStandardMaterial color="#e8c460" emissive="#e8c460" emissiveIntensity={0.7} />
+        {/* M8 US-004: spear body. US-008 playtest tuning swapped the
+            cylinder for a CONE — gives Ahlspiess a tapered "spearhead"
+            silhouette distinct from Gakkung's uniform-radius shaft so
+            the two projectile weapons read as different at a glance, not
+            just different colors. ConeGeometry's tip is at +Y; the same
+            Y_AXIS → dir slerp orients the tip in the direction of motion.
+            Length doubled (1.2 → 1.8) for visibility at Ahlspiess's
+            22 u/s travel speed. Gold material with strong emissive. */}
+        <coneGeometry args={[0.10, 1.8, 8]} />
+        <meshStandardMaterial color="#ffd97a" emissive="#e8c460" emissiveIntensity={1.2} />
       </instancedMesh>
     </>
   );
