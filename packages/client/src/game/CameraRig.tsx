@@ -3,7 +3,6 @@ import type { Room } from "colyseus.js";
 import { useMemo, useRef } from "react";
 import { type PerspectiveCamera, Raycaster, Vector3 } from "three";
 import type { Player, RoomState } from "@mp/shared";
-import { PLAYER_GROUND_OFFSET, terrainHeight } from "@mp/shared";
 import type { LocalPredictor } from "../net/prediction.js";
 import { SnapshotBuffer } from "../net/snapshots.js";
 import { hudState } from "../net/hudState.js";
@@ -59,12 +58,17 @@ export function CameraRig({ room, predictor, buffers }: Props) {
   useFrame((_, dt) => {
     const local = room.state.players.get(room.sessionId);
 
-    // Target = local player by default. Y is derived from the same
-    // shared terrainHeight the server uses, so the orbit center sits on
-    // the rendered terrain even before US-011 extends prediction to Y.
+    // Target = local player by default. Y comes from the predictor's
+    // renderY (US-011) — fully owned by the predictor's vertical physics,
+    // so the orbit center tracks the local player through jumps without
+    // a re-query of terrainHeight here. PlayerCube writes renderY each
+    // frame; if this rig's useFrame runs before PlayerCube's on a given
+    // frame, renderY is the previous frame's value (or 0 on the very
+    // first frame), and CAMERA_FOLLOW_LERP smooths the resulting one-
+    // frame lag invisibly.
     let tx = predictor.renderX;
     let tz = predictor.renderZ;
-    let ty = terrainHeight(tx, tz) + PLAYER_GROUND_OFFSET;
+    let ty = predictor.renderY;
 
     if (local?.downed) {
       let chosen: Player | null = null;

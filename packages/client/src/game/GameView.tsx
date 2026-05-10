@@ -131,7 +131,24 @@ export function GameView({
 
       const offChange = $(player).onChange(() => {
         if (sessionId === room.sessionId) {
-          predictor.reconcile(player.x, player.z, player.lastProcessedInput);
+          // US-011: full vertical state passed through so the predictor's
+          // replay can re-derive Y/vy/grounded/lastGroundedAt/
+          // jumpBufferedAt on top of authoritative server values. serverTick
+          // anchors the predictor's tick counter so coyote/buffer windows
+          // stay consistent with the server's view.
+          predictor.reconcile(
+            {
+              x: player.x,
+              y: player.y,
+              z: player.z,
+              vy: player.vy,
+              grounded: player.grounded,
+              lastGroundedAt: player.lastGroundedAt,
+              jumpBufferedAt: player.jumpBufferedAt,
+            },
+            player.lastProcessedInput,
+            room.state.tick,
+          );
           hudState.reconErr = predictor.lastReconErr;
           hudState.xp = player.xp;
           const w = player.weapons[0];

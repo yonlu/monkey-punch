@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Group } from "three";
 import type { Room } from "colyseus.js";
 import type { RoomState } from "@mp/shared";
-import { PLAYER_SPEED, PLAYER_GROUND_OFFSET, terrainHeight } from "@mp/shared";
+import { PLAYER_SPEED } from "@mp/shared";
 import { SnapshotBuffer } from "../net/snapshots.js";
 import { hudState } from "../net/hudState.js";
 import {
@@ -18,9 +18,20 @@ import { PlayerCharacter, type AnimName } from "./PlayerCharacter.js";
 const STEP_INTERVAL_S = STEP_INTERVAL_MS / 1000;
 const RUN_SPEED_THRESHOLD = 0.5;
 
-function localPlayerRenderPos(predictor: LocalPredictor, delta: number): { x: number; z: number } {
+/**
+ * Render-time position for the local player. X/Z extrapolate from the
+ * latest predictor.step() using the live input direction (so 60 fps
+ * frames between 20 Hz steps still move smoothly), then add the decaying
+ * renderOffset that absorbs reconciliation snaps. Y comes from the
+ * predictor directly — vertical motion is gravity-driven, not input-
+ * driven, so there's no "live extrapolation" analogue to do for it. The
+ * 50ms inter-step gap on a jump apex is small enough not to stair-step
+ * visibly given the smooth lerp that follows in CameraRig.
+ */
+function localPlayerRenderPos(predictor: LocalPredictor, delta: number): { x: number; y: number; z: number } {
   const decay = Math.exp(-delta / SMOOTHING_TAU_S);
   predictor.renderOffset.x *= decay;
+  predictor.renderOffset.y *= decay;
   predictor.renderOffset.z *= decay;
   const tSinceStep = Math.min((performance.now() - predictor.lastStepTime) / 1000, STEP_INTERVAL_S);
   const liveDir = getLiveInputDir();
@@ -34,6 +45,7 @@ function localPlayerRenderPos(predictor: LocalPredictor, delta: number): { x: nu
   predictor.lastLiveDirZ = liveDir.z;
   return {
     x: predictor.predictedX + liveDir.x * PLAYER_SPEED * tSinceStep + predictor.renderOffset.x,
+    y: predictor.predictedY + predictor.renderOffset.y,
     z: predictor.predictedZ + liveDir.z * PLAYER_SPEED * tSinceStep + predictor.renderOffset.z,
   };
 }
@@ -82,14 +94,15 @@ export function PlayerCube({ room, sessionId, name, buffer, predictor }: PlayerC
 
     let posX: number, posY: number, posZ: number;
     if (predictor) {
+      // US-011: predicted Y is fully owned by the predictor — gravity +
+      // jump physics + ground-snap ran inside applyTick, so reading it
+      // here matches the server's authoritative Y (modulo the unacked
+      // input window the predictor will replay on next reconcile).
       const pos = localPlayerRenderPos(predictor, delta);
-      posX = pos.x; posZ = pos.z;
+      posX = pos.x; posY = pos.y; posZ = pos.z;
       predictor.renderX = pos.x;
+      predictor.renderY = pos.y;
       predictor.renderZ = pos.z;
-      // US-004: predicted Y is purely terrain-derived (no jump until US-009).
-      // Same function the server uses to snap player.y in tickPlayers, so the
-      // local cube sits flush with the rendered terrain mesh.
-      posY = terrainHeight(posX, posZ) + PLAYER_GROUND_OFFSET;
     } else {
       const sample = buffer.sample(performance.now() - hudState.interpDelayMs);
       if (!sample) return;

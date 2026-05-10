@@ -55,10 +55,17 @@ import type {
  * `tick` is the current state.tick. `lastGroundedAt` is the latest tick the
  * player was grounded at end of phase 2 (always non-negative — see
  * tickPlayers' phase 3 update + ctor init in schema.ts).
+ *
+ * Argument is structural so the client predictor (M7 US-011) can call this
+ * with its own non-Schema state object — both call paths share identical
+ * coyote semantics, which is what keeps prediction in lockstep with server.
  */
-export function canJump(player: Player, tick: number): boolean {
-  if (player.grounded) return true;
-  return (tick - player.lastGroundedAt) * (1 / TICK_RATE) <= COYOTE_TIME;
+export function canJump(
+  state: { grounded: boolean; lastGroundedAt: number },
+  tick: number,
+): boolean {
+  if (state.grounded) return true;
+  return (tick - state.lastGroundedAt) * (1 / TICK_RATE) <= COYOTE_TIME;
 }
 
 /**

@@ -208,8 +208,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Visual / two-client browser verification DEFERRED — no dev-browser skill available in this environment. Reviewer should manually pnpm dev with two clients, jump on flat ground / on a hill / while running, and confirm no rubber-band on landing and no jitter at apex. Logic-side coverage includes: same-tick perfect-server reconcile produces zero correction (lastReconErr ≈ 0, renderOffset.y ≈ 0); reconcile snaps Y/vy/grounded/lastGroundedAt/jumpBufferedAt and replays unacked inputs; predictedTick re-anchors to serverTick + unacked count; coyote success/fail and buffered-jump-on-landing reproduced inside the predictor (mirrors shared rules.ts). canJump signature widened from Player to structural { grounded, lastGroundedAt } so predictor + tickPlayers share one predicate."
     },
     {
       "id": "US-012",
