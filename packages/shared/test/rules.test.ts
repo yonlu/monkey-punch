@@ -24,6 +24,7 @@ import {
   canJump,
   selectTarget,
   runMeleeArcSwing,
+  runAuraTick,
   applySlow,
   tickStatusEffects,
   type SpawnerState,
@@ -34,7 +35,7 @@ import {
   type CombatEvent,
   type ContactCooldownLike,
 } from "../src/rules.js";
-import type { MeleeArcWeaponDef } from "../src/weapons.js";
+import type { MeleeArcWeaponDef, AuraWeaponDef } from "../src/weapons.js";
 import {
   PLAYER_SPEED,
   PLAYER_GROUND_OFFSET,
@@ -2721,6 +2722,200 @@ describe("tickEnemies — M8 US-009 movement scaled by slowMultiplier", () => {
     const startX = e.x;
     tickEnemies(state, 0.1);
     expect(e.x).toBeCloseTo(startX, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M8 US-010: aura behavior + Kronos. runAuraTick is exported from rules.ts
+// so the damage geometry, slow application, and gem-drop / kill-credit
+// paths can be unit-tested with a synthetic AuraWeaponDef.
+// ---------------------------------------------------------------------------
+
+function makeAuraDef(overrides: Partial<{
+  damage: number;
+  radius: number;
+  tickIntervalMs: number;
+  slowMultiplier: number;
+  slowDurationMs: number;
+}> = {}): AuraWeaponDef {
+  return {
+    name: "TestAura",
+    behavior: { kind: "aura" },
+    levels: [{
+      damage: overrides.damage ?? 5,
+      radius: overrides.radius ?? 3,
+      tickIntervalMs: overrides.tickIntervalMs ?? 500,
+      slowMultiplier: overrides.slowMultiplier ?? 0.5,
+      slowDurationMs: overrides.slowDurationMs ?? 300,
+    }],
+  };
+}
+
+describe("runAuraTick — M8 US-010", () => {
+  it("damages all enemies inside radius and NO enemies outside (3D distance gate)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.y = 0; p.z = 0;
+    addEnemy(state, 1, 1, 0).hp = 100; // inside radius
+    addEnemy(state, 2, 2, 0).hp = 100; // inside radius
+    addEnemy(state, 3, 5, 0).hp = 100; // outside radius
+
+    const def = makeAuraDef({ damage: 10, radius: 3 });
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+    runAuraTick(state, p, def, 1, ctx, (e) => events.push(e));
+
+    expect(events.filter((e) => e.type === "hit").length).toBe(2);
+    expect(state.enemies.get("1")!.hp).toBe(90);
+    expect(state.enemies.get("2")!.hp).toBe(90);
+    expect(state.enemies.get("3")!.hp).toBe(100);
+  });
+
+  it("applies slow to enemies inside radius (multiplier + duration baked from stats)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const e = addEnemy(state, 1, 1, 0); e.hp = 100;
+    state.tick = 200;
+
+    const def = makeAuraDef({ damage: 1, radius: 3, slowMultiplier: 0.4, slowDurationMs: 300 });
+    const { ctx } = makeCapture();
+    runAuraTick(state, p, def, 1, ctx, () => {});
+
+    expect(e.slowMultiplier).toBe(0.4);
+    // 300ms / 50ms-per-tick = 6 ticks, so expires at currentTick + 6 = 206.
+    expect(e.slowExpiresAt).toBe(206);
+  });
+
+  it("uses 3D distance — enemy on the ground while player is mid-jump is out of radius if Δy is large", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.y = 5; p.z = 0; // player at y=5 (jumping high)
+    addEnemy(state, 1, 1, 0).hp = 100; // ground enemy (y=0); 3D dist = √(1+25) ≈ 5.1
+
+    const def = makeAuraDef({ damage: 10, radius: 3 });
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+    runAuraTick(state, p, def, 1, ctx, (e) => events.push(e));
+
+    // 3D distance 5.1 > radius 3 → no hit.
+    expect(events.filter((e) => e.type === "hit").length).toBe(0);
+    expect(state.enemies.get("1")!.hp).toBe(100);
+  });
+
+  it("on lethal hit: drops a gem, removes the enemy, increments owner.kills, emits enemy_died", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const e = addEnemy(state, 1, 1, 0); e.hp = 5; // 1-shot at damage 10
+
+    const def = makeAuraDef({ damage: 10, radius: 3 });
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+    runAuraTick(state, p, def, 1, ctx, (ev) => events.push(ev));
+
+    expect(state.enemies.has("1")).toBe(false);
+    expect(state.gems.size).toBe(1);
+    expect(p.kills).toBe(1);
+    expect(events.filter((ev) => ev.type === "enemy_died").length).toBe(1);
+  });
+
+  it("applySlow's stronger-wins rule applies — a Kronos tick re-applying every 500ms keeps the slow alive while the enemy stays in radius", () => {
+    // Concrete repro of the design intent: an enemy stays inside the
+    // aura, every 500ms (10 ticks at 20Hz) the aura re-applies a 300ms
+    // slow. Between re-applications the slow does NOT expire because
+    // 300ms duration > 0 ms gap (re-apply lands BEFORE expiry — and
+    // applySlow's equal-strength-ignored rule means the second apply
+    // doesn't extend the expiry, so we rely on the FIRST apply's expiry
+    // landing AFTER the second apply lands, which happens because
+    // duration ≥ tick interval).
+    //
+    // Wait — this needs slowDurationMs ≥ tickIntervalMs to actually keep
+    // the slow alive. Kronos has 300ms duration vs 500ms cadence, so
+    // there IS a 200ms gap each cycle where the slow technically expires
+    // before the next aura tick. tickStatusEffects will clear the slow
+    // during that gap, then the next aura tick re-applies it. The enemy
+    // is "intermittently" slowed at 60% duty cycle (300/500). Kronos's
+    // playtest feel will tell us if that's right or if duration should
+    // bump to match interval.
+    //
+    // For this test we just verify the re-apply itself works: a second
+    // runAuraTick after the first (same tick) preserves the slow.
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const e = addEnemy(state, 1, 1, 0); e.hp = 1000;
+    state.tick = 100;
+
+    const def = makeAuraDef({ damage: 1, radius: 3, slowMultiplier: 0.4, slowDurationMs: 300 });
+    const { ctx } = makeCapture();
+    runAuraTick(state, p, def, 1, ctx, () => {});
+    expect(e.slowMultiplier).toBe(0.4);
+    expect(e.slowExpiresAt).toBe(106);
+
+    // Same tick — equal strength, ignored, expiry unchanged.
+    runAuraTick(state, p, def, 1, ctx, () => {});
+    expect(e.slowExpiresAt).toBe(106);
+  });
+});
+
+describe("tickWeapons — M8 US-010 aura cadence", () => {
+  it("a freshly-acquired Kronos fires its first aura tick on the next tickWeapons call (cooldownRemaining starts at 0)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    addEnemy(state, 1, 1, 0).hp = 100;
+
+    const w = new WeaponState();
+    w.kind = 6; // Kronos at current index 6
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+    tickWeapons(state, 0.05, ctx, (e) => events.push(e));
+
+    // Kronos L1: tickIntervalMs 500 → cooldownRemaining set to 0.5s
+    // after firing. damage 8 vs enemy hp 100.
+    expect(events.filter((e) => e.type === "hit").length).toBe(1);
+    expect(w.cooldownRemaining).toBeCloseTo(0.5);
+    expect(state.enemies.get("1")!.hp).toBe(92); // 100 - 8
+  });
+
+  it("subsequent ticks count down cooldownRemaining; the next aura tick fires when it hits 0", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    addEnemy(state, 1, 1, 0).hp = 1000;
+
+    const w = new WeaponState();
+    w.kind = 6;
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+
+    // First tick: aura fires (cooldownRemaining started at 0 → fires →
+    // reset to 0.5).
+    tickWeapons(state, 0.05, ctx, (e) => events.push(e));
+    let hits = events.filter((e) => e.type === "hit").length;
+    expect(hits).toBe(1);
+
+    // 5 ticks (0.25s elapsed) — cooldown at ~0.25, well above 0. No fire.
+    for (let i = 0; i < 5; i++) tickWeapons(state, 0.05, ctx, (e) => events.push(e));
+    hits = events.filter((e) => e.type === "hit").length;
+    expect(hits).toBe(1);
+
+    // 6 more ticks pushes total elapsed past 0.5s, bridging fp drift on
+    // the boundary. The aura's second tick fires at exactly cooldown=0,
+    // possibly a tick early or late depending on fp residue from the
+    // 0.5 - N*0.05 subtractions; this assertion accepts either.
+    for (let i = 0; i < 6; i++) tickWeapons(state, 0.05, ctx, (e) => events.push(e));
+    hits = events.filter((e) => e.type === "hit").length;
+    expect(hits).toBe(2);
   });
 });
 

@@ -107,6 +107,47 @@ describe("Claymore — M8 US-007", () => {
   });
 });
 
+describe("Kronos — M8 US-010", () => {
+  it("is at index 6 (will become 7 once Bloody Axe lands at 6) and is an aura", () => {
+    const def = WEAPON_KINDS[6]!;
+    expect(def.name).toBe("Kronos");
+    expect(def.behavior.kind).toBe("aura");
+  });
+
+  it("has constant tickIntervalMs of 500ms across all levels (cadence is the identity)", () => {
+    const def = WEAPON_KINDS[6]!;
+    if (def.behavior.kind !== "aura") throw new Error("expected aura");
+    for (let lvl = 1; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).tickIntervalMs).toBe(500);
+    }
+  });
+
+  it("radius strictly grows L1 → L5 (Vampire Survivors Garlic identity: bigger zone of control at higher levels)", () => {
+    const def = WEAPON_KINDS[6]!;
+    if (def.behavior.kind !== "aura") throw new Error("expected aura");
+    for (let lvl = 2; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).radius).toBeGreaterThan(statsAt(def, lvl - 1).radius);
+    }
+  });
+
+  it("slow strengthens at L4+ (slowMultiplier 0.6 → 0.4) — the L4 power spike is part of Kronos's identity", () => {
+    const def = WEAPON_KINDS[6]!;
+    if (def.behavior.kind !== "aura") throw new Error("expected aura");
+    expect(statsAt(def, 1).slowMultiplier).toBe(0.6);
+    expect(statsAt(def, 3).slowMultiplier).toBe(0.6);
+    expect(statsAt(def, 4).slowMultiplier).toBe(0.5);
+    expect(statsAt(def, 5).slowMultiplier).toBe(0.4);
+  });
+
+  it("damage strictly grows L1 → L5", () => {
+    const def = WEAPON_KINDS[6]!;
+    if (def.behavior.kind !== "aura") throw new Error("expected aura");
+    for (let lvl = 2; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).damage).toBeGreaterThan(statsAt(def, lvl - 1).damage);
+    }
+  });
+});
+
 describe("Damascus — M8 US-006", () => {
   it("is at index 3 and is a melee_arc with crit (no knockback)", () => {
     const def = WEAPON_KINDS[3]!;

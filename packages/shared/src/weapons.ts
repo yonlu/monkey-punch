@@ -51,6 +51,26 @@ export type OrbitLevel = {
   orbAngularSpeed: number;     // radians/sec
 };
 
+// M8 US-010: aura behavior — persistent damaging area around the player.
+//   damage             — applied per tick to every enemy inside radius
+//   radius             — 3D distance (M7 US-013 consistency: a player on
+//                        a hilltop won't hit enemies in the valley below
+//                        outside their 3D distance)
+//   tickIntervalMs     — ms between damage ticks (Kronos: 500ms = 2 Hz)
+//   slowMultiplier     — applied to enemies inside the aura via applySlow
+//                        (lower = stronger slow; Kronos 0.6 → 0.4 across
+//                        levels)
+//   slowDurationMs     — how long each apply lasts. Re-applied every aura
+//                        tick while the enemy is in radius; expires shortly
+//                        after the enemy walks out (300ms default).
+export type AuraLevel = {
+  damage: number;
+  radius: number;
+  tickIntervalMs: number;
+  slowMultiplier: number;
+  slowDurationMs: number;
+};
+
 // M8 US-005: melee_arc behavior — instant front-of-player arc hit.
 // `arcAngle` is the TOTAL arc width in radians (Damascus uses Math.PI/3 ≈
 // 60°; Claymore uses Math.PI*0.9 ≈ 162°). `range` is melee reach in world
@@ -71,7 +91,8 @@ export type MeleeArcLevel = {
 export type WeaponDef =
   | { name: string; behavior: { kind: "projectile"; targeting: TargetingMode; homingTurnRate: number /* rad/s; 0 = straight-line */; mesh: ProjectileMesh }; levels: ProjectileLevel[] }
   | { name: string; behavior: { kind: "orbit" };                                                                                                              levels: OrbitLevel[] }
-  | { name: string; behavior: { kind: "melee_arc" };                                                                                                          levels: MeleeArcLevel[] };
+  | { name: string; behavior: { kind: "melee_arc" };                                                                                                          levels: MeleeArcLevel[] }
+  | { name: string; behavior: { kind: "aura" };                                                                                                               levels: AuraLevel[] };
 
 export const WEAPON_KINDS: readonly WeaponDef[] = [
   {
@@ -183,11 +204,34 @@ export const WEAPON_KINDS: readonly WeaponDef[] = [
       { damage: 54, cooldown: 0.80, hitRadius: 0.80, projectileSpeed: 22, projectileLifetime: 1.5, pierceCount: -1, hitCooldownPerEnemyMs: 200 },
     ],
   },
+  {
+    // M8 US-010: Kronos (kind index 6 currently; will become 7 once
+    // Bloody Axe lands at index 6 in US-011/012, matching the design
+    // doc's stated final ordering). Persistent slowing aura around the
+    // player — Vampire Survivors' Garlic archetype with a slow debuff.
+    // The aura runs continuously (no cooldown gate from a fire trigger);
+    // tickWeapons reuses WeaponState.cooldownRemaining as the countdown
+    // to the NEXT damage tick. radius and slow strength grow per level;
+    // tickIntervalMs stays constant at 500ms (2 Hz). slowDurationMs
+    // 300ms is short — reapplied every aura tick while in radius (so
+    // an enemy that lingers stays slowed; an enemy that walks out
+    // recovers within ~300ms).
+    name: "Kronos",
+    behavior: { kind: "aura" },
+    levels: [
+      { damage:  8, radius: 3.5, tickIntervalMs: 500, slowMultiplier: 0.6, slowDurationMs: 300 },
+      { damage: 10, radius: 3.7, tickIntervalMs: 500, slowMultiplier: 0.6, slowDurationMs: 300 },
+      { damage: 12, radius: 4.0, tickIntervalMs: 500, slowMultiplier: 0.6, slowDurationMs: 300 },
+      { damage: 15, radius: 4.3, tickIntervalMs: 500, slowMultiplier: 0.5, slowDurationMs: 300 },
+      { damage: 18, radius: 4.6, tickIntervalMs: 500, slowMultiplier: 0.4, slowDurationMs: 300 },
+    ],
+  },
 ];
 
 export type ProjectileWeaponDef = Extract<WeaponDef, { behavior: { kind: "projectile" } }>;
 export type OrbitWeaponDef = Extract<WeaponDef, { behavior: { kind: "orbit" } }>;
 export type MeleeArcWeaponDef = Extract<WeaponDef, { behavior: { kind: "melee_arc" } }>;
+export type AuraWeaponDef = Extract<WeaponDef, { behavior: { kind: "aura" } }>;
 
 /**
  * Type guard for the projectile branch of WeaponDef. Used at every site that
@@ -205,6 +249,10 @@ export function isOrbitWeapon(def: WeaponDef): def is OrbitWeaponDef {
 
 export function isMeleeArcWeapon(def: WeaponDef): def is MeleeArcWeaponDef {
   return def.behavior.kind === "melee_arc";
+}
+
+export function isAuraWeapon(def: WeaponDef): def is AuraWeaponDef {
+  return def.behavior.kind === "aura";
 }
 
 /**

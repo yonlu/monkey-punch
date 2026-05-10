@@ -33,7 +33,7 @@ import {
   xpForLevel,
 } from "./constants.js";
 import { terrainHeight } from "./terrain.js";
-import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, isMeleeArcWeapon, type WeaponDef, type TargetingMode, type MeleeArcWeaponDef } from "./weapons.js";
+import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, isMeleeArcWeapon, isAuraWeapon, type WeaponDef, type TargetingMode, type MeleeArcWeaponDef, type AuraWeaponDef } from "./weapons.js";
 import type { Rng } from "./rng.js";
 import type {
   FireEvent,
@@ -774,8 +774,23 @@ export function tickWeapons(
           }
           break;
         }
+        case "aura": {
+          if (!isAuraWeapon(def)) return; // narrowing only
+          // Aura semantics: WeaponState.cooldownRemaining is repurposed
+          // as "seconds until next aura damage tick" (no schema migration
+          // needed). Always counts down; on expiry, runs one aura tick
+          // and resets to tickIntervalSec. A freshly-acquired aura
+          // (cooldownRemaining=0 from the WeaponState constructor) fires
+          // on its first tick — instant feedback when Kronos is picked.
+          weapon.cooldownRemaining = Math.max(0, weapon.cooldownRemaining - dt);
+          if (weapon.cooldownRemaining > 0) return;
+          runAuraTick(state, player, def, weapon.level, ctx, emit);
+          const stats = statsAt(def, weapon.level);
+          weapon.cooldownRemaining = stats.tickIntervalMs / 1000;
+          break;
+        }
         default: {
-          // Exhaustiveness guard. If a fourth behavior kind is added to
+          // Exhaustiveness guard. If a fifth behavior kind is added to
           // WeaponDef, this becomes a compile error: `def.behavior` will
           // not have type `never` and the assignment to `_exhaustive`
           // will fail.
@@ -937,6 +952,95 @@ export function runMeleeArcSwing(
   });
 
   return true;
+}
+
+/**
+ * M8 US-010: execute one aura damage tick — damage every enemy within
+ * the aura's 3D radius and apply slow via applySlow. Caller (the aura
+ * arm in tickWeapons) drives the cadence by counting down
+ * WeaponState.cooldownRemaining (repurposed as "seconds until next aura
+ * tick" for aura weapons, per the design doc note that no new schema
+ * field is needed).
+ *
+ * Exported so the aura damage geometry, slow application, and gem-drop
+ * + kill-credit paths can be unit-tested with a synthetic AuraWeaponDef
+ * (Kronos enters WEAPON_KINDS in this story but the aura logic is
+ * generic).
+ *
+ * Per A4 (design doc §10): aura uses 3D distance for the radius gate,
+ * matching M7 US-013's projectile hit detection — a player on a hilltop
+ * does NOT damage enemies in the valley below outside their 3D radius.
+ *
+ * Hits emit one HitEvent per damaged enemy with fireId=0 (the
+ * "non-projectile" sentinel orbit + melee_arc already use). Slow ticks
+ * are tagged via the future HitEvent.tag field in US-013 — for now
+ * unbranded by tag and rendered with default white damage numbers.
+ */
+export function runAuraTick(
+  state: RoomState,
+  player: Player,
+  def: AuraWeaponDef,
+  weaponLevel: number,
+  ctx: WeaponContext,
+  emit: Emit,
+): void {
+  const stats = statsAt(def, weaponLevel);
+  const radiusSq = stats.radius * stats.radius;
+  // Convert ms duration → ticks (rounded up so a 300ms slow lasts at
+  // least 6 full ticks at 20Hz). Min 1 tick — a slow that expires the
+  // same tick it's applied wouldn't actually slow movement.
+  const slowDurationTicks = Math.max(1, Math.ceil((stats.slowDurationMs * TICK_RATE) / 1000));
+
+  // Collect candidates (range gate). Mutating enemy.hp inside forEach is
+  // fine (no schema iteration changes), but kill removal MUST happen
+  // outside forEach — same pattern tickEnemies/runMeleeArcSwing use.
+  const hits: Enemy[] = [];
+  state.enemies.forEach((enemy: Enemy) => {
+    const dx = enemy.x - player.x;
+    const dy = enemy.y - player.y;
+    const dz = enemy.z - player.z;
+    if (dx * dx + dy * dy + dz * dz > radiusSq) return;
+    hits.push(enemy);
+  });
+
+  for (const enemy of hits) {
+    enemy.hp -= stats.damage;
+    applySlow(enemy, stats.slowMultiplier, slowDurationTicks, state.tick);
+
+    emit({
+      type: "hit",
+      fireId: 0, // non-projectile sentinel
+      enemyId: enemy.id,
+      damage: stats.damage,
+      x: enemy.x,
+      y: enemy.y,
+      z: enemy.z,
+      serverTick: state.tick,
+    });
+
+    if (enemy.hp <= 0) {
+      const gem = new Gem();
+      gem.id = ctx.nextGemId();
+      gem.x = enemy.x;
+      gem.z = enemy.z;
+      gem.value = GEM_VALUE;
+      state.gems.set(String(gem.id), gem);
+
+      const deathX = enemy.x;
+      const deathZ = enemy.z;
+      const deathId = enemy.id;
+      player.kills += 1;
+      state.enemies.delete(String(enemy.id));
+      ctx.orbitHitCooldown.evictEnemy(deathId);
+
+      emit({
+        type: "enemy_died",
+        enemyId: deathId,
+        x: deathX,
+        z: deathZ,
+      });
+    }
+  }
 }
 
 export type ProjectileContext = {

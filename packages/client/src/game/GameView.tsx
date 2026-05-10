@@ -21,6 +21,7 @@ import { EnemySwarm } from "./EnemySwarm.js";
 import { OrbitSwarm } from "./OrbitSwarm.js";
 import { ProjectileSwarm } from "./ProjectileSwarm.js";
 import { MeleeSwipeSwarm, type ActiveMeleeSwipe, MELEE_SWIPE_LIFETIME_MS } from "./MeleeSwipeSwarm.js";
+import { AuraSwarm } from "./AuraSwarm.js";
 import { GemSwarm } from "./GemSwarm.js";
 import { PlayerHud } from "./PlayerHud.js";
 import { LevelUpOverlay } from "./LevelUpOverlay.js";
@@ -493,6 +494,7 @@ export function GameView({
         <LevelUpFlashVfx room={room} predictor={predictor} buffers={buffers} />
         <ProjectileSwarm fires={fires} serverTime={serverTime} />
         <MeleeSwipeSwarm swipes={swipes} serverTime={serverTime} />
+        <AuraSwarm room={room} predictor={predictor} buffers={buffers} />
         <GemSwarm room={room} />
         <DamageNumberPool room={room} predictor={predictor} buffers={buffers} enemyBuffers={enemyBuffers} />
         {vfxJsx}
