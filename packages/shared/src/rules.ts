@@ -16,6 +16,8 @@ import {
   ENEMY_SPEED,
   GEM_PICKUP_RADIUS,
   GEM_VALUE,
+  GRAVITY,
+  JUMP_VELOCITY,
   LEVEL_UP_DEADLINE_TICKS,
   MAP_RADIUS,
   MAX_ENEMIES,
@@ -23,6 +25,7 @@ import {
   PLAYER_RADIUS,
   PLAYER_SPEED,
   TARGETING_MAX_RANGE,
+  TERMINAL_FALL_SPEED,
   TICK_RATE,
   xpForLevel,
 } from "./constants.js";
@@ -41,7 +44,22 @@ import type {
   RunEndedEvent,
 } from "./messages.js";
 
-export function tickPlayers(state: RoomState, dt: number): void {
+/**
+ * `jumpRequests` is a per-tick set of sessionIds that pressed jump on this
+ * input window — a transient input intent, not synced state. The room
+ * collects intents as input messages arrive (one entry per player whose
+ * latest input had `jump=true`) and clears the set after `tickPlayers`
+ * returns so the next tick starts empty. Per CLAUDE.md rule 4, the room
+ * handler stays thin: it records intent; this function decides outcome.
+ *
+ * The set is read-only here — clearing/draining is the room's job, not
+ * ours. Optional so test cases that don't exercise jump can omit it.
+ */
+export function tickPlayers(
+  state: RoomState,
+  dt: number,
+  jumpRequests?: ReadonlySet<string>,
+): void {
   if (state.runEnded) return;
   const max2 = MAP_RADIUS * MAP_RADIUS;
   state.players.forEach((p) => {
@@ -54,9 +72,34 @@ export function tickPlayers(state: RoomState, dt: number): void {
       p.x *= scale;
       p.z *= scale;
     }
-    // M7 US-002: snap Y to terrain. No jump yet — vy stays at 0 and is
-    // ignored. Adding gravity / jump arrives in US-009.
-    p.y = terrainHeight(p.x, p.z) + PLAYER_GROUND_OFFSET;
+
+    // M7 US-009: jump physics.
+    //   1. Resolve jump intent — only fires while grounded (no forgiveness
+    //      yet; coyote/buffer arrives in US-010).
+    //   2. Apply gravity to vy, clamped at TERMINAL_FALL_SPEED.
+    //   3. Integrate Y by vy.
+    //   4. Ground-snap: if Y has fallen at or below the terrain surface,
+    //      clamp Y to it, zero vy, set grounded=true. Otherwise grounded=false.
+    //
+    // Order matters: jump-then-gravity means a jump issued THIS tick still
+    // gets one frame of pre-gravity velocity (vy = JUMP_VELOCITY → integrate
+    // → vy slightly less next tick). The fully-zero-vy stationary case is
+    // handled by the snap clamping vy to 0 every grounded tick.
+    if (jumpRequests?.has(p.sessionId) && p.grounded) {
+      p.vy = JUMP_VELOCITY;
+      p.grounded = false;
+    }
+    p.vy = Math.max(p.vy - GRAVITY * dt, -TERMINAL_FALL_SPEED);
+    p.y += p.vy * dt;
+
+    const groundY = terrainHeight(p.x, p.z) + PLAYER_GROUND_OFFSET;
+    if (p.y <= groundY) {
+      p.y = groundY;
+      p.vy = 0;
+      p.grounded = true;
+    } else {
+      p.grounded = false;
+    }
 
     // M7 US-006: derive facing from movement direction. Input no longer
     // carries facing (clients send camera-relative WASD transformed to

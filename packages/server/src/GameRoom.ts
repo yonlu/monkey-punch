@@ -89,6 +89,12 @@ export class GameRoom extends Room<RoomState> {
   // (esbuild emitting Object.defineProperty over @colyseus/schema's
   // prototype setters) only affects Schema subclasses.
   private spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+  // M7 US-009: per-tick jump intents. Input handler adds the sessionId of
+  // any player whose latest input had jump=true; tickPlayers reads it; the
+  // tick() loop clears it after tickPlayers returns. Server-only; not
+  // synced. A Set rather than a Map because jump is edge-triggered: at
+  // most one intent per player per tick window matters.
+  private pendingJumps: Set<string> = new Set();
   private activeProjectiles: Projectile[] = [];
   private nextFireId = 1;
   private nextGemId = 1;
@@ -183,6 +189,10 @@ export class GameRoom extends Room<RoomState> {
       player.inputDir.z = dir.z;
       // M7 US-006: facingX/Z is now derived in tickPlayers from inputDir.
       // The handler stays thin per CLAUDE.md rule 4.
+      // M7 US-009: jump intent is recorded as a per-tick edge-trigger set
+      // entry. tickPlayers decides outcome (grounded check, vy kick).
+      // Coerce to boolean — old clients that omit the field land at false.
+      if (message?.jump === true) this.pendingJumps.add(client.sessionId);
       player.lastProcessedInput = seq;
     });
 
@@ -333,6 +343,7 @@ export class GameRoom extends Room<RoomState> {
       this.state.players.delete(client.sessionId);
       this.orbitHitCooldown.evictPlayer(client.sessionId);
       this.contactCooldown.evictPlayer(client.sessionId);
+      this.pendingJumps.delete(client.sessionId);
       await this.rotateHostIfNeeded(player.name);
       return;
     }
@@ -348,6 +359,7 @@ export class GameRoom extends Room<RoomState> {
       this.state.players.delete(client.sessionId);
       this.orbitHitCooldown.evictPlayer(client.sessionId);
       this.contactCooldown.evictPlayer(client.sessionId);
+      this.pendingJumps.delete(client.sessionId);
       await this.rotateHostIfNeeded(player.name);
     }
   }
@@ -375,7 +387,11 @@ export class GameRoom extends Room<RoomState> {
     // M6: tickContactDamage after tickEnemies sees fresh positions; tickRunEndCheck
     // immediately after so weapons/projectiles/spawner all observe the post-end
     // state via their `state.runEnded` early-out.
-    tickPlayers(this.state, SIM_DT_S);
+    tickPlayers(this.state, SIM_DT_S, this.pendingJumps);
+    // Drain edge-triggered jump intents — outcome decided above; next tick
+    // window starts empty. (US-010 will move buffered intent into a
+    // schema-tracked window so this drain stays correct.)
+    this.pendingJumps.clear();
     tickEnemies(this.state, SIM_DT_S);
     tickContactDamage(this.state, this.contactCooldown, SIM_DT_S, Date.now(), this.emit);
     tickRunEndCheck(this.state, this.emit);

@@ -79,12 +79,13 @@ export class LocalPredictor {
    * Advance one prediction tick: increment seq, send the input, queue it
    * for later reconciliation, and locally apply dir * speed * dt.
    */
-  step(dir: { x: number; z: number }, send: SendInput): void {
+  step(dir: { x: number; z: number }, jump: boolean, send: SendInput): void {
     this.seq += 1;
     const msg = {
       type: "input" as const,
       seq: this.seq,
       dir: { x: dir.x, z: dir.z },
+      jump,
     };
     send(msg);
     this.unacked.push({ seq: this.seq, dir: msg.dir });

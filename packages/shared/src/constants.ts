@@ -78,3 +78,15 @@ export const PLAYER_GROUND_OFFSET = 0;
  * by mesh extents.
  */
 export const TERRAIN_SIZE = 200;
+
+// M7 US-009: jump physics constants. All in shared/ so client prediction
+// (US-011) and server simulation read the same values — any mismatch
+// produces visible jump desync.
+//
+// Default tuning is a starting point; US-017 polish-pass may revise.
+// Peak height with these values: JUMP_VELOCITY^2 / (2 * GRAVITY)
+// = 81 / 50 = 1.62 world units (~1.6× the cube's half-extent).
+// Air time to apex: JUMP_VELOCITY / GRAVITY = 0.36s.
+export const GRAVITY = 25;                  // world units / s² (positive magnitude; applied as -GRAVITY * dt to vy)
+export const JUMP_VELOCITY = 9;             // world units / s — initial vy on jump
+export const TERMINAL_FALL_SPEED = 30;      // world units / s — clamp on |vy| while falling

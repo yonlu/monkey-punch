@@ -13,7 +13,7 @@ describe("LocalPredictor", () => {
   it("step advances predicted position by dir * speed * fixed dt and queues input", () => {
     const p = new LocalPredictor();
     const sent: Array<{ seq: number; dir: { x: number; z: number } }> = [];
-    p.step({ x: 1, z: 0 }, (msg) => sent.push({ seq: msg.seq, dir: msg.dir }));
+    p.step({ x: 1, z: 0 }, false, (msg) => sent.push({ seq: msg.seq, dir: msg.dir }));
     expect(p.predictedX).toBeCloseTo(PLAYER_SPEED * SIM_DT_S);
     expect(p.predictedZ).toBe(0);
     expect(sent).toEqual([{ seq: 1, dir: { x: 1, z: 0 } }]);
@@ -27,11 +27,11 @@ describe("LocalPredictor", () => {
       expect(p.lastStepTime).toBe(1000);
 
       nowSpy.mockReturnValue(1050);
-      p.step({ x: 0, z: 0 }, () => {});
+      p.step({ x: 0, z: 0 }, false, () => {});
       expect(p.lastStepTime).toBe(1050);
 
       nowSpy.mockReturnValue(1100);
-      p.step({ x: 0, z: 0 }, () => {});
+      p.step({ x: 0, z: 0 }, false, () => {});
       expect(p.lastStepTime).toBe(1100);
     } finally {
       nowSpy.mockRestore();
@@ -40,9 +40,9 @@ describe("LocalPredictor", () => {
 
   it("reconcile against acked seq drops queue and snaps to authoritative", () => {
     const p = new LocalPredictor();
-    p.step({ x: 1, z: 0 }, () => {});
-    p.step({ x: 1, z: 0 }, () => {});
-    p.step({ x: 1, z: 0 }, () => {});
+    p.step({ x: 1, z: 0 }, false, () => {});
+    p.step({ x: 1, z: 0 }, false, () => {});
+    p.step({ x: 1, z: 0 }, false, () => {});
 
     const expected = 3 * PLAYER_SPEED * SIM_DT_S;
     p.reconcile(expected, 0, 3);
@@ -54,9 +54,9 @@ describe("LocalPredictor", () => {
 
   it("reconcile re-applies unacked inputs after authoritative snapshot", () => {
     const p = new LocalPredictor();
-    p.step({ x: 1, z: 0 }, () => {}); // seq 1
-    p.step({ x: 1, z: 0 }, () => {}); // seq 2
-    p.step({ x: 1, z: 0 }, () => {}); // seq 3 — server has not yet processed
+    p.step({ x: 1, z: 0 }, false, () => {}); // seq 1
+    p.step({ x: 1, z: 0 }, false, () => {}); // seq 2
+    p.step({ x: 1, z: 0 }, false, () => {}); // seq 3 — server has not yet processed
 
     const ackedX = 2 * PLAYER_SPEED * SIM_DT_S;
     p.reconcile(ackedX, 0, 2);
@@ -66,7 +66,7 @@ describe("LocalPredictor", () => {
 
   it("reconcile records the magnitude of the correction in lastReconErr", () => {
     const p = new LocalPredictor();
-    p.step({ x: 1, z: 0 }, () => {});
+    p.step({ x: 1, z: 0 }, false, () => {});
     p.reconcile(0, 0, 1);
     expect(p.predictedX).toBe(0);
     expect(p.lastReconErr).toBeCloseTo(PLAYER_SPEED * SIM_DT_S);
@@ -74,8 +74,8 @@ describe("LocalPredictor", () => {
 
   it("ignores stale acks (lastProcessedInput < latest queued)", () => {
     const p = new LocalPredictor();
-    p.step({ x: 1, z: 0 }, () => {}); // seq 1
-    p.step({ x: 1, z: 0 }, () => {}); // seq 2
+    p.step({ x: 1, z: 0 }, false, () => {}); // seq 1
+    p.step({ x: 1, z: 0 }, false, () => {}); // seq 2
 
     p.reconcile(PLAYER_SPEED * SIM_DT_S, 0, 1);
 
@@ -84,7 +84,7 @@ describe("LocalPredictor", () => {
 
   it("reconcile() with no prediction error leaves renderOffset at zero", () => {
     const p = new LocalPredictor();
-    p.step({ x: 1, z: 0 }, () => {});
+    p.step({ x: 1, z: 0 }, false, () => {});
     // server confirms exactly what we predicted, ack drains the queue
     p.reconcile(PLAYER_SPEED * SIM_DT_S, 0, 1);
     expect(p.renderOffset.x).toBeCloseTo(0);
@@ -94,7 +94,7 @@ describe("LocalPredictor", () => {
 
   it("reconcile() snap-back records compensating renderOffset", () => {
     const p = new LocalPredictor();
-    p.step({ x: 1, z: 0 }, () => {});
+    p.step({ x: 1, z: 0 }, false, () => {});
     // server says we're still at origin (input was lost / collapsed),
     // but acks our seq so the unacked queue drains
     p.reconcile(0, 0, 1);
@@ -109,12 +109,12 @@ describe("LocalPredictor", () => {
     const p = new LocalPredictor();
     const oneStep = PLAYER_SPEED * SIM_DT_S;
 
-    p.step({ x: 1, z: 0 }, () => {});
+    p.step({ x: 1, z: 0 }, false, () => {});
     p.reconcile(0, 0, 1);
     expect(p.renderOffset.x).toBeCloseTo(oneStep);
 
     // After the first reconcile predictedX is 0. Step again and snap again.
-    p.step({ x: 1, z: 0 }, () => {});
+    p.step({ x: 1, z: 0 }, false, () => {});
     p.reconcile(0, 0, 2);
     // Each reconcile contributes +oneStep; total should be 2 * oneStep,
     // NOT oneStep (which would mean the second reconcile overwrote the

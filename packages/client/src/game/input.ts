@@ -12,6 +12,14 @@ const CODE_TO_KEY: Record<string, "w" | "a" | "s" | "d"> = {
   KeyD: "d",
 };
 
+// M7 US-009: edge-triggered jump intent. Space key-down sets this true;
+// the next predictor.step() reads + clears it so jump fires on exactly
+// one input message. Holding Space does NOT auto-rejump — the keydown
+// handler ignores repeats while the key is already physically down
+// (browsers fire keydown repeatedly while held; we drop those).
+let jumpQueued = false;
+let spaceDown = false;
+
 /**
  * Camera-space WASD vector before world-space transform: W=-Z, S=+Z,
  * A=-X, D=+X (per US-006). Diagonals are normalized so a held W+D produces
@@ -73,25 +81,49 @@ export function attachInput(
   room: Room<RoomState>,
   predictor: LocalPredictor,
 ): () => void {
-  const onKey = (down: boolean) => (e: KeyboardEvent) => {
+  const downHandler = (e: KeyboardEvent) => {
+    if (e.code === "Space") {
+      // Edge-trigger: only on the first keydown (browsers auto-repeat
+      // while the key is held). spaceDown gates this.
+      if (!spaceDown) {
+        spaceDown = true;
+        jumpQueued = true;
+      }
+      return;
+    }
     const k = CODE_TO_KEY[e.code];
     if (!k) return;
-    if (KEYS[k] === down) return;
-    KEYS[k] = down;
+    if (KEYS[k] === true) return;
+    KEYS[k] = true;
   };
-
-  const downHandler = onKey(true);
-  const upHandler = onKey(false);
+  const upHandler = (e: KeyboardEvent) => {
+    if (e.code === "Space") {
+      spaceDown = false;
+      return;
+    }
+    const k = CODE_TO_KEY[e.code];
+    if (!k) return;
+    if (KEYS[k] === false) return;
+    KEYS[k] = false;
+  };
   window.addEventListener("keydown", downHandler);
   window.addEventListener("keyup", upHandler);
 
   const send = (msg: {
     type: "input"; seq: number;
     dir: { x: number; z: number };
+    jump: boolean;
   }) => { room.send("input", msg); };
 
   const stepTimer = window.setInterval(() => {
-    predictor.step(getLiveInputDir(), send);
+    // Read + clear jumpQueued atomically per step so jump fires on exactly
+    // one input message, even if the player tapped multiple times within a
+    // 50ms window (the latest tap wins; intermediate taps that fired and
+    // released before the step are lost — acceptable for a single-jump
+    // mechanic).
+    const jump = jumpQueued;
+    jumpQueued = false;
+    predictor.step(getLiveInputDir(), jump, send);
   }, STEP_INTERVAL_MS);
 
   return () => {
@@ -99,5 +131,7 @@ export function attachInput(
     window.removeEventListener("keyup", upHandler);
     window.clearInterval(stepTimer);
     KEYS.w = KEYS.a = KEYS.s = KEYS.d = false;
+    jumpQueued = false;
+    spaceDown = false;
   };
 }

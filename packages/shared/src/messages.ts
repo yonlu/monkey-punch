@@ -2,6 +2,7 @@ export type InputMessage = {
   type: "input";
   seq: number;                            // monotonic per client (required)
   dir: { x: number; z: number };          // world-space movement direction (client transforms WASD via camera yaw)
+  jump: boolean;                          // M7 US-009: true on the input tick the player pressed space (key-down edge, single-tick true)
 };
 
 export type PingMessage = {

@@ -381,6 +381,88 @@ describe("integration: M6 player_damaged → player_downed → run_ended", () =>
   }, 12000);
 });
 
+describe("integration: M7 US-009 jump trajectory end-to-end", () => {
+  it("solo room: jump input lifts player Y off the ground; trajectory rises and lands", async () => {
+    const client = new Client(`ws://localhost:${PORT}`);
+    type RoomShape = {
+      code: string;
+      players: { get: (sid: string) => { x: number; y: number; z: number; vy: number; grounded: boolean } | undefined };
+    };
+    const room = await client.create<RoomShape>("game", { name: "Jumper" });
+    await waitFor(() => room.state.code !== "" && room.state.code != null, 1000);
+
+    // Wait for initial player state to be ready (y == 0 at spawn flat).
+    await waitFor(() => {
+      const me = room.state.players.get(room.sessionId);
+      return !!me && me.grounded === true;
+    }, 1500);
+
+    const meStart = room.state.players.get(room.sessionId)!;
+    expect(meStart.y).toBe(0);
+    expect(meStart.vy).toBe(0);
+    expect(meStart.grounded).toBe(true);
+
+    // Send a single jump input. Server should set vy to JUMP_VELOCITY (=9)
+    // on the next tick, integrate gravity, and lift Y off the ground.
+    room.send("input", {
+      type: "input",
+      seq: 1,
+      dir: { x: 0, z: 0 },
+      jump: true,
+    });
+
+    // Wait for liftoff (Y > 0 is the unambiguous signal — even one tick of
+    // post-jump physics produces y ≈ 0.39).
+    await waitFor(() => {
+      const me = room.state.players.get(room.sessionId);
+      return !!me && me.y > 0.1 && me.grounded === false;
+    }, 1500);
+
+    // Sample peak height by polling for ~1s. JUMP_VELOCITY^2 / (2*GRAVITY)
+    // = 81 / 50 = 1.62 (continuous-time formula). Discrete symplectic
+    // Euler at 20Hz produces a peak ~14% lower (≈1.40) — see the matching
+    // unit test in shared/test/rules.test.ts for the integration-scheme
+    // explanation. We assert the peak is in the range [70%, 120%] of the
+    // formula: enough headroom for the integration scheme + WebSocket
+    // sampling slop, tight enough to fail if jump didn't fire.
+    let peak = 0;
+    const start = Date.now();
+    while (Date.now() - start < 1000) {
+      const me = room.state.players.get(room.sessionId);
+      if (me && me.y > peak) peak = me.y;
+      if (me && me.grounded) break;        // landed
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const expectedPeak = (9 * 9) / (2 * 25);
+    expect(peak).toBeGreaterThan(expectedPeak * 0.7);
+    expect(peak).toBeLessThan(expectedPeak * 1.2);
+
+    // After ~1s the jump should be fully resolved and player back on ground.
+    await waitFor(() => {
+      const me = room.state.players.get(room.sessionId);
+      return !!me && me.grounded === true && Math.abs(me.y) < 1e-6;
+    }, 1500);
+    const meEnd = room.state.players.get(room.sessionId)!;
+    expect(meEnd.y).toBe(0);
+    expect(meEnd.vy).toBe(0);
+    expect(meEnd.grounded).toBe(true);
+
+    // Subsequent input WITHOUT jump=true must NOT re-jump.
+    room.send("input", {
+      type: "input",
+      seq: 2,
+      dir: { x: 0, z: 0 },
+      jump: false,
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    const meAfter = room.state.players.get(room.sessionId)!;
+    expect(meAfter.grounded).toBe(true);
+    expect(meAfter.y).toBe(0);
+
+    await room.leave();
+  }, 8000);
+});
+
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (!cond()) {
