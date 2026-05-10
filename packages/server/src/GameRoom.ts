@@ -5,6 +5,7 @@ import {
   RoomState,
   tickPlayers,
   tickEnemies,
+  tickStatusEffects,
   tickContactDamage,
   tickRunEndCheck,
   tickWeapons,
@@ -410,6 +411,9 @@ export class GameRoom extends Room<RoomState> {
     // window starts empty. (US-010 will move buffered intent into a
     // schema-tracked window so this drain stays correct.)
     this.pendingJumps.clear();
+    // M8 US-009: status effects expire BEFORE tickEnemies so movement
+    // uses fresh slow state (CLAUDE.md rule 11). Doesn't consume rng.
+    tickStatusEffects(this.state, this.state.tick);
     tickEnemies(this.state, SIM_DT_S);
     tickContactDamage(this.state, this.contactCooldown, SIM_DT_S, Date.now(), this.emit);
     tickRunEndCheck(this.state, this.emit);

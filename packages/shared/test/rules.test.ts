@@ -24,6 +24,8 @@ import {
   canJump,
   selectTarget,
   runMeleeArcSwing,
+  applySlow,
+  tickStatusEffects,
   type SpawnerState,
   type Projectile,
   type WeaponContext,
@@ -2544,6 +2546,183 @@ function makeMeleeArcDef(overrides: Partial<{
     }],
   };
 }
+
+// ---------------------------------------------------------------------------
+// M8 US-009: status effect infrastructure (slow only). Slow is the first
+// effect kind; the per-effect schema fields (slowMultiplier,
+// slowExpiresAt) are deliberately NOT a generic ArraySchema<StatusEffect>.
+// CLAUDE.md "Status effects scale to two kinds, not three" captures the
+// refactor trigger.
+// ---------------------------------------------------------------------------
+
+describe("applySlow — M8 US-009", () => {
+  it("applies a slow when no slow is active", () => {
+    const state = new RoomState();
+    const e = addEnemy(state, 1, 0, 0);
+    expect(e.slowMultiplier).toBe(1);
+    expect(e.slowExpiresAt).toBe(-1);
+
+    applySlow(e, 0.5, 10, /* currentTick */ 100);
+
+    expect(e.slowMultiplier).toBe(0.5);
+    expect(e.slowExpiresAt).toBe(110);
+  });
+
+  it("stronger incoming slow OVERWRITES weaker active one", () => {
+    const state = new RoomState();
+    const e = addEnemy(state, 1, 0, 0);
+    applySlow(e, 0.7, 10, 100); // weaker slow first
+    expect(e.slowMultiplier).toBe(0.7);
+
+    applySlow(e, 0.4, 5, 105); // stronger incoming, shorter
+    expect(e.slowMultiplier).toBe(0.4);
+    expect(e.slowExpiresAt).toBe(110); // 105 + 5
+  });
+
+  it("weaker incoming slow IS IGNORED when stronger is still active (no duration extension — A2)", () => {
+    const state = new RoomState();
+    const e = addEnemy(state, 1, 0, 0);
+    applySlow(e, 0.4, 5, 100);          // strong, expires at 105
+    expect(e.slowMultiplier).toBe(0.4);
+    expect(e.slowExpiresAt).toBe(105);
+
+    // Long-but-weaker slow arrives mid-window. Existing strong slow wins;
+    // duration of the weak one does NOT extend the strong one.
+    applySlow(e, 0.7, 100, 102);
+    expect(e.slowMultiplier).toBe(0.4);  // unchanged
+    expect(e.slowExpiresAt).toBe(105);   // unchanged
+  });
+
+  it("equal-strength incoming slow is ignored (does NOT extend duration)", () => {
+    // A repeated same-strength slow (e.g. consecutive Kronos ticks) does
+    // NOT keep extending the expiry past the latest application — but
+    // tickStatusEffects only clears on expiry, so the next tick's apply
+    // (after expiry) re-applies fresh. This is correct for Kronos:
+    // applies every aura tick; expiry is short (300ms); reapplies at
+    // next aura tick while in radius.
+    const state = new RoomState();
+    const e = addEnemy(state, 1, 0, 0);
+    applySlow(e, 0.5, 10, 100);
+    expect(e.slowExpiresAt).toBe(110);
+
+    // Equal-strength incoming during active window — ignored.
+    applySlow(e, 0.5, 10, 102);
+    expect(e.slowExpiresAt).toBe(110); // not 112
+  });
+
+  it("incoming slow OVERWRITES if existing slow has expired", () => {
+    const state = new RoomState();
+    const e = addEnemy(state, 1, 0, 0);
+    applySlow(e, 0.4, 5, 100); // expires at 105
+
+    // Currentick 110 > 105 → existing has expired (but tickStatusEffects
+    // hasn't run yet to reset the fields).
+    applySlow(e, 0.7, 20, 110);
+    expect(e.slowMultiplier).toBe(0.7);
+    expect(e.slowExpiresAt).toBe(130);
+  });
+
+  it("durationTicks of 0 keeps slow active for exactly the current tick (boundary)", () => {
+    // Edge case: 0-tick duration means slowExpiresAt == currentTick.
+    // tickStatusEffects clears when slowExpiresAt < currentTick — at
+    // currentTick=N+1 with slowExpiresAt=N, the slow is cleared.
+    const state = new RoomState();
+    const e = addEnemy(state, 1, 0, 0);
+    applySlow(e, 0.5, 0, 100);
+    expect(e.slowExpiresAt).toBe(100);
+  });
+});
+
+describe("tickStatusEffects — M8 US-009", () => {
+  it("clears expired slow back to defaults", () => {
+    const state = new RoomState();
+    const e = addEnemy(state, 1, 0, 0);
+    applySlow(e, 0.5, 10, 100); // expires at 110
+
+    tickStatusEffects(state, /* currentTick */ 111); // strictly past 110 → clear
+    expect(e.slowMultiplier).toBe(1);
+    expect(e.slowExpiresAt).toBe(-1);
+  });
+
+  it("leaves an active slow alone", () => {
+    const state = new RoomState();
+    const e = addEnemy(state, 1, 0, 0);
+    applySlow(e, 0.4, 10, 100); // expires at 110
+
+    tickStatusEffects(state, 105); // still inside slow window
+    expect(e.slowMultiplier).toBe(0.4);
+    expect(e.slowExpiresAt).toBe(110);
+  });
+
+  it("no-op for an enemy with no slow active (slowExpiresAt === -1)", () => {
+    const state = new RoomState();
+    const e = addEnemy(state, 1, 0, 0);
+    expect(e.slowMultiplier).toBe(1);
+    expect(e.slowExpiresAt).toBe(-1);
+
+    tickStatusEffects(state, 9999);
+    expect(e.slowMultiplier).toBe(1);
+    expect(e.slowExpiresAt).toBe(-1);
+  });
+
+  it("early-outs on state.runEnded (universal invariant from rule 11)", () => {
+    const state = new RoomState();
+    state.runEnded = true;
+    const e = addEnemy(state, 1, 0, 0);
+    applySlow(e, 0.4, 5, 100);
+
+    tickStatusEffects(state, 9999); // would normally clear, but runEnded
+    expect(e.slowMultiplier).toBe(0.4);
+    expect(e.slowExpiresAt).toBe(105);
+  });
+
+  it("processes ALL enemies (not just one)", () => {
+    const state = new RoomState();
+    const a = addEnemy(state, 1, 0, 0);
+    const b = addEnemy(state, 2, 5, 0);
+    applySlow(a, 0.5, 10, 100); // expires at 110
+    applySlow(b, 0.7, 20, 100); // expires at 120
+
+    tickStatusEffects(state, 115); // a expired, b still active
+    expect(a.slowMultiplier).toBe(1);
+    expect(a.slowExpiresAt).toBe(-1);
+    expect(b.slowMultiplier).toBe(0.7);
+    expect(b.slowExpiresAt).toBe(120);
+  });
+});
+
+describe("tickEnemies — M8 US-009 movement scaled by slowMultiplier", () => {
+  it("a slowed enemy moves at speed * slowMultiplier; full-speed peer is unaffected", () => {
+    const state = new RoomState();
+    addPlayer(state, "p1", 0, 0); // for tickEnemies' player.size > 0 gate
+    // Both enemies at identical position so the per-axis normalization
+    // (dx/dist) gives them an identical step magnitude — the only thing
+    // that should differ between their post-tick positions is the
+    // slowMultiplier.
+    const slowed = addEnemy(state, 1, 5, 0);
+    const fast = addEnemy(state, 2, 5, 0);
+
+    applySlow(slowed, 0.5, 100, state.tick); // long-lasting, 0.5× speed
+
+    tickEnemies(state, /* dt */ 0.1);
+
+    const slowedStep = 5 - slowed.x; // moved toward player (origin) → x decreases
+    const fastStep = 5 - fast.x;
+    // Slowed enemy moves HALF the distance the fast enemy does.
+    expect(slowedStep).toBeCloseTo(fastStep * 0.5, 6);
+  });
+
+  it("a slowed enemy with slowMultiplier=0 does not move horizontally", () => {
+    const state = new RoomState();
+    addPlayer(state, "p1", 0, 0);
+    const e = addEnemy(state, 1, 5, 0);
+    applySlow(e, 0, 100, state.tick); // perfect freeze
+
+    const startX = e.x;
+    tickEnemies(state, 0.1);
+    expect(e.x).toBeCloseTo(startX, 6);
+  });
+});
 
 describe("runMeleeArcSwing — M8 US-005", () => {
   it("hits all enemies inside the arc, skips enemies outside, emits one melee_swipe per swing", () => {

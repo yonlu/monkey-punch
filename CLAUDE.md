@@ -63,10 +63,12 @@ binding — violations are bugs.
     instance, not on RoomState — server-only counters do not pollute the
     schema.
 11. **Tick order.** Each server tick runs in this fixed order:
-    `tickPlayers → tickEnemies → tickContactDamage → tickRunEndCheck
-    → tickWeapons → tickProjectiles → tickGems → tickXp
-    → tickLevelUpDeadlines → tickSpawner`.
-    Players first so weapons see fresh positions; contact damage after
+    `tickPlayers → tickStatusEffects → tickEnemies → tickContactDamage
+    → tickRunEndCheck → tickWeapons → tickProjectiles → tickGems
+    → tickXp → tickLevelUpDeadlines → tickSpawner`.
+    Players first so weapons see fresh positions; status effects before
+    enemies so movement uses fresh slow state (an enemy whose slow
+    expires this tick is moved at full speed); contact damage after
     enemies so contact tests see post-movement positions; run-end check
     immediately after so weapons/projectiles/spawner all see the
     post-end state; weapons before projectiles so a same-tick fire is
@@ -77,8 +79,10 @@ binding — violations are bugs.
     level-up threshold check; deadlines immediately after xp so an
     auto-pick that fires this tick uses fresh choices; spawner last so
     the rng schedule is fixed (xp + spawner both consume the room rng
-    — reordering forks the seed). This order is load-bearing for
-    fairness AND for cross-client determinism — do not reorder.
+    — reordering forks the seed; tickStatusEffects does NOT consume rng,
+    so its insertion before tickEnemies leaves the schedule intact).
+    This order is load-bearing for fairness AND for cross-client
+    determinism — do not reorder.
     Universal invariant (M6 onward): every tick function early-outs at
     its top with `if (state.runEnded) return;`. The frozen-world recap
     state is one branch in each function, not a per-system gate.
@@ -119,6 +123,16 @@ binding — violations are bugs.
 - Do not couple client rendering to server tick boundaries. The render loop and
   the simulation loop are independent.
 - Do not check in build artifacts (`dist/`), `.env` files, or `node_modules/`.
+- **Status effects scale to two kinds, not three.** `Enemy` carries
+  `slowMultiplier` and `slowExpiresAt` directly as fields — a
+  single-effect shape, deliberate for one effect kind (slow, applied by
+  Kronos in M8 US-010). If a future weapon needs a second effect kind
+  (burn, freeze, stun, poison), add it the same way (a parallel pair of
+  fields). If a third kind is needed, **refactor first**: replace the
+  per-effect fields with `ArraySchema<StatusEffect>` per enemy (kind,
+  magnitude, expiresAt), then add the third effect on top of the
+  generic shape. The current per-effect fields are not infinitely
+  extensible.
 
 ## Layout
 

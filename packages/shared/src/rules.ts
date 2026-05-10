@@ -184,6 +184,59 @@ export function tickPlayers(
  * Math.hypot per pair); one Math.sqrt per enemy for the normalized step.
  * Allocates only function-scope locals.
  */
+/**
+ * M8 US-009: apply a slow to an enemy. "Stronger wins, ignore duration"
+ * per design doc resolution A2: a longer-but-weaker slow does NOT
+ * extend a shorter-but-stronger slow's expiry. The strong slow expires
+ * on schedule and the weaker slow re-applies on the next interaction.
+ *
+ *   - If no slow is active (slowExpiresAt < currentTick OR === -1):
+ *     overwrite — apply the new slow.
+ *   - If a slow is active AND the existing multiplier is at LEAST as
+ *     strong (smaller-or-equal): keep the existing slow, ignore the
+ *     incoming.
+ *   - Otherwise (incoming is strictly stronger): overwrite.
+ *
+ * Pure mutation — no rng, no side effects beyond the enemy. Single
+ * source of slow application; do not mutate `slowMultiplier` /
+ * `slowExpiresAt` directly elsewhere (tickStatusEffects is the only
+ * other writer, and it only resets to defaults on expiry).
+ */
+export function applySlow(
+  enemy: Enemy,
+  multiplier: number,
+  durationTicks: number,
+  currentTick: number,
+): void {
+  const slowActive = enemy.slowExpiresAt !== -1 && enemy.slowExpiresAt > currentTick;
+  if (slowActive && enemy.slowMultiplier <= multiplier) {
+    // Existing slow is at least as strong (smaller or equal multiplier
+    // = stronger or equal slow). Do nothing.
+    return;
+  }
+  enemy.slowMultiplier = multiplier;
+  enemy.slowExpiresAt = currentTick + durationTicks;
+}
+
+/**
+ * M8 US-009: clear status effects whose expiry tick has passed.
+ * Inserted in the tick order BEFORE tickEnemies (CLAUDE.md rule 11) so
+ * an enemy whose slow expires this tick is moved at full speed in the
+ * same tick. Universal early-out on runEnded.
+ *
+ * Doesn't consume rng; the per-tick rng schedule (xp + spawner) is
+ * unaffected by this insertion.
+ */
+export function tickStatusEffects(state: RoomState, currentTick: number): void {
+  if (state.runEnded) return;
+  state.enemies.forEach((enemy: Enemy) => {
+    if (enemy.slowExpiresAt !== -1 && enemy.slowExpiresAt < currentTick) {
+      enemy.slowMultiplier = 1;
+      enemy.slowExpiresAt = -1;
+    }
+  });
+}
+
 export function tickEnemies(state: RoomState, dt: number): void {
   if (state.runEnded) return;
   if (state.players.size === 0) return;
@@ -221,7 +274,11 @@ export function tickEnemies(state: RoomState, dt: number): void {
     }
     if (nearestSq !== 0) {
       const dist = Math.sqrt(nearestSq);
-      const step = ENEMY_SPEED * dt;
+      // M8 US-009: slowMultiplier reduces movement step. Default 1.0
+      // (no slow) preserves M5/M6/M7 behavior. tickStatusEffects ran
+      // earlier this tick so an enemy whose slow just expired is moving
+      // at full speed already — slowMultiplier was reset to 1.0.
+      const step = ENEMY_SPEED * dt * enemy.slowMultiplier;
       enemy.x += (nearestDx / dist) * step;
       enemy.z += (nearestDz / dist) * step;
     }

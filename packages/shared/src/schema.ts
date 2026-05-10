@@ -155,6 +155,17 @@ export class Enemy extends Schema {
   declare y: number;
   declare z: number;
   declare hp: number;
+  // M8 US-009: status effects (single-effect shape, slow only). Per
+  // CLAUDE.md "Status effects scale to two kinds, not three" — a third
+  // effect kind requires refactoring to ArraySchema<StatusEffect>.
+  //
+  //   slowMultiplier — current movement-speed multiplier. 1.0 = full
+  //     speed. <1 = slowed (Kronos uses 0.6 → 0.4 across L1–L5).
+  //   slowExpiresAt — server tick at which the slow expires. -1 sentinel
+  //     means "no slow active." Encoded as int32 because of the -1
+  //     sentinel — same pattern Player.jumpBufferedAt uses.
+  declare slowMultiplier: number;
+  declare slowExpiresAt: number;
   constructor() {
     super();
     this.id = 0;
@@ -163,6 +174,8 @@ export class Enemy extends Schema {
     this.y = 0;
     this.z = 0;
     this.hp = 0;
+    this.slowMultiplier = 1;
+    this.slowExpiresAt = -1;
   }
 }
 defineTypes(Enemy, {
@@ -172,6 +185,8 @@ defineTypes(Enemy, {
   y: "number",
   z: "number",
   hp: "uint16",
+  slowMultiplier: "number",
+  slowExpiresAt: "int32",
 });
 
 export class Gem extends Schema {

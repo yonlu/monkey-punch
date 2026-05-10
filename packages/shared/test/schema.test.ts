@@ -95,7 +95,7 @@ describe("Enemy schema", () => {
     expect(bytes.length).toBeGreaterThan(0);
   });
 
-  it("Enemy field defaults from constructor are zero", () => {
+  it("Enemy field defaults from constructor are zero (and slowMultiplier=1, slowExpiresAt=-1 per M8 US-009)", () => {
     const e = new Enemy();
     expect(e.id).toBe(0);
     expect(e.kind).toBe(0);
@@ -103,6 +103,9 @@ describe("Enemy schema", () => {
     expect(e.y).toBe(0);
     expect(e.z).toBe(0);
     expect(e.hp).toBe(0);
+    // M8 US-009: status-effect defaults — no slow active.
+    expect(e.slowMultiplier).toBe(1);
+    expect(e.slowExpiresAt).toBe(-1);
   });
 
   it("encodes many enemies in one state without throwing", () => {
