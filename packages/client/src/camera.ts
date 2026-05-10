@@ -92,7 +92,7 @@ export function attachCameraControls(canvas: HTMLCanvasElement): () => void {
   const onMouseMove = (e: MouseEvent): void => {
     if (!_locked) return;
     _yaw -= e.movementX * MOUSE_SENSITIVITY_X;
-    _pitch -= e.movementY * MOUSE_SENSITIVITY_Y;
+    _pitch += e.movementY * MOUSE_SENSITIVITY_Y;
     if (_pitch < CAMERA_PITCH_MIN) _pitch = CAMERA_PITCH_MIN;
     if (_pitch > CAMERA_PITCH_MAX) _pitch = CAMERA_PITCH_MAX;
   };
