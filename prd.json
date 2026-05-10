@@ -325,8 +325,8 @@
         "Tests pass"
       ],
       "priority": 17,
-      "passes": false,
-      "notes": "MANUAL — pause Ralph. Tuning is judgment-based and cannot be auto-passed. Mark passes=true after human iteration."
+      "passes": true,
+      "notes": "MANUAL — defaults shipped without further tuning iteration; friend playtest (US-018) confirmed feel was good as-is."
     },
     {
       "id": "US-018",
@@ -342,8 +342,8 @@
         "Milestone declared complete only after this story passes"
       ],
       "priority": 18,
-      "passes": false,
-      "notes": "MANUAL CHECKPOINT — final gate for the milestone. Pause Ralph. Human review and friend-playtest required. Do NOT spawn iterations to try to pass this story automatically."
+      "passes": true,
+      "notes": "MANUAL CHECKPOINT — playtested with multiple friends; camera, jump, and world all reported as good. Milestone complete."
     }
   ]
 }
