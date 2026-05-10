@@ -69,24 +69,39 @@ export type PongMessage = {
 // the foundation for every future weapon / pickup type — see CLAUDE.md
 // rule 12 (added in M4).
 
+// M7 US-013: 3D fire payload. originY is player.y at fire and dirY is the
+// Y component of the unit-length 3D direction vector (computed in
+// tickWeapons from `enemy.{y} - player.{y}` over the 3D distance). The
+// closed-form client sim integrates motion in 3D as
+//   pos(t) = (originX + dirX*speed*t, originY + dirY*speed*t, originZ + dirZ*speed*t)
+// — straight-line in 3D, no arc and no projectile-gravity (per US-013 AC).
 export type FireEvent = {
   type: "fire";
   fireId: number;
   weaponKind: number;
   ownerId: string;
   originX: number;
+  originY: number;
   originZ: number;
-  dirX: number;             // pre-normalized
-  dirZ: number;             // pre-normalized
+  dirX: number;             // pre-normalized (3D unit vector)
+  dirY: number;             // pre-normalized (3D unit vector)
+  dirZ: number;             // pre-normalized (3D unit vector)
   serverTick: number;       // for debugging / correlation
   serverFireTimeMs: number; // server Date.now() at fire (drives client closed-form sim)
 };
 
+// M7 US-013: hit events carry the impact position so floating damage
+// numbers spawn at the right altitude (the server is the authority on
+// where the enemy was when its hp ticked down — clients only have an
+// interpolated x/z buffer).
 export type HitEvent = {
   type: "hit";
   fireId: number;
   enemyId: number;
   damage: number;
+  x: number;
+  y: number;
+  z: number;
   serverTick: number;
 };
 
@@ -125,6 +140,7 @@ export type PlayerDamagedEvent = {
   playerId: string;
   damage: number;
   x: number;                // player position at hit, for floating-number placement
+  y: number;                // M7 US-013: include altitude so the floating number spawns at the player's real Y
   z: number;
   serverTick: number;
 };

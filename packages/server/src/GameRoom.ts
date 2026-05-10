@@ -277,6 +277,7 @@ export class GameRoom extends Room<RoomState> {
           playerId: client.sessionId,
           damage: amount,
           x: player.x,
+          y: player.y,
           z: player.z,
           serverTick: this.state.tick,
         });

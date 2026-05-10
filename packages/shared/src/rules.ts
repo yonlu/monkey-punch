@@ -355,11 +355,19 @@ export type Projectile = {
   radius: number;
   lifetime: number;
   age: number;
-  dirX: number;          // pre-normalized
+  // M7 US-013: 3D motion. dirX/dirY/dirZ together form a unit-length 3D
+  // vector — `speed` is the scalar magnitude, identical to the 2D era.
+  // prev{X,Y,Z} are written at the start of every tick for the
+  // swept-sphere test; the test extends naturally from 2D segment-vs-disk
+  // to 3D segment-vs-sphere by adding a Y component to every dot/length.
+  dirX: number;
+  dirY: number;
   dirZ: number;
-  prevX: number;         // for swept-circle
+  prevX: number;
+  prevY: number;
   prevZ: number;
   x: number;
+  y: number;
   z: number;
 };
 
@@ -457,17 +465,28 @@ export function tickWeapons(
           weapon.cooldownRemaining = Math.max(0, weapon.cooldownRemaining - dt);
           if (weapon.cooldownRemaining > 0) return;
 
+          // M7 US-013: target selection and aim are 3D. Range still uses
+          // TARGETING_MAX_RANGE but compared against the 3D squared
+          // distance (dx² + dy² + dz²); fire direction is a unit-length
+          // 3D vector toward the targeted enemy. With both ends usually
+          // sitting on terrain at similar altitudes, dy is small and 3D
+          // ≈ 2D in the common case — the change matters when a player
+          // jumps mid-fire or when terrain puts an enemy materially
+          // above/below the player.
           let bestSq = Infinity;
           let bestDx = 0;
+          let bestDy = 0;
           let bestDz = 0;
           let hasTarget = false;
           state.enemies.forEach((enemy: Enemy) => {
             const dx = enemy.x - player.x;
+            const dy = enemy.y - player.y;
             const dz = enemy.z - player.z;
-            const sq = dx * dx + dz * dz;
+            const sq = dx * dx + dy * dy + dz * dz;
             if (sq <= rangeSq && sq < bestSq) {
               bestSq = sq;
               bestDx = dx;
+              bestDy = dy;
               bestDz = dz;
               hasTarget = true;
             }
@@ -477,6 +496,7 @@ export function tickWeapons(
 
           const dist = Math.sqrt(bestSq);
           const dirX = bestDx / dist;
+          const dirY = bestDy / dist;
           const dirZ = bestDz / dist;
 
           const proj: Projectile = {
@@ -489,10 +509,13 @@ export function tickWeapons(
             lifetime: stats.projectileLifetime,
             age: 0,
             dirX,
+            dirY,
             dirZ,
             prevX: player.x,
+            prevY: player.y,
             prevZ: player.z,
             x: player.x,
+            y: player.y,
             z: player.z,
           };
           ctx.pushProjectile(proj);
@@ -503,8 +526,10 @@ export function tickWeapons(
             weaponKind: weapon.kind,
             ownerId: player.sessionId,
             originX: player.x,
+            originY: player.y,
             originZ: player.z,
             dirX,
+            dirY,
             dirZ,
             serverTick: state.tick,
             serverFireTimeMs: ctx.serverNowMs(),
@@ -528,17 +553,22 @@ export function tickWeapons(
           for (let i = 0; i < stats.orbCount; i++) {
             const angle = tickTime * stats.orbAngularSpeed + i * (2 * Math.PI / stats.orbCount);
             const orbX = player.x + Math.cos(angle) * stats.orbRadius;
+            // M7 US-013: orbits orbit at player.y (not at y=0). When a
+            // player jumps, their orbs lift with them — so an enemy on
+            // the ground is out of reach until the player lands again.
+            const orbY = player.y;
             const orbZ = player.z + Math.sin(angle) * stats.orbRadius;
 
-            // Point-circle vs each enemy. Per AD8: arc per tick at current angular
+            // Point-sphere vs each enemy. Per AD8: arc per tick at current angular
             // speeds is small enough that swept-arc isn't needed. Collect hits in a
             // temporary list because mutating state.enemies during a forEach causes
             // visit order to drift.
             const toHit: Enemy[] = [];
             state.enemies.forEach((enemy: Enemy) => {
               const dx = enemy.x - orbX;
+              const dy = enemy.y - orbY;
               const dz = enemy.z - orbZ;
-              if (dx * dx + dz * dz <= radiusSumSq) toHit.push(enemy);
+              if (dx * dx + dy * dy + dz * dz <= radiusSumSq) toHit.push(enemy);
             });
 
             for (const enemy of toHit) {
@@ -554,6 +584,9 @@ export function tickWeapons(
                 fireId: 0,
                 enemyId: enemy.id,
                 damage: stats.damage,
+                x: enemy.x,
+                y: enemy.y,
+                z: enemy.z,
                 serverTick: state.tick,
               });
 
@@ -627,10 +660,14 @@ export function tickProjectiles(
   for (let r = 0; r < active.length; r++) {
     const proj = active[r]!;
 
-    // Integrate.
+    // Integrate (3D, M7 US-013). Motion is straight-line: position
+    // advances by `(dirX, dirY, dirZ) * speed * dt` with `(dir*)` already
+    // unit-length, so `speed * dt` is the metric magnitude of the step.
     proj.prevX = proj.x;
+    proj.prevY = proj.y;
     proj.prevZ = proj.z;
     proj.x += proj.dirX * proj.speed * dt;
+    proj.y += proj.dirY * proj.speed * dt;
     proj.z += proj.dirZ * proj.speed * dt;
     proj.age += dt;
 
@@ -639,10 +676,18 @@ export function tickProjectiles(
       continue;
     }
 
-    // Swept-circle vs. each enemy in insertion order. First intersected wins.
+    // Swept-sphere vs. each enemy in insertion order. First intersected
+    // wins. The geometry generalizes 2D segment-vs-disk: project the
+    // enemy center onto the segment in 3D, clamp the parameter to [0,1],
+    // and compare squared 3D distance to the sum-of-radii squared. With
+    // both ends sitting on terrain the segment has near-zero dy and the
+    // result matches the previous 2D behavior; when a player is mid-jump
+    // and an enemy is on the ground, the 3D distance correctly reports
+    // "out of reach" — that's the "jump over a projectile" criterion.
     const segX = proj.x - proj.prevX;
+    const segY = proj.y - proj.prevY;
     const segZ = proj.z - proj.prevZ;
-    const segLen2 = segX * segX + segZ * segZ;
+    const segLen2 = segX * segX + segY * segY + segZ * segZ;
     const radiusSum = proj.radius + ENEMY_RADIUS;
     const radiusSumSq = radiusSum * radiusSum;
 
@@ -651,11 +696,12 @@ export function tickProjectiles(
       if (hitEnemy) return; // first intersected wins; bail on rest
 
       const toX = enemy.x - proj.prevX;
+      const toY = enemy.y - proj.prevY;
       const toZ = enemy.z - proj.prevZ;
 
       let u: number;
       if (segLen2 > 0) {
-        u = (toX * segX + toZ * segZ) / segLen2;
+        u = (toX * segX + toY * segY + toZ * segZ) / segLen2;
         if (u < 0) u = 0;
         else if (u > 1) u = 1;
       } else {
@@ -663,10 +709,12 @@ export function tickProjectiles(
       }
 
       const closestX = proj.prevX + u * segX;
+      const closestY = proj.prevY + u * segY;
       const closestZ = proj.prevZ + u * segZ;
       const dx = enemy.x - closestX;
+      const dy = enemy.y - closestY;
       const dz = enemy.z - closestZ;
-      if (dx * dx + dz * dz <= radiusSumSq) {
+      if (dx * dx + dy * dy + dz * dz <= radiusSumSq) {
         hitEnemy = enemy;
       }
     });
@@ -678,6 +726,9 @@ export function tickProjectiles(
         fireId: proj.fireId,
         enemyId: hitEnemy.id,
         damage: proj.damage,
+        x: hitEnemy.x,
+        y: hitEnemy.y,
+        z: hitEnemy.z,
         serverTick: state.tick,
       });
 
@@ -908,6 +959,7 @@ export function tickContactDamage(
         playerId: player.sessionId,
         damage,
         x: player.x,
+        y: player.y,
         z: player.z,
         serverTick: state.tick,
       });

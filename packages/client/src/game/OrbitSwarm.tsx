@@ -18,7 +18,11 @@ import { hudState } from "../net/hudState.js";
 // Must agree with the server's MAX_PLAYERS in packages/server/src/GameRoom.ts.
 // The client doesn't import server constants, so this is a deliberate copy.
 const MAX_PLAYERS = 10;
-const ORB_RENDER_Y = 0.7;
+// M7 US-013: orbit Y comes from the player's Y (not a constant) — when
+// the player jumps the orbs lift with them. ORB_LIFT is the small offset
+// above the player's feet that keeps the orbs visually centered on the
+// torso/cube.
+const ORB_LIFT = 0.7;
 const ORB_CAPACITY = MAX_PLAYERS * MAX_ORB_COUNT_EVER;
 const SIM_DT_MS = 1000 / TICK_RATE; // 50 ms — matches server tick interval
 // Cap sub-tick extrapolation if no new tick has arrived (e.g. tab
@@ -85,21 +89,25 @@ export function OrbitSwarm({ room, predictor, buffers, serverTime }: OrbitSwarmP
     room.state.players.forEach((player: Player) => {
       // Player render position: predictor for local, interpolated remote.
       let rx: number;
+      let ry: number;
       let rz: number;
       if (player.sessionId === room.sessionId) {
         // Use the smoothed render-pos PlayerCube publishes each frame —
-        // predictor.predictedX/Z only updates at 20Hz, which makes the
+        // predictor.predictedX/Y/Z only updates at 20Hz, which makes the
         // orb attach point step visibly when moving. PlayerCube renders
-        // before us in JSX/mount order, so renderX/Z is current-frame.
+        // before us in JSX/mount order, so renderX/Y/Z is current-frame.
         rx = predictor.renderX;
+        ry = predictor.renderY;
         rz = predictor.renderZ;
       } else {
         const sample = buffers.get(player.sessionId)?.sample(performance.now() - hudState.interpDelayMs);
         if (!sample) {
           rx = player.x;
+          ry = player.y;
           rz = player.z;
         } else {
           rx = sample.x;
+          ry = sample.y;
           rz = sample.z;
         }
       }
@@ -114,7 +122,7 @@ export function OrbitSwarm({ room, predictor, buffers, serverTime }: OrbitSwarmP
           const angle = tickTime * stats.orbAngularSpeed + k * (2 * Math.PI / stats.orbCount);
           matrix.makeTranslation(
             rx + Math.cos(angle) * stats.orbRadius,
-            ORB_RENDER_Y,
+            ry + ORB_LIFT,
             rz + Math.sin(angle) * stats.orbRadius,
           );
           mesh.setMatrixAt(i, matrix);

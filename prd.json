@@ -230,6 +230,10 @@
       "priority": 12,
       "passes": true,
       "notes": "Visual / 60fps verification in browser DEFERRED — no dev-browser skill available in this environment. Reviewer should manually pnpm dev and confirm enemies follow terrain over hills/valleys without floating. ENEMY_GROUND_OFFSET=0 added alongside PLAYER_GROUND_OFFSET (mirroring it — render-side ENEMY_RENDER_LIFT=0.6 in EnemySwarm.tsx places the cone's base flush with the surface; gameplay constant kept at 0 per CLAUDE.md PRD Q2 mesh-origin convention). tickEnemies snap-Y branch covers ALL three enemy life-cycle paths: (1) post-movement (existing fast path), (2) freeze-in-place when only downed players present (else a fresh enemy would spend a tick at y=0), (3) fresh-spawned enemies via tickSpawner / spawnDebugBurst snap Y on insertion so the first snapshot the client receives is already correct. Schema-encoder integration test re-verified after the Enemy.y schema field add — encoder regression guard passes."
+    },
+    {
+      "id": "US-013",
+      "title": "Projectiles in 3D",
       "description": "As a player, I can jump over enemy projectiles, and my projectiles fire from my actual 3D position toward enemies' actual 3D positions.",
       "acceptanceCriteria": [
         "Bolt projectiles: origin uses player Y, target uses enemy Y, motion is straight-line in 3D — no arc, no projectile-gravity",
@@ -245,8 +249,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Visual / browser verification DEFERRED — no dev-browser skill in this environment. Reviewer should manually pnpm dev with two clients and confirm: (1) Bolt projectiles arc through 3D toward enemies on hills (originY + dirY*speed*t) — jumping mid-flight does not change a fired bolt's path; (2) jumping over an enemy projectile (when Shooters land in a future milestone) misses; (3) orbits lift with the player when they jump and miss ground enemies; (4) floating damage numbers spawn at chest height of the impacted unit, not at y=1.5 above flat ground. Logic-side coverage: rules.test.ts adds (a) head-on hit asserts hit.x/y/z = enemy position, (b) airborne-projectile-overhead miss (jump-over criterion), (c) 3D motion advances Y, (d) tickWeapons fires with originY + 3D unit-direction (e.g. (0.6, 0.8, 0) for a 3-up-4 target), (e) airborne player's orbit misses ground enemy via 3D distance, (f) orbit hit event carries impact x/y/z, (g) tickContactDamage emits player_damaged.y. integration.test.ts updated to assert originY + dirY agreement across two clients (encoder regression guard). NO Shooters / enemy projectiles exist in M6 — that AC bullet is vacuously satisfied; the 3D code path will already be in place when shooters land. No name-based branching added — switch on def.behavior.kind unchanged. Existing M6 owner.kills test reworked to use the makeProjectile helper (had inlined a literal that is now missing the new dirY/prevY/y fields)."
     },
     {
       "id": "US-014",

@@ -535,6 +535,50 @@ describe("tickWeapons", () => {
     expect(projectiles).toEqual([]);
     expect(w.cooldownRemaining).toBe(0); // clamped, not negative
   });
+
+  it("M7 US-013: fires at an enemy at a different altitude with a 3D direction (originY + dirY in payload)", () => {
+    // Player at (0, 0, 0), enemy at (3, 4, 0). 3D distance = 5.
+    // Direction = (3/5, 4/5, 0) = (0.6, 0.8, 0). The fire payload
+    // carries originY=0 + dirY=0.8 so the closed-form client sim and
+    // the server-side projectile motion arrive at the same impact
+    // point in 3D — the "fire from actual 3D position toward enemy's
+    // actual 3D position" criterion.
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.y = 0; p.z = 0;
+    const w = attachBolt(p);
+    w.cooldownRemaining = 0;
+
+    const e = addEnemy(state, 1, 3, 0);
+    e.y = 4;
+
+    const { fires, projectiles, ctx } = makeCapture(7, 1_234_567);
+    const emit: Emit = (ev) => fires.push(ev);
+
+    tickWeapons(state, 0.05, ctx, emit);
+
+    expect(projectiles.length).toBe(1);
+    const proj = projectiles[0]!;
+    expect(proj.dirX).toBeCloseTo(0.6);
+    expect(proj.dirY).toBeCloseTo(0.8);
+    expect(proj.dirZ).toBeCloseTo(0);
+    expect(proj.x).toBe(0);
+    expect(proj.y).toBe(0);
+    expect(proj.z).toBe(0);
+
+    expect(fires.length).toBe(1);
+    const fire = fires[0]!;
+    if (fire.type !== "fire") throw new Error("type guard");
+    expect(fire.originX).toBe(0);
+    expect(fire.originY).toBe(0);
+    expect(fire.originZ).toBe(0);
+    expect(fire.dirX).toBeCloseTo(0.6);
+    expect(fire.dirY).toBeCloseTo(0.8);
+    expect(fire.dirZ).toBeCloseTo(0);
+    // Unit-length 3D direction (load-bearing for closed-form client sim).
+    const len = Math.hypot(fire.dirX, fire.dirY, fire.dirZ);
+    expect(len).toBeCloseTo(1, 6);
+  });
 });
 
 function makeProjectile(overrides: Partial<Projectile>): Projectile {
@@ -547,11 +591,17 @@ function makeProjectile(overrides: Partial<Projectile>): Projectile {
     radius: 0.4,
     lifetime: 0.8,
     age: 0,
+    // M7 US-013: 3D defaults — Y components default to 0 so legacy 2D
+    // setups behave identically (segment lies in y=0 plane, enemies on
+    // y=0 → 3D distance = 2D distance).
     dirX: 1,
+    dirY: 0,
     dirZ: 0,
     prevX: 0,
+    prevY: 0,
     prevZ: 0,
     x: 0,
+    y: 0,
     z: 0,
     ...overrides,
   };
@@ -608,7 +658,67 @@ describe("tickProjectiles", () => {
     expect(hit.fireId).toBe(proj.fireId);
     expect(hit.enemyId).toBe(1);
     expect(hit.damage).toBe(10);
+    // M7 US-013: hit payload carries the impact position (enemy's
+    // position at the hit moment). Floating damage numbers anchor on
+    // (msg.y) so they spawn at the right altitude in the 3D world.
+    expect(hit.x).toBeCloseTo(1.0);
+    expect(hit.y).toBeCloseTo(0);
+    expect(hit.z).toBeCloseTo(0);
     expect(enemy.hp).toBe(ENEMY_HP - 10);
+  });
+
+  it("M7 US-013: a projectile traveling at altitude does not hit an enemy on the ground (jump-over)", () => {
+    // The defining "jump over a projectile" criterion. A projectile fired
+    // at y=2 with dirY=0 (straight horizontal) and an enemy at y=0
+    // should not register a hit, because the 3D distance from the
+    // projectile's path to the enemy center is > radiusSum.
+    //
+    // Projectile radius 0.4 + ENEMY_RADIUS 0.5 = 0.9 sum. With Δy = 2,
+    // distance is at least 2.0 > 0.9 regardless of XZ alignment.
+    const state = new RoomState();
+    const enemy = addEnemy(state, 1, 1.0, 0); // ground level (y=0)
+    enemy.hp = ENEMY_HP;
+
+    const proj = makeProjectile({
+      x: 0, y: 2.0, z: 0,
+      prevX: 0, prevY: 2.0, prevZ: 0,
+      dirX: 1, dirY: 0, dirZ: 0, // straight horizontal
+    });
+    const active: Projectile[] = [proj];
+    const fires: CombatEvent[] = [];
+    const emit: Emit = (e) => fires.push(e);
+    const { ctx } = makeProjCtx();
+
+    tickProjectiles(state, active, 0.05, ctx, emit);
+
+    // Projectile passes overhead — no hit, projectile survives.
+    expect(active.length).toBe(1);
+    expect(fires.length).toBe(0);
+    expect(enemy.hp).toBe(ENEMY_HP);
+    // Y advanced (no gravity) — straight-line: y stays at 2.0.
+    expect(active[0]!.y).toBeCloseTo(2.0);
+  });
+
+  it("M7 US-013: 3D motion advances Y by dirY * speed * dt each tick", () => {
+    const state = new RoomState();
+    // Aim straight up: dirY=1 (unit), no enemies in scene.
+    const proj = makeProjectile({
+      x: 0, y: 0, z: 0,
+      prevX: 0, prevY: 0, prevZ: 0,
+      dirX: 0, dirY: 1, dirZ: 0,
+      speed: 10,
+    });
+    const active: Projectile[] = [proj];
+    const fires: CombatEvent[] = [];
+    const emit: Emit = (e) => fires.push(e);
+    const { ctx } = makeProjCtx();
+
+    tickProjectiles(state, active, 0.05, ctx, emit);
+
+    expect(fires.length).toBe(0);
+    expect(active.length).toBe(1);
+    expect(active[0]!.y).toBeCloseTo(0.5); // 0 + 1 * 10 * 0.05
+    expect(active[0]!.prevY).toBeCloseTo(0);
   });
 
   it("catches the AD3 swept-circle tangent case where both endpoints lie outside radius_sum", () => {
@@ -923,6 +1033,74 @@ describe("tickWeapons orbit arm", () => {
     expect(state.gems.size).toBe(1);
     expect(events.some((e) => e.type === "enemy_died" && e.enemyId === 7)).toBe(true);
     expect(evictedId).toBe(7);
+  });
+
+  it("M7 US-013: an airborne player's orbit does not hit a ground enemy (3D distance check)", () => {
+    // Orbit Y = player.y. With player.y = 4 and enemy.y = 0, the orb at
+    // distance orbRadius=2.0 in XZ has 3D distance sqrt(2² + 4²) ≈ 4.47,
+    // which exceeds radiusSum (orbHitRadius 0.5 + ENEMY_RADIUS 0.5 = 1.0).
+    // The 2D-only check would have hit (XZ distance 0); the 3D check
+    // correctly reports out-of-reach. This is the orbit-side companion
+    // to the projectile "jump over" criterion.
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.y = 4; p.z = 0;
+
+    const orbit = new WeaponState();
+    orbit.kind = 1;
+    orbit.level = 1;
+    orbit.cooldownRemaining = 0;
+    p.weapons.push(orbit);
+
+    const e = addEnemy(state, 1, 2.0, 0);
+    e.y = 0;
+    e.hp = 100;
+
+    const cd = makeOrbitCooldownStub();
+    const events: CombatEvent[] = [];
+    const ctx = makeWeaponCtx({ orbitHitCooldown: cd });
+
+    state.tick = 0;
+    tickWeapons(state, 0.05, ctx, (ev) => events.push(ev));
+
+    expect(e.hp).toBe(100);
+    expect(events.filter((ev) => ev.type === "hit").length).toBe(0);
+    expect(cd.hits.length).toBe(0);
+  });
+
+  it("M7 US-013: orbit hit event payload carries impact x/y/z", () => {
+    // Same setup as the first orbit-arm test (enemy at (2.0, 0, 0) on
+    // ground), but now we assert hit.x/y/z agree with the enemy's
+    // position so the floating damage number lands at the right
+    // altitude.
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.y = 0; p.z = 0;
+
+    const orbit = new WeaponState();
+    orbit.kind = 1;
+    orbit.level = 1;
+    orbit.cooldownRemaining = 0;
+    p.weapons.push(orbit);
+
+    const e = addEnemy(state, 1, 2.0, 0);
+    e.y = 0;
+    e.hp = 100;
+
+    const events: CombatEvent[] = [];
+    const ctx = makeWeaponCtx();
+
+    state.tick = 0;
+    tickWeapons(state, 0.05, ctx, (ev) => events.push(ev));
+
+    const hitEvent = events.find((ev) => ev.type === "hit");
+    expect(hitEvent).toBeDefined();
+    if (hitEvent?.type !== "hit") throw new Error("type guard");
+    expect(hitEvent.x).toBeCloseTo(2.0);
+    expect(hitEvent.y).toBeCloseTo(0);
+    expect(hitEvent.z).toBeCloseTo(0);
+    // Orbit-source sentinel: fireId === 0.
+    expect(hitEvent.fireId).toBe(0);
   });
 });
 
@@ -1356,7 +1534,7 @@ describe("tickContactDamage", () => {
     const state = new RoomState();
     const p = addPlayer(state, "a", 0, 0);
     p.hp = 100; p.maxHp = 100;
-    p.x = 0; p.z = 0;
+    p.x = 0; p.y = 1.25; p.z = 0;
     addEnemy(state, 1, 0.5, 0);   // touching: dist = 0.5 < (PLAYER_RADIUS + ENEMY_RADIUS = 1)
     const fc = makeFakeContactCooldown();
     const events: CombatEvent[] = [];
@@ -1365,7 +1543,12 @@ describe("tickContactDamage", () => {
     tickContactDamage(state, fc.store, 0.05, 0, emit);
 
     expect(p.hp).toBe(95);
-    expect(events.find((e) => e.type === "player_damaged")).toBeDefined();
+    const damageEvent = events.find((e) => e.type === "player_damaged");
+    expect(damageEvent).toBeDefined();
+    if (damageEvent?.type !== "player_damaged") throw new Error("type guard");
+    // M7 US-013: player_damaged carries y so the floating number anchors
+    // to the player's actual altitude in the 3D world (not y=0).
+    expect(damageEvent.y).toBeCloseTo(1.25);
   });
 
   it("does not apply damage when cooldown rejects", () => {
@@ -1466,12 +1649,10 @@ describe("tickProjectiles — M6 kills", () => {
     const state = new RoomState();
     const owner = addPlayer(state, "owner", 0, 0); owner.x = 0; owner.z = 0;
     const e = addEnemy(state, 1, 1, 0); e.hp = 1;
-    const projectiles: Projectile[] = [{
-      fireId: 1, ownerId: "owner", weaponKind: 0,
-      damage: 10, speed: 20, radius: 0.4, lifetime: 1,
-      age: 0, dirX: 1, dirZ: 0,
-      prevX: 0, prevZ: 0, x: 0, z: 0,
-    }];
+    const projectiles: Projectile[] = [makeProjectile({
+      ownerId: "owner",
+      damage: 10, speed: 20, lifetime: 1,
+    })];
     const ctx: ProjectileContext = {
       nextGemId: () => 1,
       orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
@@ -1483,12 +1664,10 @@ describe("tickProjectiles — M6 kills", () => {
   it("does not crash when projectile owner has left", () => {
     const state = new RoomState();
     addEnemy(state, 1, 1, 0).hp = 1;
-    const projectiles: Projectile[] = [{
-      fireId: 1, ownerId: "ghost", weaponKind: 0,
-      damage: 10, speed: 20, radius: 0.4, lifetime: 1,
-      age: 0, dirX: 1, dirZ: 0,
-      prevX: 0, prevZ: 0, x: 0, z: 0,
-    }];
+    const projectiles: Projectile[] = [makeProjectile({
+      ownerId: "ghost",
+      damage: 10, speed: 20, lifetime: 1,
+    })];
     const ctx: ProjectileContext = {
       nextGemId: () => 1,
       orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },

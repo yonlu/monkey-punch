@@ -6,7 +6,9 @@ import type { FireEvent } from "@mp/shared";
 import { hudState } from "../net/hudState.js";
 import type { ServerTime } from "../net/serverTime.js";
 
-const PROJECTILE_RENDER_Y = 0.6;
+// M7 US-013: projectiles render in 3D. The closed-form per-frame Y is
+// `originY + dirY * speed * t`, so the constant render-height from the
+// 2D era is gone — Y now comes from the FireEvent payload.
 
 export type ProjectileSwarmProps = {
   fires: Map<number, FireEvent>;     // GameView-owned map of in-flight fires by fireId
@@ -61,7 +63,7 @@ export function ProjectileSwarm({ fires, serverTime }: ProjectileSwarmProps) {
       const t = elapsedSec > 0 ? elapsedSec : 0;
       matrix.makeTranslation(
         fe.originX + fe.dirX * stats.projectileSpeed * t,
-        PROJECTILE_RENDER_Y,
+        fe.originY + fe.dirY * stats.projectileSpeed * t,
         fe.originZ + fe.dirZ * stats.projectileSpeed * t,
       );
       mesh.setMatrixAt(i, matrix);

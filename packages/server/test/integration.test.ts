@@ -230,8 +230,10 @@ describe("integration: cross-client fire event determinism", () => {
     type FirePayload = {
       fireId: number;
       originX: number;
+      originY: number;
       originZ: number;
       dirX: number;
+      dirY: number;
       dirZ: number;
       serverFireTimeMs: number;
       ownerId: string;
@@ -260,8 +262,10 @@ describe("integration: cross-client fire event determinism", () => {
       const ea = firesA.get(id)!;
       const eb = firesB.get(id)!;
       expect(ea.originX).toBe(eb.originX);
+      expect(ea.originY).toBe(eb.originY);
       expect(ea.originZ).toBe(eb.originZ);
       expect(ea.dirX).toBe(eb.dirX);
+      expect(ea.dirY).toBe(eb.dirY);
       expect(ea.dirZ).toBe(eb.dirZ);
       expect(ea.serverFireTimeMs).toBe(eb.serverFireTimeMs);
       expect(ea.ownerId).toBe(eb.ownerId);
