@@ -1,6 +1,17 @@
 import { useMemo } from "react";
 import { TERRAIN_SIZE, terrainHeight } from "@mp/shared";
-import { BufferGeometry, PlaneGeometry } from "three";
+import { BufferGeometry, type Mesh, PlaneGeometry } from "three";
+
+// Module-level handle to the rendered terrain mesh, exposed so other
+// systems (currently CameraRig's US-008 occlusion raycast) can target
+// ONLY the terrain — not props, players, or enemies. Mirrors the
+// camera.ts module-state pattern: a getter avoids prop-drilling a ref
+// through the React tree, and the callback ref below sets/clears it on
+// mount/unmount so a stale reference cannot survive a Canvas tear-down.
+let terrainMeshRef: Mesh | null = null;
+export function getTerrainMesh(): Mesh | null {
+  return terrainMeshRef;
+}
 
 const SEGMENTS = 200;
 
@@ -54,7 +65,11 @@ export function Ground() {
   const geometry = useMemo(buildTerrainGeometry, []);
 
   return (
-    <mesh geometry={geometry} receiveShadow>
+    <mesh
+      ref={(m) => { terrainMeshRef = m ?? null; }}
+      geometry={geometry}
+      receiveShadow
+    >
       <shaderMaterial vertexShader={VERT_SHADER} fragmentShader={FRAG_SHADER} />
     </mesh>
   );
