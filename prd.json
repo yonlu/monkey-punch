@@ -127,8 +127,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Done 2026-05-10. Damascus added at WEAPON_KINDS index 3 — inserted BEFORE existing Ahlspiess to match the design doc's stated kind ordering (Bolt=0, Orbit=1, Gakkung=2, Damascus=3, Claymore=4, Ahlspiess=5...). Ahlspiess shifts from index 3 to index 4 — existing Ahlspiess tests + integration test updated. behavior:{kind:'melee_arc'}; perLevel L1–L5: damage 12→24, cooldown 0.35→0.25 (high-tempo cadence is the identity), critChance 0.25→0.45, critMultiplier 2.0 across all levels, knockback 0 (Damascus = tempo+crits, NOT displacement), arcAngle ~Math.PI/3 widening slightly at higher levels, range 2.2→2.5. No client work needed — uses MeleeSwipeSwarm + HitEvent infrastructure from US-005. Tests: 5 in weapons.test.ts (kind index 3 + behavior shape + critChance > 0 + knockback === 0 + critMultiplier 2.0; critChance growth L1→L5; cooldown shrinkage; damage growth; sub-0.5 cadence as the identity); 2 in rules.test.ts (Damascus end-to-end fires through tickWeapons → emits melee_swipe + HitEvent with fireId:0 sentinel; cooldown set to stats.cooldown after fire). Crits roll deterministically through ctx.rng (the seeded mulberry32) per US-005 infrastructure. NO name-based branching (rule 12 grep clean). pnpm typecheck + 196 shared (was 189) / 34 client / 43 server tests pass."
     },
     {
       "id": "US-007",

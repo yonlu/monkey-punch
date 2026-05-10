@@ -58,9 +58,55 @@ describe("Orbit weapon", () => {
   });
 });
 
-describe("Ahlspiess — M8 US-004", () => {
-  it("is at index 3 and is a projectile with targeting=facing, no homing, mesh=spear", () => {
+describe("Damascus — M8 US-006", () => {
+  it("is at index 3 and is a melee_arc with crit (no knockback)", () => {
     const def = WEAPON_KINDS[3]!;
+    expect(def.name).toBe("Damascus");
+    expect(def.behavior.kind).toBe("melee_arc");
+    if (def.behavior.kind !== "melee_arc") throw new Error("expected melee_arc");
+    const stats = statsAt(def, 1);
+    expect(stats.critChance).toBeGreaterThan(0); // Damascus crits
+    expect(stats.knockback).toBe(0); // no knockback
+    expect(stats.critMultiplier).toBe(2.0);
+  });
+
+  it("critChance grows L1 → L5 (high tempo + crit windows is the identity)", () => {
+    const def = WEAPON_KINDS[3]!;
+    if (def.behavior.kind !== "melee_arc") throw new Error("expected melee_arc");
+    for (let lvl = 2; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).critChance).toBeGreaterThan(statsAt(def, lvl - 1).critChance);
+    }
+  });
+
+  it("cooldown shrinks per level (faster swings)", () => {
+    const def = WEAPON_KINDS[3]!;
+    if (def.behavior.kind !== "melee_arc") throw new Error("expected melee_arc");
+    for (let lvl = 2; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).cooldown).toBeLessThanOrEqual(statsAt(def, lvl - 1).cooldown);
+    }
+  });
+
+  it("damage strictly increases per level", () => {
+    const def = WEAPON_KINDS[3]!;
+    if (def.behavior.kind !== "melee_arc") throw new Error("expected melee_arc");
+    for (let lvl = 2; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).damage).toBeGreaterThan(statsAt(def, lvl - 1).damage);
+    }
+  });
+
+  it("is significantly faster than Claymore (cadence is the identity)", async () => {
+    // This test will run AFTER Claymore lands (US-007). For now it
+    // exercises Damascus's L1 cooldown vs the future Claymore index 4
+    // — once Claymore exists at WEAPON_KINDS[4], assert cadence ratio.
+    const damascus = WEAPON_KINDS[3]!;
+    if (damascus.behavior.kind !== "melee_arc") throw new Error("expected melee_arc");
+    expect(statsAt(damascus, 1).cooldown).toBeLessThan(0.5);
+  });
+});
+
+describe("Ahlspiess — M8 US-004", () => {
+  it("is at index 4 and is a projectile with targeting=facing, no homing, mesh=spear", () => {
+    const def = WEAPON_KINDS[4]!;
     expect(def.name).toBe("Ahlspiess");
     if (def.behavior.kind !== "projectile") throw new Error("expected projectile behavior");
     expect(def.behavior.targeting).toBe("facing");
@@ -69,7 +115,7 @@ describe("Ahlspiess — M8 US-004", () => {
   });
 
   it("has infinite pierce (-1) at every level", () => {
-    const def = WEAPON_KINDS[3]!;
+    const def = WEAPON_KINDS[4]!;
     if (def.behavior.kind !== "projectile") throw new Error("expected projectile");
     for (let lvl = 1; lvl <= def.levels.length; lvl++) {
       expect(statsAt(def, lvl).pierceCount).toBe(-1);
@@ -77,7 +123,7 @@ describe("Ahlspiess — M8 US-004", () => {
   });
 
   it("has hitCooldownPerEnemyMs > 0 at every level (avoids same-enemy double-hit)", () => {
-    const def = WEAPON_KINDS[3]!;
+    const def = WEAPON_KINDS[4]!;
     if (def.behavior.kind !== "projectile") throw new Error("expected projectile");
     for (let lvl = 1; lvl <= def.levels.length; lvl++) {
       expect(statsAt(def, lvl).hitCooldownPerEnemyMs).toBeGreaterThan(0);
@@ -85,7 +131,7 @@ describe("Ahlspiess — M8 US-004", () => {
   });
 
   it("hitRadius strictly increases across levels (gives visible per-level growth)", () => {
-    const def = WEAPON_KINDS[3]!;
+    const def = WEAPON_KINDS[4]!;
     if (def.behavior.kind !== "projectile") throw new Error("expected projectile");
     for (let lvl = 2; lvl <= def.levels.length; lvl++) {
       expect(statsAt(def, lvl).hitRadius).toBeGreaterThan(statsAt(def, lvl - 1).hitRadius);
@@ -93,7 +139,7 @@ describe("Ahlspiess — M8 US-004", () => {
   });
 
   it("damage strictly increases per level", () => {
-    const def = WEAPON_KINDS[3]!;
+    const def = WEAPON_KINDS[4]!;
     if (def.behavior.kind !== "projectile") throw new Error("expected projectile");
     for (let lvl = 2; lvl <= def.levels.length; lvl++) {
       expect(statsAt(def, lvl).damage).toBeGreaterThan(statsAt(def, lvl - 1).damage);

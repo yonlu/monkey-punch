@@ -2710,6 +2710,62 @@ describe("runMeleeArcSwing — M8 US-005", () => {
   });
 });
 
+describe("tickWeapons — M8 US-006 Damascus integration", () => {
+  it("fires Damascus through tickWeapons; emits melee_swipe + per-hit HitEvents (fireId=0)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    addEnemy(state, 1, 1.5, 0).hp = 100;
+
+    const w = new WeaponState();
+    w.kind = 3; // Damascus per design doc kind index
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture(1, 5_000_000, /* rngSeed */ 12345);
+    tickWeapons(state, 0.05, ctx, (e) => events.push(e));
+
+    const swipes = events.filter((e) => e.type === "melee_swipe");
+    const hits = events.filter((e) => e.type === "hit");
+    expect(swipes.length).toBe(1);
+    expect(hits.length).toBe(1);
+
+    const hit = hits[0]!;
+    if (hit.type !== "hit") throw new Error("expected hit");
+    // fireId === 0 sentinel for non-projectile hits (orbit + melee).
+    expect(hit.fireId).toBe(0);
+    expect(hit.enemyId).toBe(1);
+
+    const swipe = swipes[0]!;
+    if (swipe.type !== "melee_swipe") throw new Error("expected melee_swipe");
+    expect(swipe.weaponKind).toBe(3);
+    expect(swipe.weaponLevel).toBe(1);
+  });
+
+  it("Damascus cooldown is set to stats.cooldown after firing (then decrements next tick)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    addEnemy(state, 1, 1.5, 0).hp = 100;
+
+    const w = new WeaponState();
+    w.kind = 3;
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const { ctx } = makeCapture();
+    tickWeapons(state, 0.05, ctx, () => {});
+
+    // Damascus L1 cooldown is 0.35s — set after fire.
+    expect(w.cooldownRemaining).toBeCloseTo(0.35);
+  });
+});
+
 describe("tickWeapons — M8 US-003 Gakkung Bow integration", () => {
   it("fires at the FURTHEST in-range enemy and emits a fire event with Gakkung's homingTurnRate baked onto the projectile", () => {
     const state = new RoomState();
@@ -2757,7 +2813,7 @@ describe("tickWeapons — M8 US-004 Ahlspiess integration", () => {
     addEnemy(state, 1, 5, 0); // off to the side, but in range — gates fire
 
     const w = new WeaponState();
-    w.kind = 3; // Ahlspiess per design doc kind index
+    w.kind = 4; // Ahlspiess per design doc kind index (Damascus inserted at 3 in US-006)
     w.level = 1;
     w.cooldownRemaining = 0;
     p.weapons.push(w);
@@ -2768,7 +2824,7 @@ describe("tickWeapons — M8 US-004 Ahlspiess integration", () => {
 
     expect(projectiles.length).toBe(1);
     const proj = projectiles[0]!;
-    expect(proj.weaponKind).toBe(3);
+    expect(proj.weaponKind).toBe(4);
     // facing mode: dir is player.facing, not toward the enemy.
     expect(proj.dirX).toBe(0);
     expect(proj.dirZ).toBe(1);
@@ -2789,7 +2845,7 @@ describe("tickWeapons — M8 US-004 Ahlspiess integration", () => {
     // No enemies anywhere: facing-mode fire still gates on any enemy in range.
 
     const w = new WeaponState();
-    w.kind = 3;
+    w.kind = 4; // Ahlspiess (was 3 pre-Damascus insertion in US-006)
     w.level = 1;
     w.cooldownRemaining = 0;
     p.weapons.push(w);

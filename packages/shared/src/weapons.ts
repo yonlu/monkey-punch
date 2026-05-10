@@ -126,7 +126,26 @@ export const WEAPON_KINDS: readonly WeaponDef[] = [
     ],
   },
   {
-    // M8 US-004: Ahlspiess (kind index 3). Piercing line projectile —
+    // M8 US-006: Damascus (kind index 3). Fast melee swipe with high crit
+    // chance — Vampire Survivors' Knife archetype but melee-range. Each
+    // hit rolls a per-hit crit using the room PRNG (rule 6); crits deal
+    // 2× damage and surface via MeleeSwipeEvent.isCrit (drives a brighter
+    // slash flash on the client) and per-hit HitEvent.tag in US-013.
+    // Cadence drops from 0.35s → 0.25s across L1–L5 (high tempo); damage
+    // and critChance both grow per level. No knockback — Damascus is
+    // about tempo and crit windows, not displacement.
+    name: "Damascus",
+    behavior: { kind: "melee_arc" },
+    levels: [
+      { damage: 12, cooldown: 0.35, arcAngle: Math.PI / 3,    range: 2.2, critChance: 0.25, critMultiplier: 2.0, knockback: 0 },
+      { damage: 14, cooldown: 0.33, arcAngle: Math.PI / 3,    range: 2.2, critChance: 0.30, critMultiplier: 2.0, knockback: 0 },
+      { damage: 17, cooldown: 0.30, arcAngle: Math.PI / 3,    range: 2.3, critChance: 0.35, critMultiplier: 2.0, knockback: 0 },
+      { damage: 20, cooldown: 0.28, arcAngle: Math.PI * 0.36, range: 2.4, critChance: 0.40, critMultiplier: 2.0, knockback: 0 },
+      { damage: 24, cooldown: 0.25, arcAngle: Math.PI * 0.38, range: 2.5, critChance: 0.45, critMultiplier: 2.0, knockback: 0 },
+    ],
+  },
+  {
+    // M8 US-004: Ahlspiess (kind index 4). Piercing line projectile —
     // travels along player.facing at fire (no homing), pierces ALL enemies
     // in its path (pierceCount: -1), and uses per-enemy hit cooldown so the
     // same enemy isn't double-hit on consecutive ticks while still in the
