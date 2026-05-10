@@ -311,8 +311,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 14,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Approved 2026-05-10 by Luke. M8 ships: 6 new weapons across 3 new behavior kinds, status-effect infrastructure, BloodPool schema, 2 new tick functions, 5 new client renderers, ~250 vitest cases for the new surface, zero name-based branching milestone-wide (rule 12 clean). All 8 weapons mechanically distinct + visually readable. CLAUDE.md rule 11 amended (tick order with tickStatusEffects/tickBoomerangs/tickBloodPools) + status-effect refactor trigger note in 'Things NOT to do'. No regressions to M5/M6/M7. Final test counts: 252 shared / 34 client / 43 server. Balance is starting values per design doc — final tuning is queued for a follow-up milestone, not this one. Items + weapon evolutions queued for M9+ per the original plan note."
     }
   ]
 }
