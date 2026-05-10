@@ -12,7 +12,7 @@ import type {
   PongMessage,
   RoomState,
 } from "@mp/shared";
-import { WEAPON_KINDS, statsAt, isProjectileWeapon, initTerrain } from "@mp/shared";
+import { MAP_RADIUS, WEAPON_KINDS, statsAt, isProjectileWeapon, initTerrain } from "@mp/shared";
 import { Ground } from "./Ground.js";
 import { PlayerCube } from "./PlayerCube.js";
 import { PropSwarm } from "./PropSwarm.js";
@@ -44,6 +44,24 @@ import { attachCameraControls } from "../camera.js";
 // At Bolt's 18 u/s, 100 ms ≈ 1.8 units of overshoot, roughly the sum of
 // enemy + projectile diameters.
 const PROJECTILE_HIT_LINGER_MS = 100;
+
+// US-016 outdoor atmosphere — solid sky color + linear fog fading distant
+// terrain to sky, replacing M6's flat-black void. Starting values per the
+// PRD; final tuning lands in US-017's manual polish pass. Ground.tsx's
+// custom slope ShaderMaterial opts into Three's fog chunks (see that file)
+// so the terrain itself fades, not just the boundary cylinder.
+//
+// Shadows DEFERRED per AC ("too easy to misconfigure"): no `shadows` on
+// Canvas, no `castShadow` on the directional sun. CLAUDE.md landmine #3
+// (InstancedMesh + tight default shadow bounds = silently dropped) is
+// already opted out of in Enemy/Orbit/Projectile/PropSwarm; turning shadows
+// off here is consistent with that.
+const SKY_COLOR = 0x87ceeb;
+const FOG_NEAR = 30;
+const FOG_FAR = MAP_RADIUS * 1.5;
+const SUN_INTENSITY = 0.9;
+const HEMI_GROUND_COLOR = 0x404020;
+const HEMI_INTENSITY = 0.5;
 
 type PlayerEntry = {
   sessionId: string;
@@ -421,7 +439,6 @@ export function GameView({
     <div style={{ position: "relative", width: "100vw", height: "100vh" }}>
       <div className="banner">room: <strong>{code}</strong> · share this code with friends</div>
       <Canvas
-        shadows
         camera={{ position: [0, 9, 11], fov: 55 }}
         style={{ width: "100%", height: "100%" }}
         onCreated={({ gl }) => {
@@ -429,9 +446,11 @@ export function GameView({
           setCanvasReady(true);
         }}
       >
+        <color attach="background" args={[SKY_COLOR]} />
+        <fog attach="fog" args={[SKY_COLOR, FOG_NEAR, FOG_FAR]} />
         <CameraRig room={room} predictor={predictor} buffers={buffers} />
-        <ambientLight intensity={0.5} />
-        <directionalLight position={[10, 20, 5]} intensity={1.0} castShadow />
+        <hemisphereLight args={[SKY_COLOR, HEMI_GROUND_COLOR, HEMI_INTENSITY]} />
+        <directionalLight position={[10, 20, 5]} intensity={SUN_INTENSITY} />
         <Ground />
         <PropSwarm seed={room.state.seed} />
         <BoundaryRing />
