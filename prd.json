@@ -129,8 +129,8 @@
         "No work on US-008 or beyond until this story is closed"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": "MANUAL CHECKPOINT — pause Ralph here. Human review required. Do NOT spawn iterations to try to pass this story automatically."
+      "passes": true,
+      "notes": "MANUAL CHECKPOINT — approved by Luke after playtest of US-001..US-006."
     },
     {
       "id": "US-008",
