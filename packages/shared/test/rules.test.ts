@@ -21,6 +21,7 @@ import {
   resolveLevelUp,
   tickContactDamage,
   tickRunEndCheck,
+  canJump,
   type SpawnerState,
   type Projectile,
   type WeaponContext,
@@ -35,6 +36,8 @@ import {
   GRAVITY,
   JUMP_VELOCITY,
   TERMINAL_FALL_SPEED,
+  COYOTE_TIME,
+  JUMP_BUFFER,
   SIM_DT_S,
   ENEMY_SPEED,
   ENEMY_SPAWN_INTERVAL_S,
@@ -1607,14 +1610,24 @@ describe("tickPlayers — M7 US-009 jump physics", () => {
     expect(p.y).toBeCloseTo((JUMP_VELOCITY - GRAVITY * SIM_DT_S) * SIM_DT_S, 6);
   });
 
-  it("jump intent while airborne is ignored (no double-jump in US-009)", () => {
+  it("jump intent while airborne and outside the coyote window is buffered, not fired (no double-jump)", () => {
+    // Originally a US-009 "no double-jump" assertion. Under US-010 the rule
+    // is more nuanced: airborne-but-within-coyote IS a valid jump. To keep
+    // the original spirit (no double-jump), we set the player to have been
+    // airborne well past COYOTE_TIME so the press lands in the buffer and
+    // the airborne tick produces only gravity decay.
     const state = new RoomState();
     const p = addPlayer(state, "a", 0, 0);
     p.x = 0; p.z = 0; p.y = 5; p.vy = 0; p.grounded = false;     // mid-air
+    state.tick = 100;
+    p.lastGroundedAt = 0;        // 100 ticks ago = 5s — far past coyote (0.1s)
+    p.jumpBufferedAt = -1;
 
     tickPlayers(state, SIM_DT_S, new Set(["a"]));
     // vy should ONLY have gravity applied, not JUMP_VELOCITY.
     expect(p.vy).toBeCloseTo(-GRAVITY * SIM_DT_S, 6);
+    // Press was buffered (no canJump fired this tick).
+    expect(p.jumpBufferedAt).toBe(100);
   });
 
   it("peak height of one jump matches JUMP_VELOCITY^2 / (2 * GRAVITY) within Euler tolerance", () => {
@@ -1746,5 +1759,217 @@ describe("tickPlayers — M7 US-009 jump physics", () => {
     expect(p.y).toBe(0);
     expect(p.vy).toBe(0);
     expect(p.grounded).toBe(true);
+  });
+});
+
+describe("canJump (M7 US-010 helper)", () => {
+  it("returns true when player.grounded is true regardless of lastGroundedAt", () => {
+    const p = new Player();
+    p.grounded = true;
+    p.lastGroundedAt = 0;
+    expect(canJump(p, 1_000_000)).toBe(true);
+  });
+
+  it("returns true within the coyote window (inclusive at the boundary)", () => {
+    const p = new Player();
+    p.grounded = false;
+    p.lastGroundedAt = 100;
+    // 0.1s = 2 ticks at 20Hz; the boundary tick (lastGroundedAt + 2) is inclusive.
+    expect(canJump(p, 100)).toBe(true);
+    expect(canJump(p, 101)).toBe(true);  // 0.05s elapsed
+    expect(canJump(p, 102)).toBe(true);  // 0.10s elapsed (== COYOTE_TIME)
+  });
+
+  it("returns false past the coyote window", () => {
+    const p = new Player();
+    p.grounded = false;
+    p.lastGroundedAt = 100;
+    expect(canJump(p, 103)).toBe(false); // 0.15s elapsed (> 0.1s)
+    expect(canJump(p, 200)).toBe(false);
+  });
+});
+
+describe("tickPlayers — M7 US-010 jump forgiveness (coyote + buffer)", () => {
+  beforeAll(() => initTerrain(0));
+
+  it("coyote time: pressing jump 0.05s after leaving ground succeeds", () => {
+    // 0.05s after leaving ground = 1 tick at 20Hz; canJump is still true via
+    // the coyote arm. A successful jump produces vy = JUMP_VELOCITY *before*
+    // gravity is applied this same tick (phase 1 fires; phase 2 then decays
+    // vy by GRAVITY*dt). So observed end-of-tick vy = JUMP_VELOCITY -
+    // GRAVITY*dt — same as a grounded jump.
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.x = 0; p.z = 0;
+    p.y = 1; p.vy = 0;            // airborne (above flat origin terrain)
+    p.grounded = false;
+    p.jumpBufferedAt = -1;
+    state.tick = 100;
+    p.lastGroundedAt = 99;        // 1 tick ago = 0.05s
+
+    tickPlayers(state, SIM_DT_S, new Set(["a"]));
+
+    expect(p.vy).toBeCloseTo(JUMP_VELOCITY - GRAVITY * SIM_DT_S, 6);
+    expect(p.grounded).toBe(false);
+    expect(p.jumpBufferedAt).toBe(-1);  // a successful coyote jump clears any stale buffer
+  });
+
+  it("coyote time: pressing jump 0.15s after leaving ground fails (buffered, not fired)", () => {
+    // 0.15s = 3 ticks > COYOTE_TIME (0.1s). canJump is false → press lands
+    // in the buffer instead of firing. With the player still airborne and
+    // far above terrain, ground-snap doesn't fire either; phase 4 sees
+    // canJump still false and the buffer survives.
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.x = 0; p.z = 0;
+    p.y = 100; p.vy = 0;          // way above terrain — won't land this tick
+    p.grounded = false;
+    p.jumpBufferedAt = -1;
+    state.tick = 100;
+    p.lastGroundedAt = 97;        // 3 ticks ago = 0.15s
+
+    tickPlayers(state, SIM_DT_S, new Set(["a"]));
+
+    // Only gravity decay — no JUMP_VELOCITY kick.
+    expect(p.vy).toBeCloseTo(-GRAVITY * SIM_DT_S, 6);
+    // Press recorded as a buffer at the press tick.
+    expect(p.jumpBufferedAt).toBe(100);
+  });
+
+  it("jump buffer: press 0.05s before landing executes on the landing tick", () => {
+    // Setup: player airborne, just about to land in 1 tick. Buffer is set as
+    // if pressed last tick. tickPlayers should land the player AND fire the
+    // buffered jump in the same tick (phase 2 snaps; phase 3 sets
+    // lastGroundedAt; phase 4 reads canJump=true via grounded and fires).
+    //
+    // Pre-tick state numbers:
+    //   y = 0.06, vy = -1
+    //   gravity → vy = -1 - 1.25 = -2.25
+    //   integrate → y = 0.06 + (-2.25)*0.05 = -0.0525 → snaps to groundY=0.
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.x = 0; p.z = 0;
+    p.y = 0.06; p.vy = -1;
+    p.grounded = false;
+    p.lastGroundedAt = -1000;     // way out of coyote so phase 1 doesn't fire
+    p.jumpBufferedAt = 99;        // pressed last tick (0.05s before this tick)
+    state.tick = 100;
+
+    tickPlayers(state, SIM_DT_S, undefined);
+
+    // The buffered press fired on the landing tick.
+    expect(p.vy).toBe(JUMP_VELOCITY);
+    expect(p.grounded).toBe(false);
+    expect(p.jumpBufferedAt).toBe(-1);
+    // Phase 3 anchored lastGroundedAt to the landing tick (before the
+    // buffered jump cleared grounded again).
+    expect(p.lastGroundedAt).toBe(100);
+  });
+
+  it("jump buffer: press 0.10s before landing still fires (inclusive boundary)", () => {
+    // 0.10s = 2 ticks at 20Hz. JUMP_BUFFER = 0.1s; the boundary is inclusive
+    // per the AC formula (`<= JUMP_BUFFER`). Same end-state as the previous
+    // test — just one tick further from the press.
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.x = 0; p.z = 0;
+    p.y = 0.06; p.vy = -1;
+    p.grounded = false;
+    p.lastGroundedAt = -1000;
+    p.jumpBufferedAt = 98;        // pressed 2 ticks ago = 0.10s
+    state.tick = 100;
+
+    tickPlayers(state, SIM_DT_S, undefined);
+
+    expect(p.vy).toBe(JUMP_VELOCITY);
+    expect(p.grounded).toBe(false);
+    expect(p.jumpBufferedAt).toBe(-1);
+  });
+
+  it("jump buffer: press 0.15s before landing does NOT fire (past JUMP_BUFFER)", () => {
+    // 0.15s = 3 ticks > JUMP_BUFFER (0.1s). The player still lands this tick
+    // but phase 4's time-since-buffer check rejects → buffer remains, jump
+    // does NOT fire. Per AC, the buffer is left set; a fresh press will
+    // overwrite it.
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.x = 0; p.z = 0;
+    p.y = 0.06; p.vy = -1;
+    p.grounded = false;
+    p.lastGroundedAt = -1000;
+    p.jumpBufferedAt = 97;        // 3 ticks ago = 0.15s — too old
+    state.tick = 100;
+
+    tickPlayers(state, SIM_DT_S, undefined);
+
+    // Player landed but the stale buffered press did not fire.
+    expect(p.vy).toBe(0);
+    expect(p.grounded).toBe(true);
+    expect(p.lastGroundedAt).toBe(100);
+    // Per AC: buffer is left set on expiry — only a successful fire clears it.
+    expect(p.jumpBufferedAt).toBe(97);
+  });
+
+  it("end-to-end: walk off a ledge then jump within coyote — full integration", () => {
+    // Drives the actual flow: player on ground, leaves ground (we simulate
+    // by warping +y so phase 2 doesn't snap on the next tick), then presses
+    // jump within coyote. This proves lastGroundedAt is updated by phase 3
+    // when grounded, then read by canJump on subsequent ticks.
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.x = 0; p.z = 0; p.y = 0; p.vy = 0; p.grounded = true;
+    p.lastGroundedAt = 0; p.jumpBufferedAt = -1;
+
+    // Tick 1: grounded, phase 3 anchors lastGroundedAt = 1.
+    state.tick = 1;
+    tickPlayers(state, SIM_DT_S, undefined);
+    expect(p.grounded).toBe(true);
+    expect(p.lastGroundedAt).toBe(1);
+
+    // Now warp the player above ground to simulate walking off a ledge.
+    // (In real gameplay this happens because terrainHeight at the new x/z is
+    //  lower than before.)
+    p.y = 0.5;
+    p.vy = 0;
+
+    // Tick 2: phase 2 doesn't snap (Y stays positive), grounded becomes false.
+    state.tick = 2;
+    tickPlayers(state, SIM_DT_S, undefined);
+    expect(p.grounded).toBe(false);
+    expect(p.lastGroundedAt).toBe(1);
+
+    // Tick 3: 0.10s after leaving ground (within coyote). Press jump.
+    state.tick = 3;
+    tickPlayers(state, SIM_DT_S, new Set(["a"]));
+    // Coyote arm: (3 - 1) * 0.05 = 0.10 ≤ COYOTE_TIME → fired.
+    expect(p.vy).toBeCloseTo(JUMP_VELOCITY - GRAVITY * SIM_DT_S, 6);
+    expect(p.grounded).toBe(false);
+    expect(p.jumpBufferedAt).toBe(-1);
+  });
+
+  it("a successful coyote jump clears any pre-existing buffered press", () => {
+    // Edge case: the buffer was set on a previous airborne press that never
+    // fired. Now the player is airborne again (still in coyote) and presses
+    // jump. Phase 1 should fire and clear the stale buffer, so phase 4 can
+    // never re-fire it on the same tick.
+    const state = new RoomState();
+    const p = addPlayer(state, "a", 0, 0);
+    p.x = 0; p.z = 0;
+    p.y = 1; p.vy = 0;
+    p.grounded = false;
+    p.lastGroundedAt = 99;        // 1 tick ago — within coyote
+    p.jumpBufferedAt = 50;        // a stale buffer from earlier
+    state.tick = 100;
+
+    tickPlayers(state, SIM_DT_S, new Set(["a"]));
+
+    expect(p.vy).toBeCloseTo(JUMP_VELOCITY - GRAVITY * SIM_DT_S, 6);
+    expect(p.jumpBufferedAt).toBe(-1);
+  });
+
+  it("constants COYOTE_TIME and JUMP_BUFFER are 0.1s as specified", () => {
+    // Guards against an accidental retune outside US-017 polish-pass.
+    expect(COYOTE_TIME).toBe(0.1);
+    expect(JUMP_BUFFER).toBe(0.1);
   });
 });

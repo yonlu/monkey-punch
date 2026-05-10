@@ -6,6 +6,7 @@ import {
   type RoomState,
 } from "./schema.js";
 import {
+  COYOTE_TIME,
   ENEMY_CONTACT_COOLDOWN_S,
   ENEMY_CONTACT_DAMAGE,
   ENEMY_DESPAWN_RADIUS,
@@ -17,6 +18,7 @@ import {
   GEM_PICKUP_RADIUS,
   GEM_VALUE,
   GRAVITY,
+  JUMP_BUFFER,
   JUMP_VELOCITY,
   LEVEL_UP_DEADLINE_TICKS,
   MAP_RADIUS,
@@ -43,6 +45,21 @@ import type {
   PlayerDownedEvent,
   RunEndedEvent,
 } from "./messages.js";
+
+/**
+ * Jump-forgiveness predicate (M7 US-010). True if the player is on the ground
+ * OR they walked off a ledge within the last COYOTE_TIME seconds. Exported so
+ * tests can verify the boundary; tickPlayers also calls it twice per tick
+ * (once at jump-intent resolve, once at the post-snap buffered-jump check).
+ *
+ * `tick` is the current state.tick. `lastGroundedAt` is the latest tick the
+ * player was grounded at end of phase 2 (always non-negative — see
+ * tickPlayers' phase 3 update + ctor init in schema.ts).
+ */
+export function canJump(player: Player, tick: number): boolean {
+  if (player.grounded) return true;
+  return (tick - player.lastGroundedAt) * (1 / TICK_RATE) <= COYOTE_TIME;
+}
 
 /**
  * `jumpRequests` is a per-tick set of sessionIds that pressed jump on this
@@ -73,21 +90,44 @@ export function tickPlayers(
       p.z *= scale;
     }
 
-    // M7 US-009: jump physics.
-    //   1. Resolve jump intent — only fires while grounded (no forgiveness
-    //      yet; coyote/buffer arrives in US-010).
-    //   2. Apply gravity to vy, clamped at TERMINAL_FALL_SPEED.
-    //   3. Integrate Y by vy.
-    //   4. Ground-snap: if Y has fallen at or below the terrain surface,
-    //      clamp Y to it, zero vy, set grounded=true. Otherwise grounded=false.
+    // M7 US-009 + US-010: jump physics with forgiveness.
     //
-    // Order matters: jump-then-gravity means a jump issued THIS tick still
-    // gets one frame of pre-gravity velocity (vy = JUMP_VELOCITY → integrate
-    // → vy slightly less next tick). The fully-zero-vy stationary case is
-    // handled by the snap clamping vy to 0 every grounded tick.
-    if (jumpRequests?.has(p.sessionId) && p.grounded) {
-      p.vy = JUMP_VELOCITY;
-      p.grounded = false;
+    // Phase 1 — Resolve direct jump intent (this tick's input).
+    //   If canJump (grounded OR within coyote): fire immediately, clear any
+    //     stale buffer.
+    //   Else: record press as jumpBufferedAt = state.tick. The latest press
+    //     wins if multiple arrive within the same window (rare).
+    // Phase 2 — Gravity, integrate Y, ground-snap.
+    //   Apply -GRAVITY*dt to vy (clamped at TERMINAL_FALL_SPEED), integrate Y.
+    //   If Y has fallen at or below the terrain surface, clamp Y to it, zero
+    //     vy, set grounded=true. Otherwise grounded=false.
+    // Phase 3 — Update lastGroundedAt if grounded at end of phase 2.
+    //   This is what canJump's coyote arm reads on later ticks.
+    // Phase 4 — Consume buffered jump.
+    //   If a buffer is set AND canJump is now true (grounded just-now or
+    //     coyote) AND the buffer is within JUMP_BUFFER seconds, fire the jump
+    //     and clear the buffer. This is what makes "press just before
+    //     landing" execute on the landing tick — phase 2 sets grounded=true,
+    //     phase 4 reads it and fires.
+    //
+    // Ordering note: phase 1 fires BEFORE gravity so a same-tick press still
+    // produces one frame of pre-gravity vy (matches US-009 behavior). Phase
+    // 4 fires AFTER snap so the buffered press gets to use the just-restored
+    // grounded=true. Phase 1 + phase 4 cannot both fire in the same tick on
+    // the same player: phase 1 either fires (clearing the buffer) or buffers
+    // (canJump was false); phase 4 only consumes buffers and only when
+    // canJump is true. The only way phase 4 fires the SAME-tick press is if
+    // phase 1 buffered (out of coyote) and phase 2's ground-snap made canJump
+    // newly true — that's the design.
+    const intent = jumpRequests?.has(p.sessionId) ?? false;
+    if (intent) {
+      if (canJump(p, state.tick)) {
+        p.vy = JUMP_VELOCITY;
+        p.grounded = false;
+        p.jumpBufferedAt = -1;
+      } else {
+        p.jumpBufferedAt = state.tick;
+      }
     }
     p.vy = Math.max(p.vy - GRAVITY * dt, -TERMINAL_FALL_SPEED);
     p.y += p.vy * dt;
@@ -99,6 +139,18 @@ export function tickPlayers(
       p.grounded = true;
     } else {
       p.grounded = false;
+    }
+
+    if (p.grounded) p.lastGroundedAt = state.tick;
+
+    if (
+      p.jumpBufferedAt !== -1 &&
+      canJump(p, state.tick) &&
+      (state.tick - p.jumpBufferedAt) * (1 / TICK_RATE) <= JUMP_BUFFER
+    ) {
+      p.vy = JUMP_VELOCITY;
+      p.grounded = false;
+      p.jumpBufferedAt = -1;
     }
 
     // M7 US-006: derive facing from movement direction. Input no longer

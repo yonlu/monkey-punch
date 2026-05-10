@@ -190,8 +190,8 @@
         "Tests pass"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "lastGroundedAt encoded as uint32 (always non-negative); jumpBufferedAt encoded as int32 because of the -1 sentinel. Existing US-009 'no double-jump' test had to be updated — under US-010 the rule is more nuanced (airborne-but-within-coyote IS a valid jump), so the test was rewritten to set state.tick=100 + lastGroundedAt=0 (5s of airtime, well past coyote) to preserve its original spirit of asserting no double-jump after coyote expires."
     },
     {
       "id": "US-011",

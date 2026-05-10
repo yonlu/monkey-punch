@@ -90,3 +90,18 @@ export const TERRAIN_SIZE = 200;
 export const GRAVITY = 25;                  // world units / s² (positive magnitude; applied as -GRAVITY * dt to vy)
 export const JUMP_VELOCITY = 9;             // world units / s — initial vy on jump
 export const TERMINAL_FALL_SPEED = 30;      // world units / s — clamp on |vy| while falling
+
+// M7 US-010: jump forgiveness windows. Both expressed in seconds; converted to
+// "ticks elapsed" via 1/TICK_RATE inside canJump and the buffered-jump check.
+//
+// COYOTE_TIME — after walking off a ledge, the player can still jump for this
+// many seconds (a "grace window" that hides the moment-of-leave). 0.1s = 2
+// ticks at 20Hz. Inclusive at the boundary: elapsed == COYOTE_TIME still
+// allows a jump.
+//
+// JUMP_BUFFER — if the player presses jump airborne (and out of coyote), the
+// press is remembered for this many seconds; the jump fires automatically on
+// the next tick the player can jump (i.e. they land or re-enter coyote). 0.1s
+// = 2 ticks. Inclusive at the boundary: elapsed == JUMP_BUFFER still fires.
+export const COYOTE_TIME = 0.1;
+export const JUMP_BUFFER = 0.1;

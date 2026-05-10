@@ -305,6 +305,13 @@ export class GameRoom extends Room<RoomState> {
     player.x = 0;
     player.y = 0;
     player.z = 0;
+    // M7 US-010: a freshly joined player is grounded by default (the schema
+    // ctor sets grounded=true). Anchor lastGroundedAt to this tick so a jump
+    // pressed on the very first input tick canJump-checks against the join
+    // tick, not against tick 0 (which would be a stale negative offset for a
+    // late-join into a long-running room).
+    player.lastGroundedAt = this.state.tick;
+    player.jumpBufferedAt = -1;
     player.hp = PLAYER_MAX_HP;
     player.maxHp = PLAYER_MAX_HP;
     player.downed = false;

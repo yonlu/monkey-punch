@@ -59,6 +59,18 @@ export class Player extends Schema {
   declare z: number;
   declare vy: number;
   declare grounded: boolean;
+  // M7 US-010: jump forgiveness windows.
+  //   lastGroundedAt — server tick at which `grounded` was last true. Read by
+  //     `canJump` to decide if a coyote-time jump is still allowed. Always
+  //     non-negative (initialized to 0 on construction; updated by tickPlayers
+  //     to state.tick on any tick the player is grounded at end of phase 2).
+  //   jumpBufferedAt — server tick at which the player pressed jump while NOT
+  //     `canJump`. -1 sentinel means "no pending press". When the player
+  //     becomes canJump within JUMP_BUFFER seconds of this tick, the buffered
+  //     press fires automatically and this field is reset to -1. Encoded as
+  //     int32 because of the -1 sentinel.
+  declare lastGroundedAt: number;
+  declare jumpBufferedAt: number;
   declare inputDir: Vec2;
   declare lastProcessedInput: number;
   declare xp: number;
@@ -84,6 +96,8 @@ export class Player extends Schema {
     this.z = 0;
     this.vy = 0;
     this.grounded = true;
+    this.lastGroundedAt = 0;
+    this.jumpBufferedAt = -1;
     this.inputDir = new Vec2();
     this.lastProcessedInput = 0;
     this.xp = 0;
@@ -110,6 +124,8 @@ defineTypes(Player, {
   z: "number",
   vy: "number",
   grounded: "boolean",
+  lastGroundedAt: "uint32",
+  jumpBufferedAt: "int32",
   inputDir: Vec2,
   lastProcessedInput: "uint32",
   xp: "uint32",
