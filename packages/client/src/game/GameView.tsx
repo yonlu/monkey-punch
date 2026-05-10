@@ -36,6 +36,8 @@ import { BoundaryRing } from "./BoundaryRing.js";
 import { DamageNumberPool } from "./DamageNumberPool.js";
 import { MinimapCanvas } from "./MinimapCanvas.js";
 import { RunOverPanel } from "./RunOverPanel.js";
+import { ClickToPlayOverlay } from "./ClickToPlayOverlay.js";
+import { attachCameraControls } from "../camera.js";
 
 // Extra time (past the rendered hit moment) that a projectile keeps
 // rendering after the server reports a hit. Lets the projectile visibly
@@ -78,6 +80,18 @@ export function GameView({
   const { api: vfx, component: vfxJsx } = useCombatVfxRef();
 
   const canvasCameraRef = useRef<PerspectiveCamera | null>(null);
+  const canvasDomRef = useRef<HTMLCanvasElement | null>(null);
+  const [canvasReady, setCanvasReady] = useState(false);
+
+  // Attach pointer-lock + mousemove handlers to the canvas once it
+  // exists. `onCreated` (below, on the Canvas) flips canvasReady true
+  // after the WebGL renderer's DOM element is mounted.
+  useEffect(() => {
+    if (!canvasReady) return;
+    const canvas = canvasDomRef.current;
+    if (!canvas) return;
+    return attachCameraControls(canvas);
+  }, [canvasReady]);
 
   // Terrain noise must be initialized before the first child render queries
   // terrainHeight (Ground builds its geometry in a useMemo). useMemo runs
@@ -405,6 +419,10 @@ export function GameView({
         shadows
         camera={{ position: [0, 9, 11], fov: 55 }}
         style={{ width: "100%", height: "100%" }}
+        onCreated={({ gl }) => {
+          canvasDomRef.current = gl.domElement as HTMLCanvasElement;
+          setCanvasReady(true);
+        }}
       >
         <CaptureCamera camRef={canvasCameraRef} />
         <CameraRig room={room} predictor={predictor} buffers={buffers} />
@@ -436,6 +454,7 @@ export function GameView({
       <DebugHud />
       <MinimapCanvas room={room} predictor={predictor} />
       <RunOverPanel room={room} onLeave={onConsentLeave} />
+      <ClickToPlayOverlay canvasRef={canvasDomRef} />
     </div>
   );
 }
