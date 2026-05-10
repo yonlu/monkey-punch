@@ -5,6 +5,7 @@ export * from "./rules.js";
 export * from "./rng.js";
 export * from "./weapons.js";
 export * from "./terrain.js";
+export * from "./props.js";
 
 import { WEAPON_KINDS, isOrbitWeapon } from "./weapons.js";
 import { MAX_ORB_COUNT_EVER } from "./constants.js";

@@ -269,8 +269,8 @@
         "Tests pass"
       ],
       "priority": 14,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "PROP_AREA_HALF_EXTENT = TERRAIN_SIZE/2 = 100 (no explicit outer bound in AC; chose alignment with the rendered terrain mesh so props fill the visible area inside the fog far plane — props beyond MAP_RADIUS=60 are scenery seen through fog from within the playable circle, not reachable). Per-cell jitter range = 0.8 * SPACING = 4.8, applied as `prng() * 4.8 - 2.4` in both X and Z (symmetric ±2.4) — preserves visible grid relationship while looking organic; documented inline as one of two valid readings of \"≤ 80% of spacing\". generateProps requires terrainHeight to be available — caller must initTerrain(seed) first; documented in props.ts top-of-file comment. Iteration order is X-outer / Z-inner, load-bearing for the snapshot. Skip-radius cells consume zero rng (post-skip stream stable independent of skip-radius tuning). 9 vitest cases: deterministic-same-seed, different-seeds-different-output, first-20-props snapshot (seed=42), y matches terrainHeight at sampled props, no prop inside ~8.5 of origin (skip-radius minus jitter slack), all props within 102.5 from origin (PROP_AREA_HALF_EXTENT + jitter slack), kind distribution roughly 50/35/15 across full output (~700 props), rotation in [0,2π) and scale in [0.8,1.2), determinism over two calls in same suite. Total prop count for seed=42 = 697. pnpm typecheck + 155 shared / 34 client / 43 server tests pass — including encoder regression. No schema changes (props NOT in schema per CLAUDE.md rule 2 derivation)."
     },
     {
       "id": "US-015",
