@@ -3,9 +3,19 @@ import {
   Gem,
   BloodPool,
   WeaponState,
+  ItemState,
+  LevelUpChoice,
+  LEVEL_UP_CHOICE_WEAPON,
+  LEVEL_UP_CHOICE_ITEM,
   type Player,
   type RoomState,
 } from "./schema.js";
+import {
+  ITEM_KINDS,
+  itemValueAt,
+  NEUTRAL_MULTIPLIER,
+  type ItemEffect,
+} from "./items.js";
 import {
   COYOTE_TIME,
   ENEMY_CONTACT_COOLDOWN_S,
@@ -26,6 +36,7 @@ import {
   MAP_RADIUS,
   MAX_ENEMIES,
   PLAYER_GROUND_OFFSET,
+  PLAYER_MAX_HP,
   PLAYER_RADIUS,
   PLAYER_SPEED,
   TARGETING_MAX_RANGE,
@@ -48,6 +59,7 @@ import type {
   RunEndedEvent,
   MeleeSwipeEvent,
   BoomerangThrownEvent,
+  LevelUpChoicePayload,
 } from "./messages.js";
 
 /**
@@ -64,6 +76,40 @@ import type {
  * with its own non-Schema state object — both call paths share identical
  * coyote semantics, which is what keeps prediction in lockstep with server.
  */
+/**
+ * M9 US-002: single source of effect-multiplier lookup for passive
+ * items. Walks `player.items`, multiplicatively accumulates the value
+ * of every item whose `effect` matches, returns NEUTRAL_MULTIPLIER (1.0)
+ * if no items match.
+ *
+ * Dispatches on the `effect` enum value ONLY — never on item name
+ * (CLAUDE.md rule 12). Adding a new ItemEffect requires (a) extending
+ * the union in items.ts, and (b) wiring the call at the new effect's
+ * application site; this helper is unchanged.
+ *
+ * Stacking semantics: multiplicative. If a player owned two
+ * damage_mult items at L1 (1.10 each), the combined multiplier would
+ * be 1.21. In M9 there's one item per effect kind, so the multi-stack
+ * path is defensive; future milestones may add second-effect items.
+ *
+ * Hot-path note: O(player.items.length) per call. Called from damage
+ * emit sites (≤ 6 calls per damage tick across all enemies in radius),
+ * cooldown set sites (once per fire), tickPlayers (once per player per
+ * tick), tickGems (cached once per player at the start of the tick),
+ * and item pickup. items.length ≤ 6 in M9 — net cost is negligible.
+ */
+export function getItemMultiplier(player: Player, effect: ItemEffect): number {
+  let mult = NEUTRAL_MULTIPLIER;
+  for (let i = 0; i < player.items.length; i++) {
+    const item = player.items[i]!;
+    const def = ITEM_KINDS[item.kind];
+    if (def && def.effect === effect && item.level > 0) {
+      mult *= itemValueAt(def, item.level);
+    }
+  }
+  return mult;
+}
+
 export function canJump(
   state: { grounded: boolean; lastGroundedAt: number },
   tick: number,
@@ -1814,38 +1860,98 @@ export function tickGems(state: RoomState, emit: Emit): void {
  */
 export function resolveLevelUp(
   player: Player,
-  weaponKind: number,
+  picked: { type: "weapon" | "item"; index: number },
   emit: Emit,
   autoPicked: boolean,
 ): void {
-  const def = WEAPON_KINDS[weaponKind];
-  if (!def) {
-    // Unknown kind; clear pending state to avoid wedging the player and bail.
+  if (picked.type === "weapon") {
+    const def = WEAPON_KINDS[picked.index];
+    if (!def) {
+      // Unknown kind — clear pending state to avoid wedging the player and bail.
+      player.pendingLevelUp = false;
+      player.levelUpChoices.length = 0;
+      player.levelUpDeadlineTick = 0;
+      return;
+    }
+
+    let newLevel: number;
+    let existingIdx = -1;
+    for (let i = 0; i < player.weapons.length; i++) {
+      if (player.weapons[i]!.kind === picked.index) {
+        existingIdx = i;
+        break;
+      }
+    }
+    if (existingIdx >= 0) {
+      const w = player.weapons[existingIdx]!;
+      w.level = Math.min(w.level + 1, def.levels.length);
+      newLevel = w.level;
+    } else {
+      const w = new WeaponState();
+      w.kind = picked.index;
+      w.level = 1;
+      w.cooldownRemaining = 0;
+      player.weapons.push(w);
+      newLevel = 1;
+    }
+
+    player.pendingLevelUp = false;
+    player.levelUpChoices.length = 0;
+    player.levelUpDeadlineTick = 0;
+
+    emit({
+      type: "level_up_resolved",
+      playerId: player.sessionId,
+      picked,
+      newLevel,
+      autoPicked,
+    });
+    return;
+  }
+
+  // picked.type === "item"
+  const itemDef = ITEM_KINDS[picked.index];
+  if (!itemDef) {
     player.pendingLevelUp = false;
     player.levelUpChoices.length = 0;
     player.levelUpDeadlineTick = 0;
     return;
   }
 
-  let newWeaponLevel: number;
-  let existingIdx = -1;
-  for (let i = 0; i < player.weapons.length; i++) {
-    if (player.weapons[i]!.kind === weaponKind) {
-      existingIdx = i;
+  let newLevel: number;
+  let existingItemIdx = -1;
+  for (let i = 0; i < player.items.length; i++) {
+    if (player.items[i]!.kind === picked.index) {
+      existingItemIdx = i;
       break;
     }
   }
-  if (existingIdx >= 0) {
-    const w = player.weapons[existingIdx]!;
-    w.level = Math.min(w.level + 1, def.levels.length);
-    newWeaponLevel = w.level;
+  if (existingItemIdx >= 0) {
+    const item = player.items[existingItemIdx]!;
+    // Cap at L5 (silent no-op per open-question A1 resolution — a
+    // maxed item picked again doesn't fizzle visibly; just doesn't
+    // bump). Re-roll behavior is queued for a future polish pass.
+    item.level = Math.min(item.level + 1, itemDef.values.length);
+    newLevel = item.level;
   } else {
-    const w = new WeaponState();
-    w.kind = weaponKind;
-    w.level = 1;
-    w.cooldownRemaining = 0;
-    player.weapons.push(w);
-    newWeaponLevel = 1;
+    const item = new ItemState();
+    item.kind = picked.index;
+    item.level = 1;
+    player.items.push(item);
+    newLevel = 1;
+  }
+
+  // M9 US-002: max_hp_mult item pickups apply their effect immediately —
+  // recompute player.maxHp and heal for the diff (per A3 resolution:
+  // full diff heal so Apple of Idun at low HP is valuable). Other item
+  // effects are read on-demand at their application sites and don't
+  // need a one-shot apply here.
+  if (itemDef.effect === "max_hp_mult") {
+    const oldMaxHp = player.maxHp;
+    const newMaxHp = Math.floor(PLAYER_MAX_HP * getItemMultiplier(player, "max_hp_mult"));
+    const diff = newMaxHp - oldMaxHp;
+    player.maxHp = newMaxHp;
+    player.hp = Math.min(player.hp + Math.max(0, diff), newMaxHp);
   }
 
   player.pendingLevelUp = false;
@@ -1855,8 +1961,8 @@ export function resolveLevelUp(
   emit({
     type: "level_up_resolved",
     playerId: player.sessionId,
-    weaponKind,
-    newWeaponLevel,
+    picked,
+    newLevel,
     autoPicked,
   });
 }
@@ -1881,13 +1987,22 @@ export function tickXp(state: RoomState, rng: Rng, emit: Emit): void {
     player.xp -= need;
     player.level += 1;
 
-    // Roll 3 choices (with replacement). Mutate in place: clear+push.
+    // M9 US-002: mixed pool — roll 3 choices (with replacement) from
+    // the union of WEAPON_KINDS and ITEM_KINDS, equally weighted. Each
+    // rng() call consumes one slot in the deterministic schedule;
+    // sequence is identical to M8's pool but with extended range.
     player.levelUpChoices.length = 0;
-    const choicesArr: number[] = [];
+    const choicesArr: LevelUpChoicePayload[] = [];
+    const poolSize = WEAPON_KINDS.length + ITEM_KINDS.length;
     for (let i = 0; i < 3; i++) {
-      const k = Math.floor(rng() * WEAPON_KINDS.length);
-      player.levelUpChoices.push(k);
-      choicesArr.push(k);
+      const draw = Math.floor(rng() * poolSize);
+      const isItem = draw >= WEAPON_KINDS.length;
+      const index = isItem ? draw - WEAPON_KINDS.length : draw;
+      const choice = new LevelUpChoice();
+      choice.type = isItem ? LEVEL_UP_CHOICE_ITEM : LEVEL_UP_CHOICE_WEAPON;
+      choice.index = index;
+      player.levelUpChoices.push(choice);
+      choicesArr.push({ type: isItem ? "item" : "weapon", index });
     }
 
     player.pendingLevelUp = true;
@@ -1918,8 +2033,19 @@ export function tickLevelUpDeadlines(state: RoomState, emit: Emit): void {
       player.levelUpDeadlineTick = 0;
       return;
     }
-    const weaponKind = player.levelUpChoices[0]!;
-    resolveLevelUp(player, weaponKind, emit, /* autoPicked */ true);
+    // M9 US-002: choice 0 is now a LevelUpChoice schema with {type,
+    // index}, not a bare weapon-kind int. Decode the wire-level uint8
+    // type into the string literal expected by resolveLevelUp.
+    const choice = player.levelUpChoices[0]!;
+    resolveLevelUp(
+      player,
+      {
+        type: choice.type === LEVEL_UP_CHOICE_ITEM ? "item" : "weapon",
+        index: choice.index,
+      },
+      emit,
+      /* autoPicked */ true,
+    );
   });
 }
 

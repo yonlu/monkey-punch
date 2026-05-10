@@ -147,19 +147,36 @@ export type GemCollectedEvent = {
   value: number;
 };
 
+// M9 US-002: structured choice — either a weapon or an item. The
+// schema-side `LevelUpChoice` class encodes `type` as uint8 (0=weapon,
+// 1=item, see LEVEL_UP_CHOICE_WEAPON / _ITEM in schema.ts); on the
+// wire here we use the string literal for API readability.
+export type LevelUpChoicePayload = {
+  type: "weapon" | "item";
+  index: number;        // index into WEAPON_KINDS or ITEM_KINDS
+};
+
 export type LevelUpOfferedEvent = {
   type: "level_up_offered";
   playerId: string;
   newLevel: number;
-  choices: number[];     // length 3, weapon-kind ints (with replacement)
+  // M9 US-002: was `number[]` (just weapon-kind ints). Now structured —
+  // a length-3 mix of weapon and item choices, equally weighted from
+  // the union pool.
+  choices: LevelUpChoicePayload[];
   deadlineTick: number;  // RoomState.tick at which auto-pick fires
 };
 
+// M9 US-002: `picked` replaces the M5–M8 `weaponKind` + `newWeaponLevel`
+// pair. Now describes BOTH weapon picks (type='weapon', index = weapon
+// kind) and item picks (type='item', index = item kind). `newLevel`
+// applies to either: for a weapon pick it's the new weapon level; for
+// an item pick it's the new item level.
 export type LevelUpResolvedEvent = {
   type: "level_up_resolved";
   playerId: string;
-  weaponKind: number;
-  newWeaponLevel: number;
+  picked: LevelUpChoicePayload;
+  newLevel: number;
   autoPicked: boolean;
 };
 

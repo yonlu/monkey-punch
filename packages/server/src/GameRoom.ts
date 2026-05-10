@@ -18,6 +18,7 @@ import {
   tickSpawner,
   resolveLevelUp,
   spawnDebugBurst,
+  LEVEL_UP_CHOICE_ITEM,
   PROJECTILE_MAX_CAPACITY,
   ENEMY_CONTACT_COOLDOWN_S,
   SIM_DT_S,
@@ -256,8 +257,19 @@ export class GameRoom extends Room<RoomState> {
       if (!player || !player.pendingLevelUp) return;
       const idx = Number(message?.choiceIndex);
       if (!Number.isInteger(idx) || idx < 0 || idx >= player.levelUpChoices.length) return;
-      const weaponKind = player.levelUpChoices[idx]!;
-      resolveLevelUp(player, weaponKind, this.emit, /* autoPicked */ false);
+      // M9 US-002: levelUpChoices entries are now {type:uint8, index:uint8}
+      // schema (LevelUpChoice class). Decode the wire-level type into the
+      // string literal expected by resolveLevelUp.
+      const choice = player.levelUpChoices[idx]!;
+      resolveLevelUp(
+        player,
+        {
+          type: choice.type === LEVEL_UP_CHOICE_ITEM ? "item" : "weapon",
+          index: choice.index,
+        },
+        this.emit,
+        /* autoPicked */ false,
+      );
     });
 
     if (ALLOW_DEBUG_MESSAGES) {

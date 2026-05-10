@@ -51,6 +51,53 @@ defineTypes(WeaponState, {
   cooldownRemaining: "number",
 });
 
+// M9 US-002: passive items on the player. Mirrors WeaponState shape
+// (kind + level only — items have no cooldown; their effects are read
+// at every effect-application site via getItemMultiplier).
+export class ItemState extends Schema {
+  declare kind: number;
+  declare level: number;
+  constructor() {
+    super();
+    this.kind = 0;
+    this.level = 0;
+  }
+}
+defineTypes(ItemState, {
+  kind: "uint8",
+  level: "uint8",
+});
+
+// M9 US-002: level-up choice as a structured entry rather than a bare
+// weapon-kind int. `type` discriminates weapon vs item; `index` is the
+// kind index into WEAPON_KINDS or ITEM_KINDS respectively. The schema
+// uses uint8 for both fields (8 bytes on wire per choice — modest).
+//
+// The matching LevelUpOfferedEvent.choices payload uses string literal
+// types ("weapon" | "item") for type-safety at the API boundary;
+// the schema stores them as 0/1 numbers via the mapping in rules.ts.
+//   0 = weapon
+//   1 = item
+export class LevelUpChoice extends Schema {
+  declare type: number;
+  declare index: number;
+  constructor() {
+    super();
+    this.type = 0;
+    this.index = 0;
+  }
+}
+defineTypes(LevelUpChoice, {
+  type: "uint8",
+  index: "uint8",
+});
+
+// Wire-level encoding of LevelUpChoice.type. Centralized here so the
+// 0/1 mapping isn't scattered as magic numbers across rules.ts and
+// the client.
+export const LEVEL_UP_CHOICE_WEAPON = 0;
+export const LEVEL_UP_CHOICE_ITEM = 1;
+
 export class Player extends Schema {
   declare sessionId: string;
   declare name: string;
@@ -76,8 +123,16 @@ export class Player extends Schema {
   declare xp: number;
   declare level: number;
   declare weapons: ArraySchema<WeaponState>;
+  // M9 US-002: passive items owned by the player. Mirrors `weapons`
+  // shape — one ItemState per item kind, with `level` tracking the
+  // current upgrade level (1–5). Items are unique per kind: picking
+  // the same item again increments level rather than appending.
+  declare items: ArraySchema<ItemState>;
   declare pendingLevelUp: boolean;
-  declare levelUpChoices: ArraySchema<number>;
+  // M9 US-002: level-up choices are now structured (type + index) so
+  // both weapons and items can appear in the mixed pool. Was
+  // ArraySchema<number> in M5-M8 (just weapon kind ints).
+  declare levelUpChoices: ArraySchema<LevelUpChoice>;
   declare levelUpDeadlineTick: number;
   declare hp: number;
   declare maxHp: number;
@@ -103,8 +158,9 @@ export class Player extends Schema {
     this.xp = 0;
     this.level = 1;
     this.weapons = new ArraySchema<WeaponState>();
+    this.items = new ArraySchema<ItemState>();
     this.pendingLevelUp = false;
-    this.levelUpChoices = new ArraySchema<number>();
+    this.levelUpChoices = new ArraySchema<LevelUpChoice>();
     this.levelUpDeadlineTick = 0;
     this.hp = PLAYER_MAX_HP;
     this.maxHp = PLAYER_MAX_HP;
@@ -131,8 +187,9 @@ defineTypes(Player, {
   xp: "uint32",
   level: "uint8",
   weapons: [WeaponState],
+  items: [ItemState],
   pendingLevelUp: "boolean",
-  levelUpChoices: [ "uint8" ],
+  levelUpChoices: [LevelUpChoice],
   levelUpDeadlineTick: "uint32",
   hp: "uint16",
   maxHp: "uint16",

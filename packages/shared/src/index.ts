@@ -4,6 +4,7 @@ export * from "./messages.js";
 export * from "./rules.js";
 export * from "./rng.js";
 export * from "./weapons.js";
+export * from "./items.js";
 export * from "./terrain.js";
 export * from "./props.js";
 

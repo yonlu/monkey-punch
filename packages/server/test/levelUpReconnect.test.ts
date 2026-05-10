@@ -51,7 +51,15 @@ describe("integration: level-up state survives reconnection", () => {
 
     const me = room.state.players.get(sessionId)!;
     const beforeDeadline = me.levelUpDeadlineTick;
-    const beforeChoices = [me.levelUpChoices[0]!, me.levelUpChoices[1]!, me.levelUpChoices[2]!];
+    // M9 US-002: levelUpChoices is now ArraySchema<LevelUpChoice> (was
+    // ArraySchema<number>). Capture the {type, index} VALUES — schema
+    // objects get new references on reconnect, so reference equality
+    // (.toBe) won't hold; we compare the structural payload instead.
+    const beforeChoices = [
+      { type: me.levelUpChoices[0]!.type, index: me.levelUpChoices[0]!.index },
+      { type: me.levelUpChoices[1]!.type, index: me.levelUpChoices[1]!.index },
+      { type: me.levelUpChoices[2]!.type, index: me.levelUpChoices[2]!.index },
+    ];
     expect(beforeDeadline).toBeGreaterThan(0);
 
     // Force a non-graceful disconnect.
@@ -66,9 +74,10 @@ describe("integration: level-up state survives reconnection", () => {
     const meAfter = resumed.state.players.get(sessionId)!;
     expect(meAfter.pendingLevelUp).toBe(true);
     expect(meAfter.levelUpChoices.length).toBe(3);
-    expect(meAfter.levelUpChoices[0]).toBe(beforeChoices[0]);
-    expect(meAfter.levelUpChoices[1]).toBe(beforeChoices[1]);
-    expect(meAfter.levelUpChoices[2]).toBe(beforeChoices[2]);
+    for (let i = 0; i < 3; i++) {
+      expect(meAfter.levelUpChoices[i]!.type).toBe(beforeChoices[i]!.type);
+      expect(meAfter.levelUpChoices[i]!.index).toBe(beforeChoices[i]!.index);
+    }
     // deadlineTick is in tick-space; it persists exactly.
     expect(meAfter.levelUpDeadlineTick).toBe(beforeDeadline);
 

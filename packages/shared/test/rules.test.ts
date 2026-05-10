@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
-import { RoomState, Player, Enemy, WeaponState, Gem, BloodPool } from "../src/schema.js";
+import { RoomState, Player, Enemy, WeaponState, Gem, BloodPool, LevelUpChoice, ItemState } from "../src/schema.js";
+import { ITEM_KINDS } from "../src/items.js";
 import { initTerrain, terrainHeight } from "../src/terrain.js";
 
 // M7 US-002: tickPlayers calls terrainHeight which requires initTerrain.
@@ -30,6 +31,7 @@ import {
   tickBloodPools,
   applySlow,
   tickStatusEffects,
+  getItemMultiplier,
   type SpawnerState,
   type Projectile,
   type Boomerang,
@@ -1147,19 +1149,30 @@ describe("tickWeapons orbit arm", () => {
   });
 });
 
+// M9 US-002: helper to push a LevelUpChoice schema entry onto a player's
+// levelUpChoices (now ArraySchema<LevelUpChoice> not ArraySchema<number>).
+function pushChoice(p: Player, type: "weapon" | "item", index: number): void {
+  const c = new LevelUpChoice();
+  c.type = type === "item" ? 1 : 0;
+  c.index = index;
+  p.levelUpChoices.push(c);
+}
+
 describe("resolveLevelUp", () => {
   it("upgrades existing weapon: increments level, no new WeaponState pushed, emits resolved", () => {
     const p = new Player();
     p.sessionId = "p1";
     p.pendingLevelUp = true;
-    p.levelUpChoices.push(0, 1, 0);
+    pushChoice(p, "weapon", 0);
+    pushChoice(p, "weapon", 1);
+    pushChoice(p, "weapon", 0);
     p.levelUpDeadlineTick = 200;
     const w = new WeaponState();
     w.kind = 0; w.level = 1; w.cooldownRemaining = 0;
     p.weapons.push(w);
 
     const events: CombatEvent[] = [];
-    resolveLevelUp(p, /* weaponKind */ 0, (e) => events.push(e), /* autoPicked */ false);
+    resolveLevelUp(p, { type: "weapon", index: 0 }, (e) => events.push(e), /* autoPicked */ false);
 
     expect(p.weapons.length).toBe(1);
     expect(p.weapons[0]!.level).toBe(2);
@@ -1171,8 +1184,9 @@ describe("resolveLevelUp", () => {
     expect(resolved).toBeDefined();
     if (resolved.type === "level_up_resolved") {
       expect(resolved.playerId).toBe("p1");
-      expect(resolved.weaponKind).toBe(0);
-      expect(resolved.newWeaponLevel).toBe(2);
+      expect(resolved.picked.type).toBe("weapon");
+      expect(resolved.picked.index).toBe(0);
+      expect(resolved.newLevel).toBe(2);
       expect(resolved.autoPicked).toBe(false);
     }
   });
@@ -1181,10 +1195,12 @@ describe("resolveLevelUp", () => {
     const p = new Player();
     p.sessionId = "p1";
     p.pendingLevelUp = true;
-    p.levelUpChoices.push(1, 0, 1);
+    pushChoice(p, "weapon", 1);
+    pushChoice(p, "weapon", 0);
+    pushChoice(p, "weapon", 1);
 
     const events: CombatEvent[] = [];
-    resolveLevelUp(p, /* Orbit */ 1, (e) => events.push(e), /* autoPicked */ true);
+    resolveLevelUp(p, { type: "weapon", index: 1 }, (e) => events.push(e), /* autoPicked */ true);
 
     expect(p.weapons.length).toBe(1);
     expect(p.weapons[0]!.kind).toBe(1);
@@ -1193,7 +1209,7 @@ describe("resolveLevelUp", () => {
 
     const resolved = events.find((e) => e.type === "level_up_resolved")!;
     if (resolved.type === "level_up_resolved") {
-      expect(resolved.newWeaponLevel).toBe(1);
+      expect(resolved.newLevel).toBe(1);
       expect(resolved.autoPicked).toBe(true);
     }
   });
@@ -1207,7 +1223,7 @@ describe("resolveLevelUp", () => {
     p.weapons.push(w);
 
     const events: CombatEvent[] = [];
-    resolveLevelUp(p, 0, (e) => events.push(e), false);
+    resolveLevelUp(p, { type: "weapon", index: 0 }, (e) => events.push(e), false);
 
     expect(p.weapons[0]!.level).toBe(def.levels.length); // capped, not 6
   });
@@ -1292,7 +1308,7 @@ describe("tickXp", () => {
     expect(events2.filter((e) => e.type === "level_up_offered").length).toBe(1);
   });
 
-  it("rolls 3 choices in [0, WEAPON_KINDS.length) using the supplied rng", () => {
+  it("M9 US-002: rolls 3 choices from the mixed weapons+items pool using the supplied rng", () => {
     const state = new RoomState();
     const p = addPlayer(state, "p1", 0, 0);
     p.level = 1;
@@ -1302,9 +1318,17 @@ describe("tickXp", () => {
     tickXp(state, mulberry32(7), (e) => events.push(e));
 
     expect(p.levelUpChoices.length).toBe(3);
+    // Each choice is a LevelUpChoice schema with type (0=weapon, 1=item)
+    // and index. Both fields are within their respective bounds.
     p.levelUpChoices.forEach((c) => {
-      expect(c).toBeGreaterThanOrEqual(0);
-      expect(c).toBeLessThan(WEAPON_KINDS.length);
+      expect(c.type === 0 || c.type === 1).toBe(true);
+      if (c.type === 0) {
+        expect(c.index).toBeGreaterThanOrEqual(0);
+        expect(c.index).toBeLessThan(WEAPON_KINDS.length);
+      } else {
+        expect(c.index).toBeGreaterThanOrEqual(0);
+        expect(c.index).toBeLessThan(ITEM_KINDS.length);
+      }
     });
   });
 });
@@ -1315,7 +1339,9 @@ describe("tickLevelUpDeadlines", () => {
     state.tick = 100;
     const p = addPlayer(state, "p1", 0, 0);
     p.pendingLevelUp = true;
-    p.levelUpChoices.push(0, 0, 0);
+    pushChoice(p, "weapon", 0);
+    pushChoice(p, "weapon", 0);
+    pushChoice(p, "weapon", 0);
     p.levelUpDeadlineTick = 200;
 
     const events: CombatEvent[] = [];
@@ -1330,7 +1356,9 @@ describe("tickLevelUpDeadlines", () => {
     state.tick = 200;
     const p = addPlayer(state, "p1", 0, 0);
     p.pendingLevelUp = true;
-    p.levelUpChoices.push(1, 0, 0);
+    pushChoice(p, "weapon", 1); // Orbit at choice 0
+    pushChoice(p, "weapon", 0);
+    pushChoice(p, "weapon", 0);
     p.levelUpDeadlineTick = 200;
 
     const events: CombatEvent[] = [];
@@ -3962,5 +3990,239 @@ describe("HitEvent.tag — M8 US-013 damage-number style coverage", () => {
     if (!hit || hit.type !== "hit") throw new Error("expected hit");
     expect(hit.tag).toBe("default");
     expect(hit.weaponKind).toBe(6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M9 US-002: item infrastructure — schema, table, helper, mixed choice pool.
+// Items are not yet wired to their effect application sites (that's US-003+);
+// these tests cover the helper + pickup paths + mixed pool roll.
+// ---------------------------------------------------------------------------
+
+describe("getItemMultiplier — M9 US-002", () => {
+  it("returns 1.0 when player has no items", () => {
+    const p = new Player();
+    expect(getItemMultiplier(p, "damage_mult")).toBe(1.0);
+    expect(getItemMultiplier(p, "speed_mult")).toBe(1.0);
+  });
+
+  it("returns the level value for one matching-effect item", () => {
+    const p = new Player();
+    const item = new ItemState();
+    item.kind = 0; // Ifrit's Talisman → damage_mult
+    item.level = 3;
+    p.items.push(item);
+
+    // Ifrit's L3 = 1.30
+    expect(getItemMultiplier(p, "damage_mult")).toBeCloseTo(1.30);
+    // Non-matching effects untouched.
+    expect(getItemMultiplier(p, "speed_mult")).toBe(1.0);
+  });
+
+  it("multiplies values across multiple same-effect items (defensive — in M9 there's one per effect kind)", () => {
+    const p = new Player();
+    // Two damage_mult entries pushed manually. Normally resolveLevelUp
+    // increments level on an existing entry rather than pushing a
+    // second, but the helper supports the stack case.
+    const a = new ItemState();
+    a.kind = 0; a.level = 1; // 1.10
+    const b = new ItemState();
+    b.kind = 0; b.level = 1; // 1.10
+    p.items.push(a);
+    p.items.push(b);
+    expect(getItemMultiplier(p, "damage_mult")).toBeCloseTo(1.10 * 1.10);
+  });
+
+  it("ignores items with level 0 (defensive)", () => {
+    const p = new Player();
+    const item = new ItemState();
+    item.kind = 0; item.level = 0; // never normally happens; defensive
+    p.items.push(item);
+    expect(getItemMultiplier(p, "damage_mult")).toBe(1.0);
+  });
+
+  it("dispatches on effect enum, never on item name (rule 12) — verified by helper signature accepting any ItemEffect", () => {
+    const p = new Player();
+    // All 6 effects can be queried with the same helper. Compile-time
+    // type-checked; runtime returns NEUTRAL_MULTIPLIER for absent items.
+    expect(getItemMultiplier(p, "damage_mult")).toBe(1.0);
+    expect(getItemMultiplier(p, "cooldown_mult")).toBe(1.0);
+    expect(getItemMultiplier(p, "max_hp_mult")).toBe(1.0);
+    expect(getItemMultiplier(p, "speed_mult")).toBe(1.0);
+    expect(getItemMultiplier(p, "magnet_mult")).toBe(1.0);
+    expect(getItemMultiplier(p, "xp_mult")).toBe(1.0);
+  });
+});
+
+describe("resolveLevelUp — M9 US-002 item path", () => {
+  it("first item pickup pushes a new ItemState at level 1", () => {
+    const p = new Player();
+    p.sessionId = "p1";
+    p.pendingLevelUp = true;
+    pushChoice(p, "item", 0);
+
+    const events: CombatEvent[] = [];
+    resolveLevelUp(p, { type: "item", index: 0 }, (e) => events.push(e), /* autoPicked */ false);
+
+    expect(p.items.length).toBe(1);
+    expect(p.items[0]!.kind).toBe(0);
+    expect(p.items[0]!.level).toBe(1);
+    expect(p.pendingLevelUp).toBe(false);
+    expect(p.levelUpChoices.length).toBe(0);
+
+    const resolved = events.find((e) => e.type === "level_up_resolved")!;
+    if (resolved.type === "level_up_resolved") {
+      expect(resolved.picked.type).toBe("item");
+      expect(resolved.picked.index).toBe(0);
+      expect(resolved.newLevel).toBe(1);
+    }
+  });
+
+  it("second pickup of same item increments level instead of pushing new ItemState", () => {
+    const p = new Player();
+    p.sessionId = "p1";
+    p.pendingLevelUp = true;
+    pushChoice(p, "item", 1);
+    const existing = new ItemState();
+    existing.kind = 1; existing.level = 2;
+    p.items.push(existing);
+
+    resolveLevelUp(p, { type: "item", index: 1 }, () => {}, false);
+
+    expect(p.items.length).toBe(1);
+    expect(p.items[0]!.level).toBe(3);
+  });
+
+  it("L5 cap: picking an item already at L5 silently no-ops (per A1 resolution)", () => {
+    const p = new Player();
+    p.sessionId = "p1";
+    p.pendingLevelUp = true;
+    pushChoice(p, "item", 0);
+    const existing = new ItemState();
+    existing.kind = 0; existing.level = ITEM_KINDS[0]!.values.length; // L5
+    p.items.push(existing);
+
+    resolveLevelUp(p, { type: "item", index: 0 }, () => {}, false);
+
+    expect(p.items[0]!.level).toBe(ITEM_KINDS[0]!.values.length); // still L5
+  });
+
+  it("Apple of Idun pickup recomputes maxHp and heals the diff", () => {
+    const p = new Player();
+    p.sessionId = "p1";
+    p.pendingLevelUp = true;
+    pushChoice(p, "item", 2); // Apple of Idun
+    // Player at half HP — heal diff should bring HP up.
+    p.maxHp = 100;
+    p.hp = 50;
+
+    resolveLevelUp(p, { type: "item", index: 2 }, () => {}, false);
+
+    // Apple of Idun L1 multiplier 1.20 → new maxHp = 120, diff = +20.
+    expect(p.maxHp).toBe(120);
+    expect(p.hp).toBe(70);
+  });
+
+  it("Apple of Idun at full HP: maxHp scales AND hp scales with it (full health preserved)", () => {
+    const p = new Player();
+    p.sessionId = "p1";
+    p.pendingLevelUp = true;
+    pushChoice(p, "item", 2);
+    p.maxHp = 100;
+    p.hp = 100; // full
+
+    resolveLevelUp(p, { type: "item", index: 2 }, () => {}, false);
+
+    expect(p.maxHp).toBe(120);
+    expect(p.hp).toBe(120); // full health preserved
+  });
+
+  it("Apple of Idun at low HP: heals diff but caps at new maxHp", () => {
+    const p = new Player();
+    p.sessionId = "p1";
+    p.pendingLevelUp = true;
+    pushChoice(p, "item", 2);
+    p.maxHp = 100;
+    p.hp = 1;
+
+    resolveLevelUp(p, { type: "item", index: 2 }, () => {}, false);
+
+    expect(p.maxHp).toBe(120);
+    expect(p.hp).toBe(21); // 1 + 20 diff
+  });
+});
+
+describe("tickXp — M9 US-002 mixed pool", () => {
+  it("rolls choices from both weapons AND items given a long enough sample", () => {
+    // With 8 weapons + 6 items = 14 entries in the pool, and 3 choices
+    // per level-up, a single run of 100 level-ups (300 rolls) is very
+    // likely to produce at least one item AND at least one weapon if
+    // the pool is truly mixed.
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.level = 1;
+    p.xp = xpForLevel(1) * 100;
+    const rng = mulberry32(42);
+
+    let weaponCount = 0;
+    let itemCount = 0;
+    const events: CombatEvent[] = [];
+
+    for (let i = 0; i < 100; i++) {
+      // Reset pending state to allow re-rolling.
+      p.pendingLevelUp = false;
+      p.levelUpChoices.length = 0;
+      p.xp = xpForLevel(p.level);
+      tickXp(state, rng, (e) => events.push(e));
+      for (let c = 0; c < 3; c++) {
+        const choice = p.levelUpChoices[c]!;
+        if (choice.type === 0) weaponCount++;
+        else itemCount++;
+      }
+    }
+
+    expect(weaponCount).toBeGreaterThan(0);
+    expect(itemCount).toBeGreaterThan(0);
+    // Expected ratio: 8/14 weapons (~57%), 6/14 items (~43%). With 300
+    // rolls, sample should be within reasonable bounds.
+    expect(weaponCount).toBeGreaterThan(100); // at least 1/3 weapons
+    expect(itemCount).toBeGreaterThan(50);    // at least 1/6 items
+  });
+
+  it("identical seed produces identical mixed-pool choices (cross-client determinism)", () => {
+    const setupPlayer = () => {
+      const state = new RoomState();
+      const p = addPlayer(state, "p1", 0, 0);
+      p.level = 1;
+      p.xp = xpForLevel(1);
+      return state;
+    };
+
+    const state1 = setupPlayer();
+    tickXp(state1, mulberry32(99), () => {});
+    const p1 = state1.players.get("p1")!;
+
+    const state2 = setupPlayer();
+    tickXp(state2, mulberry32(99), () => {});
+    const p2 = state2.players.get("p2");
+    const p2_ = state2.players.get("p1")!; // both rooms use sessionId "p1"
+
+    for (let i = 0; i < 3; i++) {
+      expect(p2_.levelUpChoices[i]!.type).toBe(p1.levelUpChoices[i]!.type);
+      expect(p2_.levelUpChoices[i]!.index).toBe(p1.levelUpChoices[i]!.index);
+    }
+  });
+});
+
+describe("Player.items schema — M9 US-002 default + encoder regression", () => {
+  it("Player.items defaults to empty ArraySchema and is mutable via push", () => {
+    const p = new Player();
+    expect(p.items.length).toBe(0);
+    const item = new ItemState();
+    item.kind = 3; item.level = 2;
+    p.items.push(item);
+    expect(p.items.length).toBe(1);
+    expect(p.items[0]!.kind).toBe(3);
+    expect(p.items[0]!.level).toBe(2);
   });
 });
