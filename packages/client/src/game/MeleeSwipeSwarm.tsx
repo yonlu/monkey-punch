@@ -91,14 +91,17 @@ export function MeleeSwipeSwarm({ swipes, serverTime }: MeleeSwipeSwarmProps) {
       // 110% of full size.
       const scaleEnvelope = 0.8 + 0.3 * t;
 
-      // Position the slash centered on the player at half-range distance
-      // along the facing vector. Y bumped above origin so the disc sits
-      // visibly above terrain rather than z-fighting.
-      const halfRange = sw.msg.range * 0.5;
+      // US-008 round 2: disc center sits AT the player (not halfRange
+      // forward) — paired with the corrected geometry, the disc's flat
+      // edge passes through the player and the bulge fans forward in
+      // facing direction. Combined with radius 1.0 in the geometry +
+      // per-instance scale = range, the disc's forward extent matches
+      // the weapon's actual hit reach (Damascus L1 = 2.2; Claymore L1
+      // = 3.5). Y bumped 0.15 to sit above terrain (no z-fighting).
       position.set(
-        sw.msg.originX + sw.msg.facingX * halfRange,
+        sw.msg.originX,
         sw.msg.originY + 0.15,
-        sw.msg.originZ + sw.msg.facingZ * halfRange,
+        sw.msg.originZ,
       );
 
       // Orient: yaw from atan2(facingX, facingZ); tilt -90° about X so a
@@ -138,12 +141,17 @@ export function MeleeSwipeSwarm({ swipes, serverTime }: MeleeSwipeSwarmProps) {
       args={[undefined, undefined, MELEE_SWIPE_MAX_CAPACITY]}
       frustumCulled={false}
     >
-      {/* US-008 playtest tuning: bigger base disc (radius 0.7 vs 0.5) +
-          higher segment count for smoother arc edge. The half-circle
-          sector (theta -π/2 → π/2 around the disc's local +Y axis after
-          tilt) reads as a fan-shaped slash centered on player facing.
-          Polish-pass replacement: an animated trail texture. */}
-      <circleGeometry args={[0.7, 24, -Math.PI / 2, Math.PI]} />
+      {/* US-008 playtest tuning round 2: thetaStart fixed so the disc
+          bulges in player facing direction (was thetaStart=-π/2 which
+          put the bulge perpendicular to facing — invisible for narrow
+          weapons like Damascus).
+          Frame chain: CircleGeometry's bulge at -Y → tilt -π/2 about X
+          maps -Y to +Z (local frame after tilt) → yaw quaternion rotates
+          local +Z onto world facing direction. Net: half-disc fans
+          OUTWARD in front of the player.
+          thetaStart=-π, thetaLength=π → vertices span angles -π to 0
+          (the lower half of the original CircleGeometry's circle). */}
+      <circleGeometry args={[1.0, 24, -Math.PI, Math.PI]} />
       <meshBasicMaterial color="#ffffff" transparent opacity={0.7} depthWrite={false} />
     </instancedMesh>
   );
