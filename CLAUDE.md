@@ -64,8 +64,9 @@ binding — violations are bugs.
     schema.
 11. **Tick order.** Each server tick runs in this fixed order:
     `tickPlayers → tickStatusEffects → tickEnemies → tickContactDamage
-    → tickRunEndCheck → tickWeapons → tickProjectiles → tickGems
-    → tickXp → tickLevelUpDeadlines → tickSpawner`.
+    → tickRunEndCheck → tickWeapons → tickProjectiles → tickBoomerangs
+    → tickBloodPools → tickGems → tickXp → tickLevelUpDeadlines
+    → tickSpawner`.
     Players first so weapons see fresh positions; status effects before
     enemies so movement uses fresh slow state (an enemy whose slow
     expires this tick is moved at full speed); contact damage after
@@ -73,14 +74,18 @@ binding — violations are bugs.
     immediately after so weapons/projectiles/spawner all see the
     post-end state; weapons before projectiles so a same-tick fire is
     integrated next tick (it starts with `age = 0` and the projectile's
-    first movement is in the *following* `tickProjectiles` call); gems
-    after projectiles so this-tick deaths drop pickups before pickup
-    checks run; xp after gems so this-tick gem pickups feed the
-    level-up threshold check; deadlines immediately after xp so an
-    auto-pick that fires this tick uses fresh choices; spawner last so
-    the rng schedule is fixed (xp + spawner both consume the room rng
-    — reordering forks the seed; tickStatusEffects does NOT consume rng,
-    so its insertion before tickEnemies leaves the schedule intact).
+    first movement is in the *following* `tickProjectiles` call);
+    boomerangs after projectiles so a same-tick boomerang throw is
+    integrated next tick (mirrors the projectile pattern); blood pools
+    after boomerangs so pools spawned this tick can DoT immediately if
+    they overlap an enemy; gems after blood pools so this-tick pool
+    kills drop pickups before pickup checks run; xp after gems so
+    this-tick gem pickups feed the level-up threshold check; deadlines
+    immediately after xp so an auto-pick that fires this tick uses
+    fresh choices; spawner last so the rng schedule is fixed (xp +
+    spawner both consume the room rng — reordering forks the seed;
+    tickStatusEffects, tickBoomerangs, and tickBloodPools do NOT
+    consume rng, so their insertion leaves the schedule intact).
     This order is load-bearing for fairness AND for cross-client
     determinism — do not reorder.
     Universal invariant (M6 onward): every tick function early-outs at

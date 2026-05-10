@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
-import { RoomState, Player, Enemy, WeaponState, Gem } from "../src/schema.js";
+import { RoomState, Player, Enemy, WeaponState, Gem, BloodPool } from "../src/schema.js";
 import { initTerrain, terrainHeight } from "../src/terrain.js";
 
 // M7 US-002: tickPlayers calls terrainHeight which requires initTerrain.
@@ -25,17 +25,24 @@ import {
   selectTarget,
   runMeleeArcSwing,
   runAuraTick,
+  runBoomerangThrow,
+  tickBoomerangs,
+  tickBloodPools,
   applySlow,
   tickStatusEffects,
   type SpawnerState,
   type Projectile,
+  type Boomerang,
   type WeaponContext,
   type ProjectileContext,
+  type BoomerangContext,
+  type BloodPoolContext,
   type Emit,
   type CombatEvent,
   type ContactCooldownLike,
+  type BloodPoolHitCooldownLike,
 } from "../src/rules.js";
-import type { MeleeArcWeaponDef, AuraWeaponDef } from "../src/weapons.js";
+import type { MeleeArcWeaponDef, AuraWeaponDef, BoomerangWeaponDef } from "../src/weapons.js";
 import {
   PLAYER_SPEED,
   PLAYER_GROUND_OFFSET,
@@ -391,13 +398,16 @@ type CapturedFire = {
   fires: CombatEvent[];
   projectiles: Projectile[];
   ctx: WeaponContext;
+  boomerangs: Boomerang[];
 };
 
 function makeCapture(initialFireId = 1, fixedNowMs = 1_000_000, rngSeed = 42): CapturedFire {
   const fires: CombatEvent[] = [];
   const projectiles: Projectile[] = [];
+  const boomerangs: Boomerang[] = [];
   let next = initialFireId;
   let nextGem = 1;
+  let nextPool = 1;
   const ctx: WeaponContext = {
     nextFireId: () => next++,
     serverNowMs: () => fixedNowMs,
@@ -407,8 +417,12 @@ function makeCapture(initialFireId = 1, fixedNowMs = 1_000_000, rngSeed = 42): C
     // M8 US-005: melee_arc crit rolls. Tests can override rngSeed for
     // crit-determinism cases that need a known sequence.
     rng: mulberry32(rngSeed),
+    // M8 US-011: boomerang infra. Tests that exercise the boomerang
+    // arm read `boomerangs` off the returned object (cast as needed).
+    pushBoomerang: (b) => boomerangs.push(b),
+    nextBloodPoolId: () => nextPool++,
   };
-  return { fires, projectiles, ctx };
+  return Object.assign({ fires, projectiles, ctx }, { boomerangs });
 }
 
 describe("tickWeapons", () => {
@@ -963,6 +977,10 @@ function makeWeaponCtx(opts?: {
     // M8 US-005: melee_arc crit rolls (Damascus US-006 onward). Orbit
     // tests don't fire melee, so a fixed-seed rng is harmless.
     rng: mulberry32(0xCAFE),
+    // M8 US-011: boomerang infra fields. Orbit tests don't fire boomerangs,
+    // so no-op pushBoomerang is fine.
+    pushBoomerang: () => {},
+    nextBloodPoolId: () => 1,
   };
 }
 
@@ -3388,5 +3406,375 @@ describe("tickProjectiles — M8 US-002 pierce", () => {
     const { ctx: ctx2 } = makeProjCtx(1, 1_000_000 + 250);
     tickProjectiles(state, active, 0.05, ctx2, (e) => fires.push(e));
     expect(fires.filter((e) => e.type === "hit").length).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M8 US-011: boomerang behavior + BloodPool schema/tick. Bloody Axe enters
+// WEAPON_KINDS in US-012; this test surface uses synthetic BoomerangWeaponDef
+// to validate the infrastructure independently.
+// ---------------------------------------------------------------------------
+
+function makeBoomerangDef(overrides: Partial<{
+  damage: number;
+  cooldown: number;
+  hitRadius: number;
+  outboundDistance: number;
+  outboundSpeed: number;
+  returnSpeed: number;
+  hitCooldownPerEnemyMs: number;
+  leavesBloodPool: boolean;
+  bloodPoolDamagePerTick: number;
+  bloodPoolTickIntervalMs: number;
+  bloodPoolLifetimeMs: number;
+  bloodPoolSpawnIntervalUnits: number;
+}> = {}): BoomerangWeaponDef {
+  return {
+    name: "TestBoomerang",
+    behavior: { kind: "boomerang" },
+    levels: [{
+      damage: overrides.damage ?? 30,
+      cooldown: overrides.cooldown ?? 1.6,
+      hitRadius: overrides.hitRadius ?? 0.7,
+      outboundDistance: overrides.outboundDistance ?? 7,
+      outboundSpeed: overrides.outboundSpeed ?? 14,
+      returnSpeed: overrides.returnSpeed ?? 18,
+      hitCooldownPerEnemyMs: overrides.hitCooldownPerEnemyMs ?? 300,
+      leavesBloodPool: overrides.leavesBloodPool ?? false,
+      bloodPoolDamagePerTick: overrides.bloodPoolDamagePerTick ?? 0,
+      bloodPoolTickIntervalMs: overrides.bloodPoolTickIntervalMs ?? 300,
+      bloodPoolLifetimeMs: overrides.bloodPoolLifetimeMs ?? 1500,
+      bloodPoolSpawnIntervalUnits: overrides.bloodPoolSpawnIntervalUnits ?? 1.5,
+    }],
+  };
+}
+
+function makeBoomerangCtx(opts?: {
+  nowMs?: number;
+  nextGem?: () => number;
+  nextPoolId?: () => number;
+}): BoomerangContext {
+  return {
+    nextGemId: opts?.nextGem ?? (() => 1),
+    serverNowMs: () => opts?.nowMs ?? 1_000_000,
+    orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+    nextBloodPoolId: opts?.nextPoolId ?? (() => 1),
+  };
+}
+
+function makeBloodPoolCtx(opts?: {
+  nowMs?: number;
+  cooldown?: BloodPoolHitCooldownLike;
+  nextGem?: () => number;
+}): BloodPoolContext {
+  return {
+    serverNowMs: () => opts?.nowMs ?? 1_000_000,
+    bloodPoolHitCooldown: opts?.cooldown ?? {
+      tryHit: () => true,
+      evictEnemy: () => {},
+      evictPool: () => {},
+    },
+    nextGemId: opts?.nextGem ?? (() => 1),
+    orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+  };
+}
+
+describe("runBoomerangThrow — M8 US-011", () => {
+  it("emits BoomerangThrownEvent + pushes a Boomerang with correct fields baked at throw", () => {
+    const state = new RoomState();
+    state.tick = 50;
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 1; p.y = 2; p.z = 3;
+    p.facingX = 0; p.facingZ = 1;
+
+    const def = makeBoomerangDef({ outboundDistance: 5, outboundSpeed: 10, returnSpeed: 14 });
+    const cap = makeCapture(99, 7_777_777);
+    const events: CombatEvent[] = [];
+    runBoomerangThrow(state, p, def, 1, cap.ctx, (e) => events.push(e));
+
+    expect(cap.boomerangs.length).toBe(1);
+    const b = cap.boomerangs[0]!;
+    expect(b.fireId).toBe(99);
+    expect(b.ownerId).toBe("p1");
+    expect(b.phase).toBe("outbound");
+    expect(b.outboundDistance).toBe(5);
+    expect(b.outboundSpeed).toBe(10);
+    expect(b.returnSpeed).toBe(14);
+    expect(b.dirX).toBe(0);
+    expect(b.dirZ).toBe(1);
+    expect(b.x).toBe(1);
+    expect(b.z).toBe(3);
+    expect(b.outboundUsed).toBe(0);
+
+    const thrown = events.find((e) => e.type === "boomerang_thrown");
+    if (!thrown || thrown.type !== "boomerang_thrown") throw new Error("expected boomerang_thrown");
+    expect(thrown.fireId).toBe(99);
+    expect(thrown.outboundDistance).toBe(5);
+    expect(thrown.serverFireTimeMs).toBe(7_777_777);
+    expect(thrown.serverTick).toBe(50);
+  });
+});
+
+describe("tickBoomerangs — M8 US-011 outbound + return", () => {
+  it("outbound: moves at outboundSpeed in dir; flips to returning at outboundDistance", () => {
+    const state = new RoomState();
+    addPlayer(state, "p1", 0, 0);
+    const cap = makeCapture();
+    runBoomerangThrow(state, state.players.get("p1")!, makeBoomerangDef({
+      outboundDistance: 1, outboundSpeed: 10,
+    }), 1, cap.ctx, () => {});
+
+    const b = cap.boomerangs[0]!;
+    expect(b.phase).toBe("outbound");
+
+    // dt 0.05 × speed 10 = 0.5 units; flag still outbound
+    tickBoomerangs(state, cap.boomerangs, 0.05, makeBoomerangCtx(), () => {});
+    expect(b.phase).toBe("outbound");
+    expect(b.outboundUsed).toBeCloseTo(0.5);
+
+    // Another 0.05 → 0.5 more = 1.0 total. EXACTLY at the boundary,
+    // phase flips to returning and the position is clamped to exactly
+    // outboundDistance.
+    tickBoomerangs(state, cap.boomerangs, 0.05, makeBoomerangCtx(), () => {});
+    expect(b.phase).toBe("returning");
+    expect(b.outboundUsed).toBeCloseTo(1.0);
+  });
+
+  it("returning: moves toward owner's CURRENT position and despawns when close", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+
+    const cap = makeCapture();
+    const b: Boomerang = {
+      fireId: 1, ownerId: "p1", weaponKind: 0, weaponLevel: 1,
+      damage: 10, hitRadius: 0.5,
+      outboundDistance: 5, outboundSpeed: 10, returnSpeed: 50,
+      hitCooldownPerEnemyMs: 0,
+      leavesBloodPool: false, bloodPoolDamagePerTick: 0,
+      bloodPoolTickIntervalMs: 300, bloodPoolLifetimeMs: 1500,
+      bloodPoolSpawnIntervalUnits: 1.5,
+      phase: "returning",
+      originX: 0, originY: 0, originZ: 0,
+      dirX: 1, dirZ: 0,
+      x: 5, z: 0,                    // far from owner (at 0,0)
+      outboundUsed: 5, lastBloodPoolDistance: 0,
+      enemyHitCooldownsMs: new Map(),
+      frozenReturnX: -Infinity, frozenReturnZ: -Infinity,
+    };
+    cap.boomerangs.push(b);
+
+    // Tick 1: returnSpeed 50, dt 0.5 → 25-unit step capped at 5 → lands
+    // at owner (0, 0). Distance to owner is now 0, but the despawn
+    // check runs at the TOP of the tick, so this tick's check saw 5 → no
+    // despawn, the boomerang completes its move and survives.
+    tickBoomerangs(state, cap.boomerangs, 0.5, makeBoomerangCtx(), () => {});
+    expect(cap.boomerangs.length).toBe(1);
+    expect(b.x).toBeCloseTo(0);
+    expect(b.z).toBeCloseTo(0);
+
+    // Tick 2: distance to owner is 0 ≤ DESPAWN_RADIUS → despawn.
+    tickBoomerangs(state, cap.boomerangs, 0.5, makeBoomerangCtx(), () => {});
+    expect(cap.boomerangs.length).toBe(0);
+  });
+
+  it("hits an enemy on outbound; per-axe-per-enemy cooldown gates double-hit on return crossing", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0; // throw boomerang along +X
+    addEnemy(state, 1, 2, 0).hp = 1000; // enemy directly forward at 2 units
+
+    const cap = makeCapture();
+    runBoomerangThrow(state, p, makeBoomerangDef({
+      outboundDistance: 5, outboundSpeed: 10, returnSpeed: 10,
+      hitCooldownPerEnemyMs: 5000, // long cooldown — cross enemy on return won't re-hit
+      hitRadius: 0.7,
+    }), 1, cap.ctx, () => {});
+
+    const events: CombatEvent[] = [];
+
+    // First tick at nowMs=1_000_000: outbound, axe moves from x=0 to x=0.5,
+    // enemy at x=2 not yet within hit range of swept-circle. (radiusSum
+    // 0.7+0.5=1.2; segment from (0,0)-(0.5,0); enemy at (2,0); closest
+    // point on segment is (0.5,0); dist 1.5 > 1.2.) No hit.
+    tickBoomerangs(state, cap.boomerangs, 0.05, makeBoomerangCtx({ nowMs: 1_000_000 }), (e) => events.push(e));
+
+    // Walk forward several ticks until the axe crosses the enemy.
+    for (let i = 0; i < 5; i++) {
+      tickBoomerangs(state, cap.boomerangs, 0.05, makeBoomerangCtx({ nowMs: 1_000_000 }), (e) => events.push(e));
+    }
+
+    // Enemy should have been hit at least once on outbound by now.
+    const outboundHits = events.filter((e) => e.type === "hit" && e.enemyId === 1).length;
+    expect(outboundHits).toBeGreaterThanOrEqual(1);
+
+    // Force the axe back through the enemy on return. Run more ticks
+    // with the SAME nowMs (within the 5000ms cooldown) so the second
+    // crossing is gated.
+    while (cap.boomerangs.length > 0) {
+      tickBoomerangs(state, cap.boomerangs, 0.05, makeBoomerangCtx({ nowMs: 1_000_000 }), (e) => events.push(e));
+    }
+
+    // No second hit due to cooldown gating.
+    const totalHits = events.filter((e) => e.type === "hit" && e.enemyId === 1).length;
+    expect(totalHits).toBe(outboundHits);
+  });
+
+  it("leavesBloodPool=true spawns BloodPool entries at fixed intervals along outbound path", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+
+    const cap = makeCapture();
+    runBoomerangThrow(state, p, makeBoomerangDef({
+      outboundDistance: 4, outboundSpeed: 20,
+      leavesBloodPool: true,
+      bloodPoolSpawnIntervalUnits: 1.0,
+      bloodPoolDamagePerTick: 5,
+      bloodPoolTickIntervalMs: 300,
+      bloodPoolLifetimeMs: 1500,
+    }), 1, cap.ctx, () => {});
+
+    // Run outbound ticks until phase flips. dt 0.05 × speed 20 = 1.0
+    // unit per tick → spawn 1 pool per tick. 4 ticks total, 4 pools.
+    let poolId = 100;
+    const ctx = makeBoomerangCtx({ nextPoolId: () => poolId++ });
+    for (let i = 0; i < 4; i++) tickBoomerangs(state, cap.boomerangs, 0.05, ctx, () => {});
+    expect(state.bloodPools.size).toBe(4);
+
+    // Each pool inherits damagePerTick + tickIntervalMs from the boomerang
+    // (baked at spawn — design doc rationale: prevent mid-flight level-up
+    // from changing pool damage retroactively).
+    state.bloodPools.forEach((pool) => {
+      expect(pool.damagePerTick).toBe(5);
+      expect(pool.tickIntervalMs).toBe(300);
+      expect(pool.ownerId).toBe("p1");
+    });
+  });
+
+  it("A1: owner downed mid-flight freezes the return target at owner's last XZ", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+
+    const cap = makeCapture();
+    runBoomerangThrow(state, p, makeBoomerangDef({ outboundDistance: 1, outboundSpeed: 10 }), 1, cap.ctx, () => {});
+
+    // Outbound: 2 ticks → outboundUsed=1.0 → flips to returning at exactly the boundary.
+    tickBoomerangs(state, cap.boomerangs, 0.05, makeBoomerangCtx(), () => {});
+    tickBoomerangs(state, cap.boomerangs, 0.05, makeBoomerangCtx(), () => {});
+    const b = cap.boomerangs[0]!;
+    expect(b.phase).toBe("returning");
+    expect(b.frozenReturnX).toBe(-Infinity);
+
+    // Owner downed at (3, 0, 4) — boomerang should snap return target to that XZ.
+    p.x = 3; p.z = 4;
+    p.downed = true;
+    tickBoomerangs(state, cap.boomerangs, 0.05, makeBoomerangCtx(), () => {});
+    expect(b.frozenReturnX).toBe(3);
+    expect(b.frozenReturnZ).toBe(4);
+
+    // Owner moves further away — frozen target stays at the original capture point.
+    p.x = 100; p.z = 100;
+    tickBoomerangs(state, cap.boomerangs, 0.05, makeBoomerangCtx(), () => {});
+    expect(b.frozenReturnX).toBe(3);
+    expect(b.frozenReturnZ).toBe(4);
+  });
+});
+
+describe("tickBloodPools — M8 US-011", () => {
+  it("DoT damages enemies inside pool radius; cooldown allows hit", () => {
+    const state = new RoomState();
+    const pool = new BloodPool();
+    pool.id = 1;
+    pool.x = 0; pool.z = 0;
+    pool.expiresAt = 9999;
+    pool.ownerId = "p1";
+    pool.damagePerTick = 7;
+    pool.tickIntervalMs = 300;
+    state.bloodPools.set("1", pool);
+
+    addEnemy(state, 1, 0.5, 0).hp = 100;     // inside (radius 1.2)
+    addEnemy(state, 2, 5, 0).hp = 100;        // outside
+
+    const events: CombatEvent[] = [];
+    tickBloodPools(state, makeBloodPoolCtx(), (e) => events.push(e));
+    const hits = events.filter((e) => e.type === "hit");
+    expect(hits.length).toBe(1);
+    expect(state.enemies.get("1")!.hp).toBe(93);
+    expect(state.enemies.get("2")!.hp).toBe(100);
+  });
+
+  it("expired pool is removed from RoomState.bloodPools and cooldown is evicted", () => {
+    const state = new RoomState();
+    state.tick = 100;
+    const pool = new BloodPool();
+    pool.id = 7;
+    pool.x = 0; pool.z = 0;
+    pool.expiresAt = 50; // already expired
+    state.bloodPools.set("7", pool);
+
+    const evicted: number[] = [];
+    tickBloodPools(state, makeBloodPoolCtx({ cooldown: {
+      tryHit: () => true,
+      evictEnemy: () => {},
+      evictPool: (id) => { evicted.push(id); },
+    } }), () => {});
+
+    expect(state.bloodPools.has("7")).toBe(false);
+    expect(evicted).toContain(7);
+  });
+
+  it("per-pool-per-enemy cooldown blocks repeat damage within tickIntervalMs", () => {
+    const state = new RoomState();
+    const pool = new BloodPool();
+    pool.id = 1; pool.x = 0; pool.z = 0; pool.expiresAt = 9999;
+    pool.damagePerTick = 5; pool.tickIntervalMs = 300;
+    pool.ownerId = "p1";
+    state.bloodPools.set("1", pool);
+    addEnemy(state, 1, 0.5, 0).hp = 100;
+
+    const lastHit = new Map<string, number>();
+    const cooldown: BloodPoolHitCooldownLike = {
+      tryHit: (poolId, enemyId, nowMs, cooldownMs) => {
+        const key = `${poolId}:${enemyId}`;
+        const prev = lastHit.get(key);
+        if (prev !== undefined && nowMs - prev < cooldownMs) return false;
+        lastHit.set(key, nowMs);
+        return true;
+      },
+      evictEnemy: () => {},
+      evictPool: () => {},
+    };
+
+    const events: CombatEvent[] = [];
+    // First tick at t=1_000_000: hits.
+    tickBloodPools(state, makeBloodPoolCtx({ nowMs: 1_000_000, cooldown }), (e) => events.push(e));
+    expect(events.filter((e) => e.type === "hit").length).toBe(1);
+
+    // Second call at t=1_000_100 (100ms later) within 300ms cooldown — gated.
+    tickBloodPools(state, makeBloodPoolCtx({ nowMs: 1_000_100, cooldown }), (e) => events.push(e));
+    expect(events.filter((e) => e.type === "hit").length).toBe(1);
+
+    // Third call at t=1_000_400 (400ms later) past cooldown — fires again.
+    tickBloodPools(state, makeBloodPoolCtx({ nowMs: 1_000_400, cooldown }), (e) => events.push(e));
+    expect(events.filter((e) => e.type === "hit").length).toBe(2);
+  });
+
+  it("runEnded early-out: no DoT, no expiry processing", () => {
+    const state = new RoomState();
+    state.runEnded = true;
+    const pool = new BloodPool();
+    pool.id = 1; pool.x = 0; pool.z = 0;
+    pool.expiresAt = 0; // would normally be removed
+    state.bloodPools.set("1", pool);
+    addEnemy(state, 1, 0.5, 0).hp = 100;
+
+    tickBloodPools(state, makeBloodPoolCtx(), () => {});
+
+    // Pool stays — runEnded gate prevents expiry processing.
+    expect(state.bloodPools.has("1")).toBe(true);
+    expect(state.enemies.get("1")!.hp).toBe(100);
   });
 });

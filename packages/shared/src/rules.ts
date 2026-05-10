@@ -1,6 +1,7 @@
 import {
   Enemy,
   Gem,
+  BloodPool,
   WeaponState,
   type Player,
   type RoomState,
@@ -33,7 +34,7 @@ import {
   xpForLevel,
 } from "./constants.js";
 import { terrainHeight } from "./terrain.js";
-import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, isMeleeArcWeapon, isAuraWeapon, type WeaponDef, type TargetingMode, type MeleeArcWeaponDef, type AuraWeaponDef } from "./weapons.js";
+import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, isMeleeArcWeapon, isAuraWeapon, isBoomerangWeapon, type WeaponDef, type TargetingMode, type MeleeArcWeaponDef, type AuraWeaponDef, type BoomerangWeaponDef, type BoomerangLevel } from "./weapons.js";
 import type { Rng } from "./rng.js";
 import type {
   FireEvent,
@@ -46,6 +47,7 @@ import type {
   PlayerDownedEvent,
   RunEndedEvent,
   MeleeSwipeEvent,
+  BoomerangThrownEvent,
 } from "./messages.js";
 
 /**
@@ -448,6 +450,64 @@ export type Projectile = {
   enemyHitCooldownsMs: Map<number, number>;
 };
 
+/**
+ * M8 US-011: server-only state for an in-flight Bloody Axe (or future
+ * boomerang weapons). Travels in 2 phases: outbound (fly out from
+ * `originX/Z` along `dirX/Z` at `outboundSpeed` for `outboundDistance`
+ * units), then return (turn around and fly toward owner.x/z at
+ * `returnSpeed`). Y stays constant at `originY` — boomerangs travel
+ * horizontally even when the owner jumps.
+ *
+ * `phase` discriminates current state. `outboundUsed` accumulates the
+ * outbound distance traveled so far; once it reaches outboundDistance,
+ * phase flips to "returning". `lastBloodPoolDistance` tracks how far
+ * since the last blood pool spawn so we can drop pools at fixed
+ * `bloodPoolSpawnIntervalUnits` along the path.
+ *
+ * `enemyHitCooldownsMs` (server-only Map) gates same-axe-same-enemy
+ * double-hits when the axe crosses an enemy on outbound + return —
+ * matches Projectile.enemyHitCooldownsMs's pattern.
+ *
+ * `frozenReturnX/Z` (set when the owner downs mid-flight per A1):
+ * captures the owner's last-seen XZ so a downed owner doesn't trap the
+ * axe in homing limbo. -Infinity sentinel means "owner still alive,
+ * use live position."
+ */
+export type Boomerang = {
+  fireId: number;
+  ownerId: string;
+  weaponKind: number;
+  weaponLevel: number;
+  damage: number;
+  hitRadius: number;
+  outboundDistance: number;
+  outboundSpeed: number;
+  returnSpeed: number;
+  hitCooldownPerEnemyMs: number;
+  leavesBloodPool: boolean;
+  bloodPoolDamagePerTick: number;
+  bloodPoolTickIntervalMs: number;
+  bloodPoolLifetimeMs: number;
+  bloodPoolSpawnIntervalUnits: number;
+  // Phase + integration state
+  phase: "outbound" | "returning";
+  originX: number;
+  originY: number;
+  originZ: number;
+  dirX: number;            // 2D direction in XZ — boomerangs fly horizontally
+  dirZ: number;
+  x: number;
+  z: number;
+  outboundUsed: number;
+  lastBloodPoolDistance: number;
+  // Per-enemy hit cooldowns (server-only state, NOT in schema)
+  enemyHitCooldownsMs: Map<number, number>;
+  // Owner-down freeze targets (A1: if owner downs mid-flight, return
+  // target snaps to this XZ for the rest of the flight)
+  frozenReturnX: number;   // -Infinity = owner still alive
+  frozenReturnZ: number;
+};
+
 export type CombatEvent =
   | FireEvent
   | HitEvent
@@ -458,7 +518,8 @@ export type CombatEvent =
   | PlayerDamagedEvent
   | PlayerDownedEvent
   | RunEndedEvent
-  | MeleeSwipeEvent;  // M8 US-005
+  | MeleeSwipeEvent       // M8 US-005
+  | BoomerangThrownEvent; // M8 US-011
 export type Emit = (event: CombatEvent) => void;
 
 /**
@@ -483,6 +544,18 @@ export interface ContactCooldownLike {
   sweep(nowMs: number, maxCooldownMs: number): void;
 }
 
+/**
+ * M8 US-011: server-supplied per-(pool, enemy) DoT cooldown. Structural —
+ * the concrete implementation lives in server/src/bloodPoolHitCooldown.ts,
+ * parallel to OrbitHitCooldown / ContactCooldown. tickBloodPools is the
+ * only consumer.
+ */
+export interface BloodPoolHitCooldownLike {
+  tryHit(poolId: number, enemyId: number, nowMs: number, cooldownMs: number): boolean;
+  evictEnemy(enemyId: number): void;
+  evictPool(poolId: number): void;
+}
+
 export type WeaponContext = {
   nextFireId: () => number;
   serverNowMs: () => number;
@@ -494,6 +567,11 @@ export type WeaponContext = {
   // that tickXp + tickSpawner already use. CLAUDE.md rule 6: NEVER
   // Math.random in gameplay code.
   rng: Rng;
+  // M8 US-011: boomerang weapons (Bloody Axe in US-012) push axes via
+  // pushBoomerang, and the L3+ blood-pool spawn path uses nextBloodPoolId
+  // for monotonic pool ids on RoomState.bloodPools.
+  pushBoomerang: (b: Boomerang) => void;
+  nextBloodPoolId: () => number;
 };
 
 /**
@@ -774,6 +852,28 @@ export function tickWeapons(
           }
           break;
         }
+        case "boomerang": {
+          if (!isBoomerangWeapon(def)) return; // narrowing only
+          weapon.cooldownRemaining = Math.max(0, weapon.cooldownRemaining - dt);
+          if (weapon.cooldownRemaining > 0) return;
+          // Gate fire on "any enemy in range" — same AD10 pattern as
+          // projectile/melee_arc. A boomerang's effective reach is its
+          // outboundDistance; use that as the in-range gate so the axe
+          // isn't thrown into empty fields.
+          const stats = statsAt(def, weapon.level);
+          const reachSq = stats.outboundDistance * stats.outboundDistance;
+          let anyInReach = false;
+          state.enemies.forEach((enemy: Enemy) => {
+            if (anyInReach) return;
+            const dx = enemy.x - player.x;
+            const dz = enemy.z - player.z;
+            if (dx * dx + dz * dz <= reachSq) anyInReach = true;
+          });
+          if (!anyInReach) return;
+          runBoomerangThrow(state, player, def, weapon.level, ctx, emit);
+          weapon.cooldownRemaining = stats.cooldown;
+          break;
+        }
         case "aura": {
           if (!isAuraWeapon(def)) return; // narrowing only
           // Aura semantics: WeaponState.cooldownRemaining is repurposed
@@ -790,7 +890,7 @@ export function tickWeapons(
           break;
         }
         default: {
-          // Exhaustiveness guard. If a fifth behavior kind is added to
+          // Exhaustiveness guard. If a sixth behavior kind is added to
           // WeaponDef, this becomes a compile error: `def.behavior` will
           // not have type `never` and the assignment to `_exhaustive`
           // will fail.
@@ -1052,6 +1152,380 @@ export type ProjectileContext = {
   // semantics consistent across orbit and projectile arms.
   serverNowMs: () => number;
 };
+
+/**
+ * M8 US-011: throw one Bloody Axe (or future boomerang weapon). Pushes
+ * a Boomerang onto the active list via ctx.pushBoomerang and emits a
+ * BoomerangThrownEvent so clients can simulate the trajectory locally
+ * (rule 12). Direction comes from player.facing in the XZ plane —
+ * boomerangs travel horizontally, ignoring player Y.
+ *
+ * Caller (tickWeapons boomerang arm) gates fire on "any enemy in
+ * outbound range" before invoking this.
+ */
+export function runBoomerangThrow(
+  state: RoomState,
+  player: Player,
+  def: BoomerangWeaponDef,
+  weaponLevel: number,
+  ctx: WeaponContext,
+  emit: Emit,
+): void {
+  const stats = statsAt(def, weaponLevel);
+  const fireId = ctx.nextFireId();
+  const boomerang: Boomerang = {
+    fireId,
+    ownerId: player.sessionId,
+    weaponKind: WEAPON_KINDS.indexOf(def),
+    weaponLevel,
+    damage: stats.damage,
+    hitRadius: stats.hitRadius,
+    outboundDistance: stats.outboundDistance,
+    outboundSpeed: stats.outboundSpeed,
+    returnSpeed: stats.returnSpeed,
+    hitCooldownPerEnemyMs: stats.hitCooldownPerEnemyMs,
+    leavesBloodPool: stats.leavesBloodPool,
+    bloodPoolDamagePerTick: stats.bloodPoolDamagePerTick,
+    bloodPoolTickIntervalMs: stats.bloodPoolTickIntervalMs,
+    bloodPoolLifetimeMs: stats.bloodPoolLifetimeMs,
+    bloodPoolSpawnIntervalUnits: stats.bloodPoolSpawnIntervalUnits,
+    phase: "outbound",
+    originX: player.x,
+    originY: player.y,
+    originZ: player.z,
+    dirX: player.facingX,
+    dirZ: player.facingZ,
+    x: player.x,
+    z: player.z,
+    outboundUsed: 0,
+    lastBloodPoolDistance: 0,
+    enemyHitCooldownsMs: new Map(),
+    frozenReturnX: -Infinity,
+    frozenReturnZ: -Infinity,
+  };
+  ctx.pushBoomerang(boomerang);
+
+  emit({
+    type: "boomerang_thrown",
+    fireId,
+    ownerId: player.sessionId,
+    weaponKind: WEAPON_KINDS.indexOf(def),
+    weaponLevel,
+    originX: player.x,
+    originY: player.y,
+    originZ: player.z,
+    dirX: player.facingX,
+    dirZ: player.facingZ,
+    outboundDistance: stats.outboundDistance,
+    outboundSpeed: stats.outboundSpeed,
+    returnSpeed: stats.returnSpeed,
+    leavesBloodPool: stats.leavesBloodPool,
+    serverTick: state.tick,
+    serverFireTimeMs: ctx.serverNowMs(),
+  });
+}
+
+/**
+ * M8 US-011: integrate every in-flight boomerang by `dt`. Two-phase
+ * trajectory:
+ *   - "outbound": move at outboundSpeed in (dirX, dirZ); when
+ *     `outboundUsed` reaches `outboundDistance`, flip phase.
+ *   - "returning": move at returnSpeed toward owner's CURRENT position
+ *     (or `frozenReturn{X,Z}` if owner downed mid-flight, A1). Despawn
+ *     when within DESPAWN_RADIUS or owner gone entirely.
+ *
+ * Per-tick collision: swept-sphere from prev to current XZ position
+ * vs each enemy (Y matched against boomerang's originY since the axe
+ * stays at throw height). Per-enemy hit cooldown gates double-hits.
+ *
+ * If `leavesBloodPool` is true and outbound, drops a BloodPool every
+ * `bloodPoolSpawnIntervalUnits` of accumulated outbound distance.
+ *
+ * Inserted in the tick order between tickProjectiles and tickBloodPools
+ * (rule 11 amended): boomerang motion happens BEFORE blood-pool DoT
+ * processes the newly-spawned pools, so a pool spawned this tick can
+ * damage enemies on the same tick if a tick intersection happens.
+ */
+export type BoomerangContext = {
+  nextGemId: () => number;
+  serverNowMs: () => number;
+  orbitHitCooldown: OrbitHitCooldownLike;
+  nextBloodPoolId: () => number;
+};
+
+const BOOMERANG_RETURN_DESPAWN_RADIUS = 0.6;
+
+export function tickBoomerangs(
+  state: RoomState,
+  active: Boomerang[],
+  dt: number,
+  ctx: BoomerangContext,
+  emit: Emit,
+): void {
+  if (state.runEnded) return;
+  const nowMs = ctx.serverNowMs();
+  let w = 0;
+  for (let r = 0; r < active.length; r++) {
+    const boomerang = active[r]!;
+    const owner = state.players.get(boomerang.ownerId);
+
+    // A1: if the owner is downed, freeze the return target at the
+    // owner's last known XZ. If the owner is gone entirely, despawn
+    // (don't carry forward).
+    if (boomerang.phase === "returning" && boomerang.frozenReturnX === -Infinity) {
+      if (!owner) continue; // owner left → despawn
+      if (owner.downed) {
+        boomerang.frozenReturnX = owner.x;
+        boomerang.frozenReturnZ = owner.z;
+      }
+    }
+
+    // Determine target for return phase
+    let targetX = 0, targetZ = 0;
+    if (boomerang.phase === "returning") {
+      if (boomerang.frozenReturnX !== -Infinity) {
+        targetX = boomerang.frozenReturnX;
+        targetZ = boomerang.frozenReturnZ;
+      } else if (owner) {
+        targetX = owner.x;
+        targetZ = owner.z;
+      } else {
+        // Owner gone, no freeze captured this tick — despawn.
+        continue;
+      }
+    }
+
+    // Compute the per-tick step
+    const prevX = boomerang.x;
+    const prevZ = boomerang.z;
+    let stepX = 0, stepZ = 0;
+    let stepLen = 0;
+    let flipToReturning = false;
+    if (boomerang.phase === "outbound") {
+      stepX = boomerang.dirX * boomerang.outboundSpeed * dt;
+      stepZ = boomerang.dirZ * boomerang.outboundSpeed * dt;
+      stepLen = boomerang.outboundSpeed * dt;
+      // Cap the step so we don't overshoot outboundDistance.
+      // Note: phase flip is DEFERRED until after the blood-pool spawn
+      // pass so the boundary tick still spawns its pool (the spawn pass
+      // gates on phase === "outbound").
+      const remaining = boomerang.outboundDistance - boomerang.outboundUsed;
+      if (stepLen >= remaining) {
+        const t = remaining / stepLen;
+        stepX *= t;
+        stepZ *= t;
+        stepLen = remaining;
+        flipToReturning = true;
+      }
+      boomerang.x = prevX + stepX;
+      boomerang.z = prevZ + stepZ;
+      boomerang.outboundUsed += stepLen;
+    } else {
+      // returning
+      const tdx = targetX - boomerang.x;
+      const tdz = targetZ - boomerang.z;
+      const targetDist = Math.sqrt(tdx * tdx + tdz * tdz);
+      if (targetDist <= BOOMERANG_RETURN_DESPAWN_RADIUS) {
+        // Reached owner — despawn (don't copy forward).
+        continue;
+      }
+      const desiredStep = boomerang.returnSpeed * dt;
+      const actualStep = Math.min(desiredStep, targetDist);
+      stepX = (tdx / targetDist) * actualStep;
+      stepZ = (tdz / targetDist) * actualStep;
+      stepLen = actualStep;
+      boomerang.x = prevX + stepX;
+      boomerang.z = prevZ + stepZ;
+    }
+
+    // Place blood pools along outbound path at fixed intervals (per
+    // bloodPoolSpawnIntervalUnits). Deterministic — no rng (rule 6).
+    // Runs BEFORE the deferred phase flip so the boundary tick still
+    // spawns its pool (the gate is `phase === "outbound"`).
+    if (boomerang.leavesBloodPool && boomerang.phase === "outbound") {
+      boomerang.lastBloodPoolDistance += stepLen;
+      while (boomerang.lastBloodPoolDistance >= boomerang.bloodPoolSpawnIntervalUnits) {
+        boomerang.lastBloodPoolDistance -= boomerang.bloodPoolSpawnIntervalUnits;
+        const pool = new BloodPool();
+        pool.id = ctx.nextBloodPoolId();
+        // Place the pool at the boomerang's CURRENT position minus the
+        // overshoot we just consumed in lastBloodPoolDistance — but
+        // for placement purposes "near current position" is good enough.
+        pool.x = boomerang.x;
+        pool.z = boomerang.z;
+        pool.expiresAt = state.tick + Math.max(1, Math.ceil((boomerang.bloodPoolLifetimeMs * TICK_RATE) / 1000));
+        pool.ownerId = boomerang.ownerId;
+        pool.weaponKind = boomerang.weaponKind;
+        pool.damagePerTick = boomerang.bloodPoolDamagePerTick;
+        pool.tickIntervalMs = boomerang.bloodPoolTickIntervalMs;
+        state.bloodPools.set(String(pool.id), pool);
+      }
+    }
+
+    // Swept-circle collision in XZ vs each enemy (the boomerang stays
+    // at originY; enemies are on terrain at their own y, so the test
+    // is 2D in XZ). hitRadius + ENEMY_RADIUS bounds the swept tube.
+    const segLen2 = stepX * stepX + stepZ * stepZ;
+    const radiusSum = boomerang.hitRadius + ENEMY_RADIUS;
+    const radiusSumSq = radiusSum * radiusSum;
+    state.enemies.forEach((enemy: Enemy) => {
+      const toX = enemy.x - prevX;
+      const toZ = enemy.z - prevZ;
+      let u: number;
+      if (segLen2 > 0) {
+        u = (toX * stepX + toZ * stepZ) / segLen2;
+        if (u < 0) u = 0; else if (u > 1) u = 1;
+      } else {
+        u = 0;
+      }
+      const closestX = prevX + u * stepX;
+      const closestZ = prevZ + u * stepZ;
+      const dx = enemy.x - closestX;
+      const dz = enemy.z - closestZ;
+      if (dx * dx + dz * dz > radiusSumSq) return;
+
+      // Per-axe-per-enemy hit cooldown — gates the same axe re-hitting
+      // an enemy on outbound + return crossings.
+      if (boomerang.hitCooldownPerEnemyMs > 0) {
+        const lastMs = boomerang.enemyHitCooldownsMs.get(enemy.id);
+        if (lastMs !== undefined && nowMs - lastMs < boomerang.hitCooldownPerEnemyMs) return;
+      }
+      boomerang.enemyHitCooldownsMs.set(enemy.id, nowMs);
+
+      enemy.hp -= boomerang.damage;
+      emit({
+        type: "hit",
+        fireId: boomerang.fireId,
+        enemyId: enemy.id,
+        damage: boomerang.damage,
+        x: enemy.x,
+        y: enemy.y,
+        z: enemy.z,
+        serverTick: state.tick,
+      });
+
+      if (enemy.hp <= 0) {
+        const gem = new Gem();
+        gem.id = ctx.nextGemId();
+        gem.x = enemy.x;
+        gem.z = enemy.z;
+        gem.value = GEM_VALUE;
+        state.gems.set(String(gem.id), gem);
+
+        const deathX = enemy.x;
+        const deathZ = enemy.z;
+        const deathId = enemy.id;
+        if (owner) owner.kills += 1;
+        state.enemies.delete(String(enemy.id));
+        ctx.orbitHitCooldown.evictEnemy(deathId);
+
+        emit({
+          type: "enemy_died",
+          enemyId: deathId,
+          x: deathX,
+          z: deathZ,
+        });
+      }
+    });
+
+    // Apply the deferred outbound→returning phase flip AFTER the
+    // blood-pool spawn pass + collision check on this tick.
+    if (flipToReturning) boomerang.phase = "returning";
+
+    // Survives — copy forward.
+    if (w !== r) active[w] = boomerang;
+    w++;
+  }
+  active.length = w;
+}
+
+/**
+ * M8 US-011: BloodPool DoT + cleanup. Runs in the amended tick order
+ * AFTER tickBoomerangs (so pools placed this tick can DoT immediately
+ * if they overlap an enemy) and BEFORE tickGems (so this-tick pool
+ * kills drop pickups before pickup checks run).
+ *
+ * Per-pool-per-enemy DoT cadence is gated by the structural
+ * BloodPoolHitCooldownLike (server-only Map keyed by (poolId, enemyId)).
+ * Pool damage and tickIntervalMs are baked at spawn time on the
+ * BloodPool schema — a mid-flight Bloody Axe level-up doesn't change
+ * an in-flight pool's damage.
+ *
+ * Universal early-out on runEnded.
+ */
+export type BloodPoolContext = {
+  serverNowMs: () => number;
+  bloodPoolHitCooldown: BloodPoolHitCooldownLike;
+  nextGemId: () => number;
+  orbitHitCooldown: OrbitHitCooldownLike;
+};
+
+// Pool radius in world units. Pools are flat ground decals; this is
+// the radius an enemy must be within (XZ distance) to take DoT damage.
+const BLOOD_POOL_RADIUS = 1.2;
+
+export function tickBloodPools(
+  state: RoomState,
+  ctx: BloodPoolContext,
+  emit: Emit,
+): void {
+  if (state.runEnded) return;
+  const nowMs = ctx.serverNowMs();
+  const expiredIds: string[] = [];
+  state.bloodPools.forEach((pool: BloodPool, key: string) => {
+    if (pool.expiresAt < state.tick) {
+      expiredIds.push(key);
+      ctx.bloodPoolHitCooldown.evictPool(pool.id);
+      return;
+    }
+    // DoT pass: every enemy within BLOOD_POOL_RADIUS of (pool.x, pool.z)
+    // takes pool.damagePerTick if the per-pool-per-enemy cooldown allows.
+    const radiusSumSq = (BLOOD_POOL_RADIUS + ENEMY_RADIUS) * (BLOOD_POOL_RADIUS + ENEMY_RADIUS);
+    state.enemies.forEach((enemy: Enemy) => {
+      const dx = enemy.x - pool.x;
+      const dz = enemy.z - pool.z;
+      if (dx * dx + dz * dz > radiusSumSq) return;
+      if (!ctx.bloodPoolHitCooldown.tryHit(pool.id, enemy.id, nowMs, pool.tickIntervalMs)) return;
+
+      enemy.hp -= pool.damagePerTick;
+      emit({
+        type: "hit",
+        fireId: 0, // non-projectile sentinel
+        enemyId: enemy.id,
+        damage: pool.damagePerTick,
+        x: enemy.x,
+        y: enemy.y,
+        z: enemy.z,
+        serverTick: state.tick,
+      });
+
+      if (enemy.hp <= 0) {
+        const gem = new Gem();
+        gem.id = ctx.nextGemId();
+        gem.x = enemy.x;
+        gem.z = enemy.z;
+        gem.value = GEM_VALUE;
+        state.gems.set(String(gem.id), gem);
+
+        const deathX = enemy.x;
+        const deathZ = enemy.z;
+        const deathId = enemy.id;
+        const owner = state.players.get(pool.ownerId);
+        if (owner) owner.kills += 1;
+        state.enemies.delete(String(enemy.id));
+        ctx.orbitHitCooldown.evictEnemy(deathId);
+
+        emit({
+          type: "enemy_died",
+          enemyId: deathId,
+          x: deathX,
+          z: deathZ,
+        });
+      }
+    });
+  });
+  for (const k of expiredIds) state.bloodPools.delete(k);
+}
 
 /**
  * In-place slerp: rotate `proj.dir{X,Y,Z}` (assumed unit-length) toward the

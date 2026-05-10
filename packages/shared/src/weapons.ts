@@ -51,6 +51,46 @@ export type OrbitLevel = {
   orbAngularSpeed: number;     // radians/sec
 };
 
+// M8 US-011: boomerang behavior — axe thrown forward, slows, returns to
+// the owner. Bloody Axe at L3+ leaves blood pools along the outbound
+// path that DoT enemies that walk through.
+//   damage / cooldown / hitRadius     — standard combat stats
+//   outboundDistance                  — how far the axe travels forward
+//                                       before reversing (units)
+//   outboundSpeed                     — units/sec on the outbound leg
+//   returnSpeed                       — units/sec on the return leg
+//                                       (typically faster than outbound)
+//   hitCooldownPerEnemyMs             — gates double-hits when the axe
+//                                       crosses the same enemy on
+//                                       outbound + return (server-only Map)
+//   leavesBloodPool                   — when true, drops BloodPool decals
+//                                       along the outbound path. Set per
+//                                       level (Bloody Axe: false at L1/2,
+//                                       true at L3+).
+//   bloodPool* fields                 — per-pool params baked at spawn
+//                                       so a mid-flight level-up can't
+//                                       retroactively change pool damage:
+//   bloodPoolDamagePerTick            — DoT amount per pool tick
+//   bloodPoolTickIntervalMs           — ms between DoT ticks per
+//                                       per-pool-per-enemy gate
+//   bloodPoolLifetimeMs               — how long each pool lasts
+//   bloodPoolSpawnIntervalUnits       — drop a pool every N units of
+//                                       outbound distance
+export type BoomerangLevel = {
+  damage: number;
+  cooldown: number;
+  hitRadius: number;
+  outboundDistance: number;
+  outboundSpeed: number;
+  returnSpeed: number;
+  hitCooldownPerEnemyMs: number;
+  leavesBloodPool: boolean;
+  bloodPoolDamagePerTick: number;
+  bloodPoolTickIntervalMs: number;
+  bloodPoolLifetimeMs: number;
+  bloodPoolSpawnIntervalUnits: number;
+};
+
 // M8 US-010: aura behavior — persistent damaging area around the player.
 //   damage             — applied per tick to every enemy inside radius
 //   radius             — 3D distance (M7 US-013 consistency: a player on
@@ -92,7 +132,8 @@ export type WeaponDef =
   | { name: string; behavior: { kind: "projectile"; targeting: TargetingMode; homingTurnRate: number /* rad/s; 0 = straight-line */; mesh: ProjectileMesh }; levels: ProjectileLevel[] }
   | { name: string; behavior: { kind: "orbit" };                                                                                                              levels: OrbitLevel[] }
   | { name: string; behavior: { kind: "melee_arc" };                                                                                                          levels: MeleeArcLevel[] }
-  | { name: string; behavior: { kind: "aura" };                                                                                                               levels: AuraLevel[] };
+  | { name: string; behavior: { kind: "aura" };                                                                                                               levels: AuraLevel[] }
+  | { name: string; behavior: { kind: "boomerang" };                                                                                                          levels: BoomerangLevel[] };
 
 export const WEAPON_KINDS: readonly WeaponDef[] = [
   {
@@ -232,6 +273,7 @@ export type ProjectileWeaponDef = Extract<WeaponDef, { behavior: { kind: "projec
 export type OrbitWeaponDef = Extract<WeaponDef, { behavior: { kind: "orbit" } }>;
 export type MeleeArcWeaponDef = Extract<WeaponDef, { behavior: { kind: "melee_arc" } }>;
 export type AuraWeaponDef = Extract<WeaponDef, { behavior: { kind: "aura" } }>;
+export type BoomerangWeaponDef = Extract<WeaponDef, { behavior: { kind: "boomerang" } }>;
 
 /**
  * Type guard for the projectile branch of WeaponDef. Used at every site that
@@ -253,6 +295,10 @@ export function isMeleeArcWeapon(def: WeaponDef): def is MeleeArcWeaponDef {
 
 export function isAuraWeapon(def: WeaponDef): def is AuraWeaponDef {
   return def.behavior.kind === "aura";
+}
+
+export function isBoomerangWeapon(def: WeaponDef): def is BoomerangWeaponDef {
+  return def.behavior.kind === "boomerang";
 }
 
 /**

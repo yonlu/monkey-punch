@@ -10,6 +10,8 @@ import {
   tickRunEndCheck,
   tickWeapons,
   tickProjectiles,
+  tickBoomerangs,
+  tickBloodPools,
   tickGems,
   tickXp,
   tickLevelUpDeadlines,
@@ -28,8 +30,11 @@ import {
   type Rng,
   type SpawnerState,
   type Projectile,
+  type Boomerang,
   type WeaponContext,
   type ProjectileContext,
+  type BoomerangContext,
+  type BloodPoolContext,
   type Emit,
   type CombatEvent,
 } from "@mp/shared";
@@ -54,6 +59,10 @@ import {
   createContactCooldownStore,
   type ContactCooldownStore,
 } from "./contactCooldown.js";
+import {
+  createBloodPoolHitCooldownStore,
+  type BloodPoolHitCooldownStore,
+} from "./bloodPoolHitCooldown.js";
 
 const TICK_INTERVAL_MS = SIM_DT_S * 1000; // 50 ms — must equal shared SIM_DT_S
 const MAX_PLAYERS = 10;
@@ -97,14 +106,24 @@ export class GameRoom extends Room<RoomState> {
   // most one intent per player per tick window matters.
   private pendingJumps: Set<string> = new Set();
   private activeProjectiles: Projectile[] = [];
+  // M8 US-011: in-flight boomerangs (Bloody Axe). Per-axe state lives
+  // server-only (per-enemy hit cooldowns + phase + position) — clients
+  // re-simulate the trajectory from the BoomerangThrownEvent payload.
+  private activeBoomerangs: Boomerang[] = [];
   private nextFireId = 1;
   private nextGemId = 1;
+  // M8 US-011: monotonic id for BloodPool entries on RoomState.bloodPools.
+  // Server-only counter (rule 10 spirit) — same pattern nextEnemyId uses.
+  private nextBloodPoolId = 1;
   // Pre-built once in onCreate; closures capture `this` once.
   private weaponCtx!: WeaponContext;
   private projectileCtx!: ProjectileContext;
+  private boomerangCtx!: BoomerangContext;
+  private bloodPoolCtx!: BloodPoolContext;
   private projectileCapacityWarned = false;
   private orbitHitCooldown!: OrbitHitCooldownStore;
   private contactCooldown!: ContactCooldownStore;
+  private bloodPoolHitCooldown!: BloodPoolHitCooldownStore;
   private maxOrbitHitCooldownMs!: number;
   private cooldownSweepCounter = 0;
   // Hoisted so onMessage handlers (e.g. level_up_choice) can share the
@@ -141,6 +160,7 @@ export class GameRoom extends Room<RoomState> {
     initTerrain(state.seed);
     this.orbitHitCooldown = createOrbitHitCooldownStore();
     this.contactCooldown = createContactCooldownStore();
+    this.bloodPoolHitCooldown = createBloodPoolHitCooldownStore();
     this.maxOrbitHitCooldownMs = maxOrbitHitCooldownMs(WEAPON_KINDS);
 
     this.weaponCtx = {
@@ -167,6 +187,12 @@ export class GameRoom extends Room<RoomState> {
       // tickWeapons; they consume events). Determinism preserved within a
       // single deployed binary version.
       rng: this.rng,
+      // M8 US-011: boomerang weapons (Bloody Axe in US-012) push axes
+      // here; tickBoomerangs integrates motion + collision per tick.
+      pushBoomerang: (b) => {
+        this.activeBoomerangs.push(b);
+      },
+      nextBloodPoolId: () => this.nextBloodPoolId++,
     };
     this.projectileCtx = {
       nextGemId: () => this.nextGemId++,
@@ -174,6 +200,18 @@ export class GameRoom extends Room<RoomState> {
       // M8 US-002: pierce projectiles use serverNowMs() for the per-enemy
       // hit cooldown — same wallclock source as WeaponContext + orbit.
       serverNowMs: () => Date.now(),
+    };
+    this.boomerangCtx = {
+      nextGemId: () => this.nextGemId++,
+      serverNowMs: () => Date.now(),
+      orbitHitCooldown: this.orbitHitCooldown,
+      nextBloodPoolId: () => this.nextBloodPoolId++,
+    };
+    this.bloodPoolCtx = {
+      serverNowMs: () => Date.now(),
+      bloodPoolHitCooldown: this.bloodPoolHitCooldown,
+      nextGemId: () => this.nextGemId++,
+      orbitHitCooldown: this.orbitHitCooldown,
     };
 
     // The matchmaker's filterBy(["code"]) matches against the room listing's
@@ -419,6 +457,14 @@ export class GameRoom extends Room<RoomState> {
     tickRunEndCheck(this.state, this.emit);
     tickWeapons(this.state, SIM_DT_S, this.weaponCtx, this.emit);
     tickProjectiles(this.state, this.activeProjectiles, SIM_DT_S, this.projectileCtx, this.emit);
+    // M8 US-011: tickBoomerangs after tickProjectiles so a same-tick fire
+    // is integrated next tick (matches the existing tickWeapons-before-
+    // tickProjectiles convention). tickBloodPools after tickBoomerangs so
+    // newly-spawned blood pools can DoT this tick if they overlap an
+    // enemy. Both before tickGems so this-tick deaths drop pickups
+    // before pickup checks (CLAUDE.md rule 11 amended).
+    tickBoomerangs(this.state, this.activeBoomerangs, SIM_DT_S, this.boomerangCtx, this.emit);
+    tickBloodPools(this.state, this.bloodPoolCtx, this.emit);
     tickGems(this.state, this.emit);
     tickXp(this.state, this.rng, this.emit);
     tickLevelUpDeadlines(this.state, this.emit);

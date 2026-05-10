@@ -189,6 +189,45 @@ defineTypes(Enemy, {
   slowExpiresAt: "int32",
 });
 
+// M8 US-011: blood pool — ground decal that DoTs enemies. Spawned along
+// the outbound path of a Bloody Axe at L3+. Server-only state for the
+// per-pool-per-enemy DoT cooldown lives off-schema (BloodPoolHitCooldown
+// in server/src/, parallel to OrbitHitCooldown). Per-pool damage and
+// tickIntervalMs are baked at spawn so a mid-flight level-up of Bloody
+// Axe doesn't retroactively change pool damage — same single-writer-at-
+// spawn pattern that Projectile uses for damage/speed/lifetime.
+export class BloodPool extends Schema {
+  declare id: number;
+  declare x: number;
+  declare z: number;
+  declare expiresAt: number;       // server tick at which the pool despawns
+  declare ownerId: string;
+  declare weaponKind: number;       // for future per-weapon pool VFX (a different aura-based weapon could use a blue pool)
+  declare damagePerTick: number;
+  declare tickIntervalMs: number;
+  constructor() {
+    super();
+    this.id = 0;
+    this.x = 0;
+    this.z = 0;
+    this.expiresAt = 0;
+    this.ownerId = "";
+    this.weaponKind = 0;
+    this.damagePerTick = 0;
+    this.tickIntervalMs = 300;
+  }
+}
+defineTypes(BloodPool, {
+  id: "uint32",
+  x: "number",
+  z: "number",
+  expiresAt: "uint32",
+  ownerId: "string",
+  weaponKind: "uint8",
+  damagePerTick: "uint16",
+  tickIntervalMs: "uint16",
+});
+
 export class Gem extends Schema {
   declare id: number;
   declare x: number;
@@ -216,6 +255,9 @@ export class RoomState extends Schema {
   declare players: MapSchema<Player>;
   declare enemies: MapSchema<Enemy>;
   declare gems: MapSchema<Gem>;
+  // M8 US-011: blood pools spawned by Bloody Axe at L3+. Synced to
+  // clients so all viewers see the same pools at the same positions.
+  declare bloodPools: MapSchema<BloodPool>;
   declare runEnded: boolean;
   declare runEndedTick: number;
   constructor() {
@@ -226,6 +268,7 @@ export class RoomState extends Schema {
     this.players = new MapSchema<Player>();
     this.enemies = new MapSchema<Enemy>();
     this.gems = new MapSchema<Gem>();
+    this.bloodPools = new MapSchema<BloodPool>();
     this.runEnded = false;
     this.runEndedTick = 0;
   }
@@ -237,6 +280,7 @@ defineTypes(RoomState, {
   players: { map: Player },
   enemies: { map: Enemy },
   gems: { map: Gem },
+  bloodPools: { map: BloodPool },
   runEnded: "boolean",
   runEndedTick: "uint32",
 });

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Room } from "colyseus.js";
 import { getStateCallbacks } from "colyseus.js";
 import type {
+  BoomerangThrownEvent,
   Enemy,
   EnemyDiedEvent,
   FireEvent,
@@ -22,6 +23,8 @@ import { OrbitSwarm } from "./OrbitSwarm.js";
 import { ProjectileSwarm } from "./ProjectileSwarm.js";
 import { MeleeSwipeSwarm, type ActiveMeleeSwipe, MELEE_SWIPE_LIFETIME_MS } from "./MeleeSwipeSwarm.js";
 import { AuraSwarm } from "./AuraSwarm.js";
+import { BoomerangSwarm, type ActiveBoomerang } from "./BoomerangSwarm.js";
+import { BloodPoolSwarm } from "./BloodPoolSwarm.js";
 import { GemSwarm } from "./GemSwarm.js";
 import { PlayerHud } from "./PlayerHud.js";
 import { LevelUpOverlay } from "./LevelUpOverlay.js";
@@ -95,6 +98,12 @@ export function GameView({
   // melee_swipe event doesn't carry one. Auto-prune via setTimeout at
   // MELEE_SWIPE_LIFETIME_MS so stale swipes don't accumulate.
   const swipes = useMemo(() => new Map<number, ActiveMeleeSwipe>(), []);
+  // M8 US-011: in-flight boomerangs. Keyed by fireId. Per-axe state is
+  // simulated locally each frame in BoomerangSwarm; we delete entries
+  // when the BoomerangSwarm's despawn-radius check or a too-old TTL
+  // hits. Server-side hits arrive via the same HitEvent path the
+  // projectile/orbit weapons already use.
+  const activeBoomerangs = useMemo(() => new Map<number, ActiveBoomerang>(), []);
   const { api: vfx, component: vfxJsx } = useCombatVfxRef();
 
   const canvasDomRef = useRef<HTMLCanvasElement | null>(null);
@@ -369,6 +378,45 @@ export function GameView({
       swipeTimers.set(id, timer);
     });
 
+    // M8 US-011: boomerang_thrown — initialize per-axe client state. The
+    // BoomerangSwarm component integrates motion each frame and deletes
+    // the entry when the axe completes its return phase. Defensive
+    // setTimeout TTL prunes axes that somehow outlive their natural
+    // duration (server hit events also despawn server-side, but the
+    // client visual is independent).
+    const boomerangTimers = new Map<number, ReturnType<typeof setTimeout>>();
+    const offBoomerang = room.onMessage("boomerang_thrown", (msg: BoomerangThrownEvent) => {
+      activeBoomerangs.set(msg.fireId, {
+        fireId: msg.fireId,
+        ownerId: msg.ownerId,
+        outboundDistance: msg.outboundDistance,
+        outboundSpeed: msg.outboundSpeed,
+        returnSpeed: msg.returnSpeed,
+        originX: msg.originX,
+        originY: msg.originY,
+        originZ: msg.originZ,
+        dirX: msg.dirX,
+        dirZ: msg.dirZ,
+        phase: "outbound",
+        x: msg.originX,
+        z: msg.originZ,
+        outboundUsed: 0,
+        lastUpdateMs: serverTime.serverNow(),
+        spinAngle: 0,
+      });
+      // Outbound time at outboundSpeed + worst-case return time at
+      // returnSpeed (across the maximum diameter). Cap with a generous
+      // grace so we don't accidentally cut off a still-flying axe.
+      const outboundMs = (msg.outboundDistance / msg.outboundSpeed) * 1000;
+      const returnMs = (msg.outboundDistance / msg.returnSpeed) * 1000;
+      const ttlMs = outboundMs + returnMs * 2 + 1000;
+      const t = setTimeout(() => {
+        activeBoomerangs.delete(msg.fireId);
+        boomerangTimers.delete(msg.fireId);
+      }, ttlMs);
+      boomerangTimers.set(msg.fireId, t);
+    });
+
     const offCollected = room.onMessage("gem_collected", (msg: GemCollectedEvent) => {
       // Pickup pulse at the collecting player's rendered position. For the
       // local player, use the predictor's predicted position; for remote
@@ -448,17 +496,21 @@ export function GameView({
       offDied();
       offCollected();
       offSwipe();
+      offBoomerang();
       fireTimers.forEach((t) => clearTimeout(t));
       fireTimers.clear();
       fires.clear();
       swipeTimers.forEach((t) => clearTimeout(t));
       swipeTimers.clear();
       swipes.clear();
+      boomerangTimers.forEach((t) => clearTimeout(t));
+      boomerangTimers.clear();
+      activeBoomerangs.clear();
       window.clearInterval(pingTimer);
       window.removeEventListener("keydown", keyHandler);
       detachInput();
     };
-  }, [room, buffers, predictor, enemyBuffers, serverTime, fires, swipes, vfx, onUnexpectedLeave, onConsentLeave]);
+  }, [room, buffers, predictor, enemyBuffers, serverTime, fires, swipes, activeBoomerangs, vfx, onUnexpectedLeave, onConsentLeave]);
 
   return (
     <div style={{ position: "relative", width: "100vw", height: "100vh" }}>
@@ -495,6 +547,14 @@ export function GameView({
         <ProjectileSwarm fires={fires} serverTime={serverTime} />
         <MeleeSwipeSwarm swipes={swipes} serverTime={serverTime} />
         <AuraSwarm room={room} predictor={predictor} buffers={buffers} />
+        <BoomerangSwarm
+          room={room}
+          boomerangs={activeBoomerangs}
+          serverTime={serverTime}
+          predictor={predictor}
+          buffers={buffers}
+        />
+        <BloodPoolSwarm room={room} />
         <GemSwarm room={room} />
         <DamageNumberPool room={room} predictor={predictor} buffers={buffers} enemyBuffers={enemyBuffers} />
         {vfxJsx}

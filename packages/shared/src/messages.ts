@@ -169,6 +169,41 @@ export type RunEndedEvent = {
   serverTick: number;
 };
 
+// M8 US-011: boomerang throw — emitted once per axe thrown so clients
+// can simulate the trajectory locally (rule 12: closed-form client sim
+// from event payload). The server simulates the same trajectory
+// internally for hit detection; both endpoints use identical math so
+// the despawn point matches the server's actual hit moment.
+//
+// The boomerang travels in 3 phases:
+//   1. Outbound: from origin in (dirX, dirZ) at outboundSpeed, until
+//      `outboundDistance` units traveled.
+//   2. Brief stop (1 tick).
+//   3. Return: toward the owner's current position at returnSpeed,
+//      until close enough to despawn.
+//
+// dirX/dirZ are in the XZ plane only (boomerangs travel horizontally;
+// originY tracks the throw height but doesn't change). Client renderer
+// reads owner's interpolated XZ each frame for the return phase.
+export type BoomerangThrownEvent = {
+  type: "boomerang_thrown";
+  fireId: number;
+  ownerId: string;
+  weaponKind: number;
+  weaponLevel: number;
+  originX: number;
+  originY: number;
+  originZ: number;
+  dirX: number;
+  dirZ: number;
+  outboundDistance: number;
+  outboundSpeed: number;
+  returnSpeed: number;
+  leavesBloodPool: boolean;
+  serverTick: number;
+  serverFireTimeMs: number;
+};
+
 // M8 US-005: melee_arc swing — emitted once per swing for client VFX (a
 // brief slash flash). Damage events for the swing's hits go through the
 // existing HitEvent path (one per enemy hit) with fireId=0 (the existing
@@ -213,6 +248,7 @@ export const MessageType = {
   PlayerDowned: "player_downed",
   RunEnded: "run_ended",
   MeleeSwipe: "melee_swipe",  // M8 US-005
+  BoomerangThrown: "boomerang_thrown",  // M8 US-011
 } as const;
 
 export type MessageTypeName = (typeof MessageType)[keyof typeof MessageType];
