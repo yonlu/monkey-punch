@@ -63,8 +63,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Done 2026-05-10. weapons.ts: new ProjectileMesh enum ('sphere' | 'elongated'); projectile behavior gains `mesh` field; Bolt updated to mesh: 'sphere'; Gakkung Bow added at index 2 (Bolt=0, Orbit=1, Gakkung=2 — matches design doc) with targeting 'furthest', homingTurnRate Math.PI * 0.8, mesh 'elongated'; per-level array L1–L5 has damage 18→36, cooldown 0.85→0.65, pierceCount stepping 1@L1, 2@L3, 3@L5 per AC. Client ProjectileSwarm.tsx rewritten — two parallel InstancedMeshes (sphere yellow + elongated brown cylinder), per-frame dispatch on def.behavior.mesh enum (rule 12 clean — no name branching), elongated mesh uses Quaternion.setFromUnitVectors(Y_AXIS, dir) so the cylinder points along its dir vector; lifts the M5 weaponLevel deferral by reading statsAt(def, fe.weaponLevel) instead of hardcoded 1. KNOWN APPROXIMATION (documented inline): client renders Gakkung's path as straight-line from origin even though server simulates curved homing — server's hit event still arrives at correct curved-impact moment so functional outcomes match, but mid-flight visual position diverges from server's actual path. Polish in a future pass if playtest shows it. Test surface: 5 new vitest cases (4 in weapons.test.ts: kind index, behavior shape, perLevel pierceCount progression, range > TARGETING_MAX_RANGE sanity; 1 in rules.test.ts: Gakkung integration through tickWeapons selects furthest enemy and bakes homingTurnRate onto projectile). NO name-based branching (rule 12 verified by grep — only hit is the literal 'Gakkung Bow' string in WEAPON_KINDS data table). pnpm typecheck + 175 shared (was 170) / 34 client / 43 server tests pass — including integration encoder regression."
     },
     {
       "id": "US-004",

@@ -5,6 +5,18 @@
 
 export type TargetingMode = "nearest" | "furthest" | "facing";
 
+// M8 US-003: projectile visual mesh kind. The renderer (ProjectileSwarm)
+// keeps one InstancedMesh per kind and dispatches generically on this enum
+// — never on weapon name. Adding a new visual style means adding an enum
+// value here and a parallel <instancedMesh> in ProjectileSwarm; no
+// changes to tickWeapons / tickProjectiles.
+//
+//   "sphere"     — small bright sphere (Bolt). Rotationally invariant; no
+//                  per-frame quaternion needed.
+//   "elongated"  — thin cylinder oriented along its dir vector (Gakkung Bow).
+//                  Per-frame rotation matrix from the unit dir vector.
+export type ProjectileMesh = "sphere" | "elongated";
+
 export type ProjectileLevel = {
   damage: number;
   cooldown: number;            // seconds between fires
@@ -32,8 +44,8 @@ export type OrbitLevel = {
 };
 
 export type WeaponDef =
-  | { name: string; behavior: { kind: "projectile"; targeting: TargetingMode; homingTurnRate: number /* rad/s; 0 = straight-line */ }; levels: ProjectileLevel[] }
-  | { name: string; behavior: { kind: "orbit" };                                                                                    levels: OrbitLevel[] };
+  | { name: string; behavior: { kind: "projectile"; targeting: TargetingMode; homingTurnRate: number /* rad/s; 0 = straight-line */; mesh: ProjectileMesh }; levels: ProjectileLevel[] }
+  | { name: string; behavior: { kind: "orbit" };                                                                                                              levels: OrbitLevel[] };
 
 export const WEAPON_KINDS: readonly WeaponDef[] = [
   {
@@ -43,7 +55,7 @@ export const WEAPON_KINDS: readonly WeaponDef[] = [
     // observable behavior is preserved by `targeting: "nearest"` +
     // `homingTurnRate: 0` (straight-line) + per-level `pierceCount: 1` +
     // `hitCooldownPerEnemyMs: 0` (single-hit despawn, no cooldown).
-    behavior: { kind: "projectile", targeting: "nearest", homingTurnRate: 0 },
+    behavior: { kind: "projectile", targeting: "nearest", homingTurnRate: 0, mesh: "sphere" },
     levels: [
       // NOTE: only `damage` and `cooldown` vary per level for Bolt. Visual
       // stats (hitRadius, projectileSpeed, projectileLifetime) are held
@@ -67,6 +79,24 @@ export const WEAPON_KINDS: readonly WeaponDef[] = [
       { damage: 10, hitRadius: 0.6, hitCooldownPerEnemyMs: 600, orbCount: 3, orbRadius: 2.2, orbAngularSpeed: 2.6 },
       { damage: 13, hitRadius: 0.6, hitCooldownPerEnemyMs: 550, orbCount: 3, orbRadius: 2.4, orbAngularSpeed: 2.8 },
       { damage: 16, hitRadius: 0.6, hitCooldownPerEnemyMs: 500, orbCount: 4, orbRadius: 2.4, orbAngularSpeed: 3.0 },
+    ],
+  },
+  {
+    // M8 US-003: Gakkung Bow (kind index 2). Long-range homing arrow that
+    // locks the furthest in-range enemy at fire — rewards positioning that
+    // builds up an enemy tail. Mild homing (homingTurnRate ≈ π·0.8 ≈ 144°/s)
+    // means the arrow can still miss a fast-dodging target. Pierce starts
+    // at 1 and grows to 3 at L5; faster cooldown at higher levels. Visual
+    // identity: thin elongated cylinder oriented along its dir vector,
+    // light wood/brown — distinct from Bolt's bright yellow sphere.
+    name: "Gakkung Bow",
+    behavior: { kind: "projectile", targeting: "furthest", homingTurnRate: Math.PI * 0.8, mesh: "elongated" },
+    levels: [
+      { damage: 18, cooldown: 0.85, hitRadius: 0.4, projectileSpeed: 28, projectileLifetime: 1.2, pierceCount: 1, hitCooldownPerEnemyMs: 0 },
+      { damage: 22, cooldown: 0.80, hitRadius: 0.4, projectileSpeed: 28, projectileLifetime: 1.2, pierceCount: 1, hitCooldownPerEnemyMs: 0 },
+      { damage: 26, cooldown: 0.75, hitRadius: 0.4, projectileSpeed: 28, projectileLifetime: 1.2, pierceCount: 2, hitCooldownPerEnemyMs: 0 },
+      { damage: 30, cooldown: 0.70, hitRadius: 0.4, projectileSpeed: 28, projectileLifetime: 1.2, pierceCount: 2, hitCooldownPerEnemyMs: 0 },
+      { damage: 36, cooldown: 0.65, hitRadius: 0.4, projectileSpeed: 28, projectileLifetime: 1.2, pierceCount: 3, hitCooldownPerEnemyMs: 0 },
     ],
   },
 ];

@@ -2503,6 +2503,44 @@ describe("tickProjectiles — M8 US-002 homing turn rate", () => {
   });
 });
 
+describe("tickWeapons — M8 US-003 Gakkung Bow integration", () => {
+  it("fires at the FURTHEST in-range enemy and emits a fire event with Gakkung's homingTurnRate baked onto the projectile", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    addEnemy(state, 1, 5, 0);
+    addEnemy(state, 2, 12, 0);
+    addEnemy(state, 3, 18, 0); // furthest in range (TARGETING_MAX_RANGE = 20)
+
+    const w = new WeaponState();
+    w.kind = 2; // Gakkung Bow per design doc kind index
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const { fires, projectiles, ctx } = makeCapture(99, 1_234_567);
+    const emit: Emit = (e) => fires.push(e);
+    tickWeapons(state, 0.05, ctx, emit);
+
+    expect(projectiles.length).toBe(1);
+    const proj = projectiles[0]!;
+    expect(proj.weaponKind).toBe(2);
+    // Locked target id should be the FURTHEST enemy.
+    expect(proj.lockedTargetId).toBe(3);
+    // Homing turn rate baked from the def's behavior.
+    expect(proj.homingTurnRate).toBeCloseTo(Math.PI * 0.8);
+    // Gakkung's L1 pierceCount is 1.
+    expect(proj.pierceRemaining).toBe(1);
+
+    expect(fires.length).toBe(1);
+    const fire = fires[0]!;
+    if (fire.type !== "fire") throw new Error("expected fire event");
+    expect(fire.weaponKind).toBe(2);
+    expect(fire.weaponLevel).toBe(1);
+    expect(fire.lockedTargetId).toBe(3);
+  });
+});
+
 describe("tickProjectiles — M8 US-002 pierce", () => {
   it("pierceRemaining = 1 (Bolt baseline) drops on first hit, no second hit possible", () => {
     const state = new RoomState();
