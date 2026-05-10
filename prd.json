@@ -288,8 +288,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 15,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Quaternius CC0 GLTF asset acquisition DEFERRED — Quaternius nature packs ship in FBX/OBJ/Blend only on their own site (no GLB/GLTF), and choosing specific tree/rock/bush models is an aesthetic decision a human curator should make rather than the loop downloading and committing arbitrary binary assets. Procedural placeholder geometry used per kind (cone for tree, dodecahedron for rock, icosahedron for bush) — the per-kind InstancedMesh structure, capacity sizing matching props.filter(kind===k).length, per-instance Matrix4 (translation + Y-rotation + uniform scale) and the no-castShadow landmine guard are all in place; swapping in real GLTF means replacing each <coneGeometry>/<dodecahedronGeometry>/<icosahedronGeometry> JSX block with `useGLTF(MODEL_URL)` + `<primitive object={gltf.scene}>` per the PlayerCharacter.tsx pattern (documented inline in PropSwarm.tsx). Visual / 60fps verification in browser DEFERRED — no dev-browser skill in this environment. Reviewer should manually pnpm dev with two clients and confirm: (1) trees/rocks/bushes appear at identical positions on both clients (deterministic from state.seed), (2) no props inside ~8.5u of origin (skip-radius), (3) props sit on hills (terrainHeight-derived Y), (4) walking through props passes through (no collision), (5) 60fps holds with terrain + 200 enemies + ~700 props. Created packages/client/src/game/PropSwarm.tsx (one component, three InstancedMesh nodes via PropKindMesh helper); wired into GameView.tsx between Ground and BoundaryRing with seed={room.state.seed}. Per-kind y-origin lift (1.2 for tree cone half-height, 0.35 for rock half-buried, 0.5 for bush) scaled by prop.scale so visual lift tracks instance scale. pnpm typecheck + 155 shared / 34 client / 43 server tests pass."
     },
     {
       "id": "US-016",

@@ -15,6 +15,7 @@ import type {
 import { WEAPON_KINDS, statsAt, isProjectileWeapon, initTerrain } from "@mp/shared";
 import { Ground } from "./Ground.js";
 import { PlayerCube } from "./PlayerCube.js";
+import { PropSwarm } from "./PropSwarm.js";
 import { EnemySwarm } from "./EnemySwarm.js";
 import { OrbitSwarm } from "./OrbitSwarm.js";
 import { ProjectileSwarm } from "./ProjectileSwarm.js";
@@ -432,6 +433,7 @@ export function GameView({
         <ambientLight intensity={0.5} />
         <directionalLight position={[10, 20, 5]} intensity={1.0} castShadow />
         <Ground />
+        <PropSwarm seed={room.state.seed} />
         <BoundaryRing />
         {Array.from(players.values()).map((p) => (
           <PlayerCube
