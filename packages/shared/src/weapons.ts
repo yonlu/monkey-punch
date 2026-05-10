@@ -246,7 +246,29 @@ export const WEAPON_KINDS: readonly WeaponDef[] = [
     ],
   },
   {
-    // M8 US-010: Kronos (kind index 6 currently; will become 7 once
+    // M8 US-012: Bloody Axe (kind index 6 — final position, matches
+    // design doc ordering). Returning boomerang archetype: throw forward,
+    // travels outboundDistance=7 units, returns to owner. At L3+ leaves
+    // a damaging blood-pool trail along the outbound path. Per-level:
+    //   damage 30→68, cooldown 1.6→1.4 (heavier slower than melee
+    //   weapons but spammable enough to keep the trail flowing),
+    //   leavesBloodPool flips false→true at L3 (the L3 power spike
+    //   matching Kronos's L4 spike pattern); pool damage 4→8 grows.
+    //   hitCooldownPerEnemyMs=300 stops same-enemy double-hit on
+    //   outbound + return crossings (per US-011 boomerang infra).
+    name: "Bloody Axe",
+    behavior: { kind: "boomerang" },
+    levels: [
+      { damage: 30, cooldown: 1.60, hitRadius: 0.7, outboundDistance: 7, outboundSpeed: 14, returnSpeed: 18, hitCooldownPerEnemyMs: 300, leavesBloodPool: false, bloodPoolDamagePerTick: 0, bloodPoolTickIntervalMs: 300, bloodPoolLifetimeMs: 1500, bloodPoolSpawnIntervalUnits: 1.5 },
+      { damage: 38, cooldown: 1.55, hitRadius: 0.7, outboundDistance: 7, outboundSpeed: 14, returnSpeed: 18, hitCooldownPerEnemyMs: 300, leavesBloodPool: false, bloodPoolDamagePerTick: 0, bloodPoolTickIntervalMs: 300, bloodPoolLifetimeMs: 1500, bloodPoolSpawnIntervalUnits: 1.5 },
+      { damage: 46, cooldown: 1.50, hitRadius: 0.7, outboundDistance: 7, outboundSpeed: 14, returnSpeed: 18, hitCooldownPerEnemyMs: 300, leavesBloodPool: true,  bloodPoolDamagePerTick: 4, bloodPoolTickIntervalMs: 300, bloodPoolLifetimeMs: 1500, bloodPoolSpawnIntervalUnits: 1.5 },
+      { damage: 56, cooldown: 1.45, hitRadius: 0.7, outboundDistance: 7, outboundSpeed: 14, returnSpeed: 18, hitCooldownPerEnemyMs: 300, leavesBloodPool: true,  bloodPoolDamagePerTick: 6, bloodPoolTickIntervalMs: 300, bloodPoolLifetimeMs: 1500, bloodPoolSpawnIntervalUnits: 1.5 },
+      { damage: 68, cooldown: 1.40, hitRadius: 0.7, outboundDistance: 7, outboundSpeed: 14, returnSpeed: 18, hitCooldownPerEnemyMs: 300, leavesBloodPool: true,  bloodPoolDamagePerTick: 8, bloodPoolTickIntervalMs: 300, bloodPoolLifetimeMs: 1500, bloodPoolSpawnIntervalUnits: 1.5 },
+    ],
+  },
+  {
+    // M8 US-010: Kronos (kind index 7 — final position, matches design
+    // doc ordering after Bloody Axe inserted at 6).
     // Bloody Axe lands at index 6 in US-011/012, matching the design
     // doc's stated final ordering). Persistent slowing aura around the
     // player — Vampire Survivors' Garlic archetype with a slow debuff.

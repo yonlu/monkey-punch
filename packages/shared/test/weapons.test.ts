@@ -107,15 +107,68 @@ describe("Claymore — M8 US-007", () => {
   });
 });
 
-describe("Kronos — M8 US-010", () => {
-  it("is at index 6 (will become 7 once Bloody Axe lands at 6) and is an aura", () => {
+describe("Bloody Axe — M8 US-012", () => {
+  it("is at index 6 and is a boomerang (final ordering matches design doc)", () => {
     const def = WEAPON_KINDS[6]!;
+    expect(def.name).toBe("Bloody Axe");
+    expect(def.behavior.kind).toBe("boomerang");
+  });
+
+  it("leavesBloodPool flips false→true at L3 (the L3 power spike — pool trail is the identity)", () => {
+    const def = WEAPON_KINDS[6]!;
+    if (def.behavior.kind !== "boomerang") throw new Error("expected boomerang");
+    expect(statsAt(def, 1).leavesBloodPool).toBe(false);
+    expect(statsAt(def, 2).leavesBloodPool).toBe(false);
+    expect(statsAt(def, 3).leavesBloodPool).toBe(true);
+    expect(statsAt(def, 4).leavesBloodPool).toBe(true);
+    expect(statsAt(def, 5).leavesBloodPool).toBe(true);
+  });
+
+  it("bloodPoolDamagePerTick grows L3→L5 (4→6→8) and is 0 at L1/L2", () => {
+    const def = WEAPON_KINDS[6]!;
+    if (def.behavior.kind !== "boomerang") throw new Error("expected boomerang");
+    expect(statsAt(def, 1).bloodPoolDamagePerTick).toBe(0);
+    expect(statsAt(def, 2).bloodPoolDamagePerTick).toBe(0);
+    expect(statsAt(def, 3).bloodPoolDamagePerTick).toBe(4);
+    expect(statsAt(def, 4).bloodPoolDamagePerTick).toBe(6);
+    expect(statsAt(def, 5).bloodPoolDamagePerTick).toBe(8);
+  });
+
+  it("damage strictly grows L1 → L5", () => {
+    const def = WEAPON_KINDS[6]!;
+    if (def.behavior.kind !== "boomerang") throw new Error("expected boomerang");
+    for (let lvl = 2; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).damage).toBeGreaterThan(statsAt(def, lvl - 1).damage);
+    }
+  });
+
+  it("constant outboundDistance/Speed/returnSpeed across all levels (movement profile is the identity)", () => {
+    const def = WEAPON_KINDS[6]!;
+    if (def.behavior.kind !== "boomerang") throw new Error("expected boomerang");
+    for (let lvl = 1; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).outboundDistance).toBe(7);
+      expect(statsAt(def, lvl).outboundSpeed).toBe(14);
+      expect(statsAt(def, lvl).returnSpeed).toBe(18);
+    }
+  });
+
+  it("returnSpeed > outboundSpeed (returning is faster than outbound — feels right when running away from something)", () => {
+    const def = WEAPON_KINDS[6]!;
+    if (def.behavior.kind !== "boomerang") throw new Error("expected boomerang");
+    const stats = statsAt(def, 1);
+    expect(stats.returnSpeed).toBeGreaterThan(stats.outboundSpeed);
+  });
+});
+
+describe("Kronos — M8 US-010", () => {
+  it("is at index 7 (Bloody Axe took 6 in US-012) and is an aura", () => {
+    const def = WEAPON_KINDS[7]!;
     expect(def.name).toBe("Kronos");
     expect(def.behavior.kind).toBe("aura");
   });
 
   it("has constant tickIntervalMs of 500ms across all levels (cadence is the identity)", () => {
-    const def = WEAPON_KINDS[6]!;
+    const def = WEAPON_KINDS[7]!;
     if (def.behavior.kind !== "aura") throw new Error("expected aura");
     for (let lvl = 1; lvl <= def.levels.length; lvl++) {
       expect(statsAt(def, lvl).tickIntervalMs).toBe(500);
@@ -123,7 +176,7 @@ describe("Kronos — M8 US-010", () => {
   });
 
   it("radius strictly grows L1 → L5 (Vampire Survivors Garlic identity: bigger zone of control at higher levels)", () => {
-    const def = WEAPON_KINDS[6]!;
+    const def = WEAPON_KINDS[7]!;
     if (def.behavior.kind !== "aura") throw new Error("expected aura");
     for (let lvl = 2; lvl <= def.levels.length; lvl++) {
       expect(statsAt(def, lvl).radius).toBeGreaterThan(statsAt(def, lvl - 1).radius);
@@ -131,7 +184,7 @@ describe("Kronos — M8 US-010", () => {
   });
 
   it("slow strengthens at L4+ (slowMultiplier 0.6 → 0.4) — the L4 power spike is part of Kronos's identity", () => {
-    const def = WEAPON_KINDS[6]!;
+    const def = WEAPON_KINDS[7]!;
     if (def.behavior.kind !== "aura") throw new Error("expected aura");
     expect(statsAt(def, 1).slowMultiplier).toBe(0.6);
     expect(statsAt(def, 3).slowMultiplier).toBe(0.6);
@@ -140,7 +193,7 @@ describe("Kronos — M8 US-010", () => {
   });
 
   it("damage strictly grows L1 → L5", () => {
-    const def = WEAPON_KINDS[6]!;
+    const def = WEAPON_KINDS[7]!;
     if (def.behavior.kind !== "aura") throw new Error("expected aura");
     for (let lvl = 2; lvl <= def.levels.length; lvl++) {
       expect(statsAt(def, lvl).damage).toBeGreaterThan(statsAt(def, lvl - 1).damage);

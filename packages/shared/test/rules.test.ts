@@ -2877,6 +2877,86 @@ describe("runAuraTick — M8 US-010", () => {
   });
 });
 
+describe("tickWeapons — M8 US-012 Bloody Axe integration", () => {
+  it("a fresh Bloody Axe at L1 fires through tickWeapons → emits BoomerangThrownEvent + pushes a Boomerang", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    addEnemy(state, 1, 3, 0).hp = 1000; // in outboundDistance=7 range
+
+    const w = new WeaponState();
+    w.kind = 6; // Bloody Axe per design doc final kind index
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const cap = makeCapture();
+    const events: CombatEvent[] = [];
+    tickWeapons(state, 0.05, cap.ctx, (e) => events.push(e));
+
+    expect(cap.boomerangs.length).toBe(1);
+    const b = cap.boomerangs[0]!;
+    expect(b.weaponKind).toBe(6);
+    expect(b.outboundDistance).toBe(7);
+    expect(b.leavesBloodPool).toBe(false); // L1 → no pool
+
+    const thrown = events.find((e) => e.type === "boomerang_thrown");
+    if (!thrown || thrown.type !== "boomerang_thrown") throw new Error("expected boomerang_thrown");
+    expect(thrown.fireId).toBe(b.fireId);
+    expect(thrown.leavesBloodPool).toBe(false);
+    expect(thrown.outboundDistance).toBe(7);
+
+    // Cooldown set to stats.cooldown after fire (1.6s at L1).
+    expect(w.cooldownRemaining).toBeCloseTo(1.6);
+  });
+
+  it("a Bloody Axe at L3 emits leavesBloodPool=true on the BoomerangThrownEvent (the L3 power spike)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    addEnemy(state, 1, 3, 0).hp = 1000;
+
+    const w = new WeaponState();
+    w.kind = 6;
+    w.level = 3;
+    w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const cap = makeCapture();
+    const events: CombatEvent[] = [];
+    tickWeapons(state, 0.05, cap.ctx, (e) => events.push(e));
+
+    expect(cap.boomerangs.length).toBe(1);
+    expect(cap.boomerangs[0]!.leavesBloodPool).toBe(true);
+
+    const thrown = events.find((e) => e.type === "boomerang_thrown");
+    if (!thrown || thrown.type !== "boomerang_thrown") throw new Error("expected boomerang_thrown");
+    expect(thrown.leavesBloodPool).toBe(true);
+  });
+
+  it("does NOT fire when no enemy is in outboundDistance range (gates fire on AD10)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    addEnemy(state, 1, 50, 0).hp = 1000; // far outside outbound 7 reach
+
+    const w = new WeaponState();
+    w.kind = 6;
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const cap = makeCapture();
+    tickWeapons(state, 0.05, cap.ctx, () => {});
+
+    expect(cap.boomerangs.length).toBe(0);
+    expect(w.cooldownRemaining).toBe(0); // AD10 — clamped at 0, stays 0
+  });
+});
+
 describe("tickWeapons — M8 US-010 aura cadence", () => {
   it("a freshly-acquired Kronos fires its first aura tick on the next tickWeapons call (cooldownRemaining starts at 0)", () => {
     const state = new RoomState();
@@ -2885,7 +2965,7 @@ describe("tickWeapons — M8 US-010 aura cadence", () => {
     addEnemy(state, 1, 1, 0).hp = 100;
 
     const w = new WeaponState();
-    w.kind = 6; // Kronos at current index 6
+    w.kind = 7; // Kronos at index 7 (Bloody Axe took 6 in US-012)
     w.level = 1;
     w.cooldownRemaining = 0;
     p.weapons.push(w);
@@ -2908,7 +2988,7 @@ describe("tickWeapons — M8 US-010 aura cadence", () => {
     addEnemy(state, 1, 1, 0).hp = 1000;
 
     const w = new WeaponState();
-    w.kind = 6;
+    w.kind = 7; // Kronos (Bloody Axe took 6 in US-012)
     w.level = 1;
     w.cooldownRemaining = 0;
     p.weapons.push(w);
