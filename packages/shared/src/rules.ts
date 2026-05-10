@@ -33,7 +33,7 @@ import {
   xpForLevel,
 } from "./constants.js";
 import { terrainHeight } from "./terrain.js";
-import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, type WeaponDef, type TargetingMode } from "./weapons.js";
+import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, isMeleeArcWeapon, type WeaponDef, type TargetingMode, type MeleeArcWeaponDef } from "./weapons.js";
 import type { Rng } from "./rng.js";
 import type {
   FireEvent,
@@ -45,6 +45,7 @@ import type {
   PlayerDamagedEvent,
   PlayerDownedEvent,
   RunEndedEvent,
+  MeleeSwipeEvent,
 } from "./messages.js";
 
 /**
@@ -399,7 +400,8 @@ export type CombatEvent =
   | LevelUpResolvedEvent
   | PlayerDamagedEvent
   | PlayerDownedEvent
-  | RunEndedEvent;
+  | RunEndedEvent
+  | MeleeSwipeEvent;  // M8 US-005
 export type Emit = (event: CombatEvent) => void;
 
 /**
@@ -430,6 +432,11 @@ export type WeaponContext = {
   pushProjectile: (p: Projectile) => void;
   nextGemId: () => number;
   orbitHitCooldown: OrbitHitCooldownLike;
+  // M8 US-005: melee_arc crit rolls and any future weapon RNG go through
+  // this — the SAME deterministic mulberry32 seeded from RoomState.seed
+  // that tickXp + tickSpawner already use. CLAUDE.md rule 6: NEVER
+  // Math.random in gameplay code.
+  rng: Rng;
 };
 
 /**
@@ -699,8 +706,19 @@ export function tickWeapons(
           }
           break;
         }
+        case "melee_arc": {
+          if (!isMeleeArcWeapon(def)) return; // narrowing only
+          weapon.cooldownRemaining = Math.max(0, weapon.cooldownRemaining - dt);
+          if (weapon.cooldownRemaining > 0) return;
+          const fired = runMeleeArcSwing(state, player, def, weapon.level, ctx, emit);
+          if (fired) {
+            const stats = statsAt(def, weapon.level);
+            weapon.cooldownRemaining = stats.cooldown;
+          }
+          break;
+        }
         default: {
-          // Exhaustiveness guard. If a third behavior kind is added to
+          // Exhaustiveness guard. If a fourth behavior kind is added to
           // WeaponDef, this becomes a compile error: `def.behavior` will
           // not have type `never` and the assignment to `_exhaustive`
           // will fail.
@@ -710,6 +728,158 @@ export function tickWeapons(
       }
     });
   });
+}
+
+/**
+ * M8 US-005: execute one melee_arc swing — pick all enemies in the arc,
+ * roll per-hit crits using the room PRNG (CLAUDE.md rule 6), apply damage
+ * and optional knockback, emit one `melee_swipe` for VFX and one `hit`
+ * per damaged enemy. Returns `true` iff a swing was emitted (the caller
+ * uses this to decide whether to reset the weapon's cooldown).
+ *
+ * Exported separately from tickWeapons so the swing geometry, crit
+ * determinism, and knockback can be unit-tested with a synthetic
+ * MeleeArcWeaponDef without polluting the real WEAPON_KINDS table —
+ * Damascus and Claymore enter WEAPON_KINDS in US-006 + US-007.
+ *
+ * Per A2 (design doc §10): if NO enemies are in the arc, the swing does
+ * not fire — cooldown stays clamped at 0 (AD10), same as projectile/orbit
+ * weapons that gate on "any target in range." This keeps melee weapons
+ * from spamming swing VFX in empty fields.
+ *
+ * The crit decision is per-hit, but `MeleeSwipeEvent.isCrit` summarizes
+ * the swing: true iff ANY hit in this swing rolled a crit. Drives a
+ * brighter slash flash on the client. Per-hit crit detail rides on the
+ * future HitEvent.tag field (US-013).
+ */
+export function runMeleeArcSwing(
+  state: RoomState,
+  player: Player,
+  def: MeleeArcWeaponDef,
+  weaponLevel: number,
+  ctx: WeaponContext,
+  emit: Emit,
+): boolean {
+  const stats = statsAt(def, weaponLevel);
+  const range = stats.range;
+  const rangeSq = range * range;
+  const halfArc = stats.arcAngle * 0.5;
+  const cosHalf = Math.cos(halfArc);
+
+  // facingX/facingZ is unit-length in XZ (set by tickPlayers from
+  // movement direction; defaults to (0, 1) at player construction).
+  const fX = player.facingX;
+  const fZ = player.facingZ;
+
+  // Collect candidates (range + arc gate). MapSchema.forEach iteration
+  // order is stable across server+clients; the per-hit damage/crit
+  // application happens in this order so a future replay would be
+  // identical. Mutating enemy.{x,z} via knockback inside this same
+  // forEach is unsafe (visit order can drift), so collect first then
+  // mutate.
+  const candidates: Enemy[] = [];
+  state.enemies.forEach((enemy: Enemy) => {
+    const dx = enemy.x - player.x;
+    const dy = enemy.y - player.y;
+    const dz = enemy.z - player.z;
+    const sq3 = dx * dx + dy * dy + dz * dz;
+    if (sq3 > rangeSq) return;
+    // Arc gate: dot of (player→enemy) XZ-unit with player facing must
+    // be ≥ cos(arc/2). Fall back to "always in arc" for an exact-position
+    // overlap (sqXZ === 0) to avoid NaN.
+    const sqXZ = dx * dx + dz * dz;
+    if (sqXZ === 0) {
+      candidates.push(enemy);
+      return;
+    }
+    const distXZ = Math.sqrt(sqXZ);
+    const cosToEnemy = (dx * fX + dz * fZ) / distXZ;
+    if (cosToEnemy >= cosHalf) candidates.push(enemy);
+  });
+
+  if (candidates.length === 0) return false;
+
+  // Apply hits. Knockback mutates enemy x/z; safe now that we're outside
+  // the forEach. Crit roll: ctx.rng() ∈ [0,1); roll < critChance → crit.
+  let anyCrit = false;
+  for (const enemy of candidates) {
+    const isCrit = stats.critChance > 0 && ctx.rng() < stats.critChance;
+    if (isCrit) anyCrit = true;
+    const damage = isCrit ? stats.damage * stats.critMultiplier : stats.damage;
+
+    if (stats.knockback > 0) {
+      const dx = enemy.x - player.x;
+      const dz = enemy.z - player.z;
+      const distXZ = Math.sqrt(dx * dx + dz * dz);
+      if (distXZ > 0) {
+        enemy.x += (dx / distXZ) * stats.knockback;
+        enemy.z += (dz / distXZ) * stats.knockback;
+      }
+    }
+
+    enemy.hp -= damage;
+
+    emit({
+      type: "hit",
+      // fireId: 0 — same "non-projectile" sentinel orbit hits use; melee
+      // hits don't correlate to a fire event. (M4 starts nextFireId at 1.)
+      fireId: 0,
+      enemyId: enemy.id,
+      damage,
+      x: enemy.x,
+      y: enemy.y,
+      z: enemy.z,
+      serverTick: state.tick,
+    });
+
+    if (enemy.hp <= 0) {
+      const gem = new Gem();
+      gem.id = ctx.nextGemId();
+      gem.x = enemy.x;
+      gem.z = enemy.z;
+      gem.value = GEM_VALUE;
+      state.gems.set(String(gem.id), gem);
+
+      const deathX = enemy.x;
+      const deathZ = enemy.z;
+      const deathId = enemy.id;
+      player.kills += 1;
+      state.enemies.delete(String(enemy.id));
+      ctx.orbitHitCooldown.evictEnemy(deathId);
+
+      emit({
+        type: "enemy_died",
+        enemyId: deathId,
+        x: deathX,
+        z: deathZ,
+      });
+    }
+  }
+
+  // One melee_swipe per swing. weaponKind not directly available on
+  // `def` — caller passes the weapon level only. Fish the kind from
+  // WEAPON_KINDS by reference equality: a future renaming-style tweak
+  // could thread the kind index in explicitly.
+  const weaponKind = WEAPON_KINDS.indexOf(def);
+
+  emit({
+    type: "melee_swipe",
+    ownerId: player.sessionId,
+    weaponKind,
+    weaponLevel,
+    originX: player.x,
+    originY: player.y,
+    originZ: player.z,
+    facingX: fX,
+    facingZ: fZ,
+    arcAngle: stats.arcAngle,
+    range: stats.range,
+    isCrit: anyCrit,
+    serverTick: state.tick,
+    serverSwingTimeMs: ctx.serverNowMs(),
+  });
+
+  return true;
 }
 
 export type ProjectileContext = {

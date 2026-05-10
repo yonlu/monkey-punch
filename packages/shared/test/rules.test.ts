@@ -23,6 +23,7 @@ import {
   tickRunEndCheck,
   canJump,
   selectTarget,
+  runMeleeArcSwing,
   type SpawnerState,
   type Projectile,
   type WeaponContext,
@@ -31,6 +32,7 @@ import {
   type CombatEvent,
   type ContactCooldownLike,
 } from "../src/rules.js";
+import type { MeleeArcWeaponDef } from "../src/weapons.js";
 import {
   PLAYER_SPEED,
   PLAYER_GROUND_OFFSET,
@@ -388,7 +390,7 @@ type CapturedFire = {
   ctx: WeaponContext;
 };
 
-function makeCapture(initialFireId = 1, fixedNowMs = 1_000_000): CapturedFire {
+function makeCapture(initialFireId = 1, fixedNowMs = 1_000_000, rngSeed = 42): CapturedFire {
   const fires: CombatEvent[] = [];
   const projectiles: Projectile[] = [];
   let next = initialFireId;
@@ -399,6 +401,9 @@ function makeCapture(initialFireId = 1, fixedNowMs = 1_000_000): CapturedFire {
     pushProjectile: (p) => projectiles.push(p),
     nextGemId: () => nextGem++,
     orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+    // M8 US-005: melee_arc crit rolls. Tests can override rngSeed for
+    // crit-determinism cases that need a known sequence.
+    rng: mulberry32(rngSeed),
   };
   return { fires, projectiles, ctx };
 }
@@ -952,6 +957,9 @@ function makeWeaponCtx(opts?: {
     pushProjectile: opts?.pushProjectile ?? (() => {}),
     nextGemId: opts?.nextGemId ?? (() => 1),
     orbitHitCooldown: opts?.orbitHitCooldown ?? { tryHit: () => true, evictEnemy: () => {} },
+    // M8 US-005: melee_arc crit rolls (Damascus US-006 onward). Orbit
+    // tests don't fire melee, so a fixed-seed rng is harmless.
+    rng: mulberry32(0xCAFE),
   };
 }
 
@@ -2500,6 +2508,205 @@ describe("tickProjectiles — M8 US-002 homing turn rate", () => {
 
     expect(active[0]!.dirX).toBeCloseTo(1);
     expect(active[0]!.dirZ).toBeCloseTo(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M8 US-005: melee_arc behavior + melee_swipe event infrastructure.
+//
+// runMeleeArcSwing is exported from rules.ts so the swing geometry, crit
+// determinism, and knockback can be unit-tested with a synthetic
+// MeleeArcWeaponDef. Damascus and Claymore are added to WEAPON_KINDS in
+// US-006 + US-007; until then no real weapon exercises this code path
+// in production runs.
+// ---------------------------------------------------------------------------
+
+function makeMeleeArcDef(overrides: Partial<{
+  arcAngle: number;
+  range: number;
+  damage: number;
+  cooldown: number;
+  critChance: number;
+  critMultiplier: number;
+  knockback: number;
+}> = {}): MeleeArcWeaponDef {
+  return {
+    name: "TestMeleeArc",
+    behavior: { kind: "melee_arc" },
+    levels: [{
+      damage: overrides.damage ?? 20,
+      cooldown: overrides.cooldown ?? 0.5,
+      arcAngle: overrides.arcAngle ?? Math.PI / 3, // 60°
+      range: overrides.range ?? 2.5,
+      critChance: overrides.critChance ?? 0,
+      critMultiplier: overrides.critMultiplier ?? 1,
+      knockback: overrides.knockback ?? 0,
+    }],
+  };
+}
+
+describe("runMeleeArcSwing — M8 US-005", () => {
+  it("hits all enemies inside the arc, skips enemies outside, emits one melee_swipe per swing", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0; // facing +X
+    // Inside arc (in front, within range):
+    addEnemy(state, 1, 1.5, 0).hp = 100;
+    addEnemy(state, 2, 1.5, 0.5).hp = 100;
+    // Outside arc (behind player):
+    addEnemy(state, 3, -1.5, 0).hp = 100;
+    // Inside arc but outside range:
+    addEnemy(state, 4, 5.0, 0).hp = 100;
+
+    const def = makeMeleeArcDef({ arcAngle: Math.PI / 2 /* 90° */, range: 2.5, damage: 25 });
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+    const fired = runMeleeArcSwing(state, p, def, 1, ctx, (e) => events.push(e));
+
+    expect(fired).toBe(true);
+    const hits = events.filter((e) => e.type === "hit");
+    const swipes = events.filter((e) => e.type === "melee_swipe");
+    expect(hits.length).toBe(2); // enemies 1 and 2 only
+    expect(swipes.length).toBe(1);
+    const hitIds = new Set(hits.map((h) => h.type === "hit" ? h.enemyId : -1));
+    expect(hitIds.has(1)).toBe(true);
+    expect(hitIds.has(2)).toBe(true);
+    expect(hitIds.has(3)).toBe(false);
+    expect(hitIds.has(4)).toBe(false);
+  });
+
+  it("returns false and emits NOTHING when no enemy is in the arc", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    addEnemy(state, 1, -1.5, 0).hp = 100; // behind player only
+
+    const def = makeMeleeArcDef({ arcAngle: Math.PI / 3, range: 2.5 });
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+    const fired = runMeleeArcSwing(state, p, def, 1, ctx, (e) => events.push(e));
+
+    expect(fired).toBe(false);
+    expect(events).toEqual([]);
+  });
+
+  it("crit rolls are deterministic given the seeded rng (same seed → same crit pattern)", () => {
+    // Two identical setups with the same rng seed should produce IDENTICAL
+    // crit patterns. Different seed → potentially different pattern.
+    const setupOne = () => {
+      const state = new RoomState();
+      const p = addPlayer(state, "p1", 0, 0);
+      p.x = 0; p.z = 0;
+      p.facingX = 1; p.facingZ = 0;
+      // 8 enemies in a row inside the arc — enough rolls to reveal a pattern.
+      for (let i = 0; i < 8; i++) addEnemy(state, i + 1, 1 + i * 0.05, 0).hp = 100;
+      return state;
+    };
+
+    const def = makeMeleeArcDef({ arcAngle: Math.PI / 2, range: 3, critChance: 0.5, critMultiplier: 2 });
+    const events1: CombatEvent[] = [];
+    const { ctx: ctx1 } = makeCapture(1, 1_000_000, 7777);
+    runMeleeArcSwing(setupOne(), setupOne().players.values().next().value as Player, def, 1, ctx1, (e) => events1.push(e));
+
+    const events2: CombatEvent[] = [];
+    const { ctx: ctx2 } = makeCapture(1, 1_000_000, 7777);
+    const state2 = setupOne();
+    const p2 = state2.players.values().next().value as Player;
+    runMeleeArcSwing(state2, p2, def, 1, ctx2, (e) => events2.push(e));
+
+    // Compare the swing's `isCrit` summary AND the per-hit damage values.
+    const swipe1 = events1.find((e) => e.type === "melee_swipe");
+    const swipe2 = events2.find((e) => e.type === "melee_swipe");
+    expect(swipe1?.type === "melee_swipe" && swipe1.isCrit).toBe(swipe2?.type === "melee_swipe" && swipe2.isCrit);
+
+    const dmg1 = events1.filter((e) => e.type === "hit").map((e) => e.type === "hit" ? e.damage : -1);
+    const dmg2 = events2.filter((e) => e.type === "hit").map((e) => e.type === "hit" ? e.damage : -1);
+    expect(dmg1).toEqual(dmg2);
+  });
+
+  it("crit damage = damage * critMultiplier; non-crit damage = damage", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    addEnemy(state, 1, 1.5, 0).hp = 1000;
+
+    const def = makeMeleeArcDef({ damage: 10, critChance: 1, critMultiplier: 2.5 }); // always crit
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+    runMeleeArcSwing(state, p, def, 1, ctx, (e) => events.push(e));
+
+    const hit = events.find((e) => e.type === "hit");
+    if (!hit || hit.type !== "hit") throw new Error("expected hit event");
+    expect(hit.damage).toBeCloseTo(25); // 10 * 2.5
+
+    const swipe = events.find((e) => e.type === "melee_swipe");
+    if (!swipe || swipe.type !== "melee_swipe") throw new Error("expected melee_swipe");
+    expect(swipe.isCrit).toBe(true);
+  });
+
+  it("knockback pushes a hit enemy along the player→enemy XZ vector", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    const e = addEnemy(state, 1, 2, 0); e.hp = 1000;
+
+    const def = makeMeleeArcDef({ damage: 1, knockback: 1.5 });
+    const { ctx } = makeCapture();
+    const events: CombatEvent[] = [];
+    runMeleeArcSwing(state, p, def, 1, ctx, (ev) => events.push(ev));
+
+    // Enemy was at x=2; knockback 1.5 along +X → x=3.5.
+    expect(e.x).toBeCloseTo(3.5);
+    expect(e.z).toBeCloseTo(0);
+  });
+
+  it("emits melee_swipe with the correct facing/arc/range payload", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 1; p.y = 2; p.z = 3;
+    p.facingX = 0; p.facingZ = 1;
+    addEnemy(state, 1, 1, 4).hp = 100; // in front of player at (1, _, 4)
+
+    // Range 3.0 is needed because Δy = 2 (player.y=2, enemy.y=0): 3D
+    // distance from player to enemy is √(0² + 2² + 1²) = √5 ≈ 2.24, just
+    // over a 2.0 range. runMeleeArcSwing uses 3D distance, consistent
+    // with M7 US-013's projectile hit detection.
+    const def = makeMeleeArcDef({ arcAngle: Math.PI * 0.5, range: 3.0 });
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture(1, 5_555_555);
+    runMeleeArcSwing(state, p, def, 1, ctx, (e) => events.push(e));
+
+    const swipe = events.find((e) => e.type === "melee_swipe");
+    if (!swipe || swipe.type !== "melee_swipe") throw new Error("expected melee_swipe event");
+    expect(swipe.ownerId).toBe("p1");
+    expect(swipe.weaponLevel).toBe(1);
+    expect(swipe.originX).toBe(1);
+    expect(swipe.originY).toBe(2);
+    expect(swipe.originZ).toBe(3);
+    expect(swipe.facingX).toBe(0);
+    expect(swipe.facingZ).toBe(1);
+    expect(swipe.arcAngle).toBeCloseTo(Math.PI * 0.5);
+    expect(swipe.range).toBeCloseTo(3.0);
+    expect(swipe.serverSwingTimeMs).toBe(5_555_555);
+  });
+
+  it("knockback=0 does NOT move the enemy", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    const e = addEnemy(state, 1, 2, 0); e.hp = 1000;
+
+    const def = makeMeleeArcDef({ damage: 1, knockback: 0 });
+    const { ctx } = makeCapture();
+    runMeleeArcSwing(state, p, def, 1, ctx, () => {});
+
+    expect(e.x).toBe(2);
+    expect(e.z).toBe(0);
   });
 });
 

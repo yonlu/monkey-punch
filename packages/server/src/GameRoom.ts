@@ -159,6 +159,13 @@ export class GameRoom extends Room<RoomState> {
       },
       nextGemId: () => this.nextGemId++,
       orbitHitCooldown: this.orbitHitCooldown,
+      // M8 US-005: melee_arc weapons (Damascus crit rolls in US-006) consume
+      // the same room rng that tickXp + tickSpawner already use. Adding a
+      // pre-tickXp rng consumer changes the rng schedule vs pre-M8 runs —
+      // expected and consistent across server+clients (clients don't run
+      // tickWeapons; they consume events). Determinism preserved within a
+      // single deployed binary version.
+      rng: this.rng,
     };
     this.projectileCtx = {
       nextGemId: () => this.nextGemId++,

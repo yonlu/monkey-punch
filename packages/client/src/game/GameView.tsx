@@ -8,6 +8,7 @@ import type {
   FireEvent,
   GemCollectedEvent,
   HitEvent,
+  MeleeSwipeEvent,
   Player,
   PongMessage,
   RoomState,
@@ -19,6 +20,7 @@ import { PropSwarm } from "./PropSwarm.js";
 import { EnemySwarm } from "./EnemySwarm.js";
 import { OrbitSwarm } from "./OrbitSwarm.js";
 import { ProjectileSwarm } from "./ProjectileSwarm.js";
+import { MeleeSwipeSwarm, type ActiveMeleeSwipe, MELEE_SWIPE_LIFETIME_MS } from "./MeleeSwipeSwarm.js";
 import { GemSwarm } from "./GemSwarm.js";
 import { PlayerHud } from "./PlayerHud.js";
 import { LevelUpOverlay } from "./LevelUpOverlay.js";
@@ -88,6 +90,10 @@ export function GameView({
   const predictor = useMemo(() => new LocalPredictor(), []);
   const serverTime = useMemo(() => new ServerTime(), []);
   const fires = useMemo(() => new Map<number, FireEvent>(), []);
+  // M8 US-005: in-flight melee swipes. Synthetic ids since the server's
+  // melee_swipe event doesn't carry one. Auto-prune via setTimeout at
+  // MELEE_SWIPE_LIFETIME_MS so stale swipes don't accumulate.
+  const swipes = useMemo(() => new Map<number, ActiveMeleeSwipe>(), []);
   const { api: vfx, component: vfxJsx } = useCombatVfxRef();
 
   const canvasDomRef = useRef<HTMLCanvasElement | null>(null);
@@ -348,6 +354,20 @@ export function GameView({
       vfx.pushDeath(msg.x, msg.z);
     });
 
+    // M8 US-005: melee_swipe — brief slash VFX in front of the player.
+    // Synthetic ids since the event has no fireId. Auto-prune via setTimeout.
+    let nextSwipeId = 1;
+    const swipeTimers = new Map<number, ReturnType<typeof setTimeout>>();
+    const offSwipe = room.onMessage("melee_swipe", (msg: MeleeSwipeEvent) => {
+      const id = nextSwipeId++;
+      swipes.set(id, { id, msg, startMs: serverTime.serverNow() });
+      const timer = setTimeout(() => {
+        swipes.delete(id);
+        swipeTimers.delete(id);
+      }, MELEE_SWIPE_LIFETIME_MS + hudState.interpDelayMs);
+      swipeTimers.set(id, timer);
+    });
+
     const offCollected = room.onMessage("gem_collected", (msg: GemCollectedEvent) => {
       // Pickup pulse at the collecting player's rendered position. For the
       // local player, use the predictor's predicted position; for remote
@@ -426,14 +446,18 @@ export function GameView({
       offHit();
       offDied();
       offCollected();
+      offSwipe();
       fireTimers.forEach((t) => clearTimeout(t));
       fireTimers.clear();
       fires.clear();
+      swipeTimers.forEach((t) => clearTimeout(t));
+      swipeTimers.clear();
+      swipes.clear();
       window.clearInterval(pingTimer);
       window.removeEventListener("keydown", keyHandler);
       detachInput();
     };
-  }, [room, buffers, predictor, enemyBuffers, serverTime, fires, vfx, onUnexpectedLeave, onConsentLeave]);
+  }, [room, buffers, predictor, enemyBuffers, serverTime, fires, swipes, vfx, onUnexpectedLeave, onConsentLeave]);
 
   return (
     <div style={{ position: "relative", width: "100vw", height: "100vh" }}>
@@ -468,6 +492,7 @@ export function GameView({
         <OrbitSwarm room={room} predictor={predictor} buffers={buffers} serverTime={serverTime} />
         <LevelUpFlashVfx room={room} predictor={predictor} buffers={buffers} />
         <ProjectileSwarm fires={fires} serverTime={serverTime} />
+        <MeleeSwipeSwarm swipes={swipes} serverTime={serverTime} />
         <GemSwarm room={room} />
         <DamageNumberPool room={room} predictor={predictor} buffers={buffers} enemyBuffers={enemyBuffers} />
         {vfxJsx}

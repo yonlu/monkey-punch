@@ -51,9 +51,27 @@ export type OrbitLevel = {
   orbAngularSpeed: number;     // radians/sec
 };
 
+// M8 US-005: melee_arc behavior — instant front-of-player arc hit.
+// `arcAngle` is the TOTAL arc width in radians (Damascus uses Math.PI/3 ≈
+// 60°; Claymore uses Math.PI*0.9 ≈ 162°). `range` is melee reach in world
+// units. `critChance` ∈ [0,1] — rolled per-hit using the room PRNG (rule 6,
+// never Math.random) — and `critMultiplier` scales the damage on crit
+// (Damascus 2.0×). `knockback` is the units pushed along the player→enemy
+// vector on hit (Claymore 1.2; Damascus 0).
+export type MeleeArcLevel = {
+  damage: number;
+  cooldown: number;
+  arcAngle: number;
+  range: number;
+  critChance: number;
+  critMultiplier: number;
+  knockback: number;
+};
+
 export type WeaponDef =
   | { name: string; behavior: { kind: "projectile"; targeting: TargetingMode; homingTurnRate: number /* rad/s; 0 = straight-line */; mesh: ProjectileMesh }; levels: ProjectileLevel[] }
-  | { name: string; behavior: { kind: "orbit" };                                                                                                              levels: OrbitLevel[] };
+  | { name: string; behavior: { kind: "orbit" };                                                                                                              levels: OrbitLevel[] }
+  | { name: string; behavior: { kind: "melee_arc" };                                                                                                          levels: MeleeArcLevel[] };
 
 export const WEAPON_KINDS: readonly WeaponDef[] = [
   {
@@ -131,6 +149,7 @@ export const WEAPON_KINDS: readonly WeaponDef[] = [
 
 export type ProjectileWeaponDef = Extract<WeaponDef, { behavior: { kind: "projectile" } }>;
 export type OrbitWeaponDef = Extract<WeaponDef, { behavior: { kind: "orbit" } }>;
+export type MeleeArcWeaponDef = Extract<WeaponDef, { behavior: { kind: "melee_arc" } }>;
 
 /**
  * Type guard for the projectile branch of WeaponDef. Used at every site that
@@ -144,6 +163,10 @@ export function isProjectileWeapon(def: WeaponDef): def is ProjectileWeaponDef {
 
 export function isOrbitWeapon(def: WeaponDef): def is OrbitWeaponDef {
   return def.behavior.kind === "orbit";
+}
+
+export function isMeleeArcWeapon(def: WeaponDef): def is MeleeArcWeaponDef {
+  return def.behavior.kind === "melee_arc";
 }
 
 /**

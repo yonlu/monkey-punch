@@ -169,6 +169,30 @@ export type RunEndedEvent = {
   serverTick: number;
 };
 
+// M8 US-005: melee_arc swing — emitted once per swing for client VFX (a
+// brief slash flash). Damage events for the swing's hits go through the
+// existing HitEvent path (one per enemy hit) with fireId=0 (the existing
+// "non-projectile" sentinel that orbit hits already use, see rules.ts
+// orbit arm). isCrit summarizes whether ANY hit in this swing crit'd —
+// drives a brighter/yellower flash on the client. Per-hit crit detail
+// rides on the future HitEvent.tag field (US-013).
+export type MeleeSwipeEvent = {
+  type: "melee_swipe";
+  ownerId: string;
+  weaponKind: number;
+  weaponLevel: number;
+  originX: number;
+  originY: number;
+  originZ: number;
+  facingX: number;            // unit-length XZ-plane facing at swing time
+  facingZ: number;
+  arcAngle: number;
+  range: number;
+  isCrit: boolean;
+  serverTick: number;
+  serverSwingTimeMs: number;  // server Date.now() at swing — drives client VFX timing
+};
+
 export const MessageType = {
   Input: "input",
   Ping: "ping",
@@ -188,6 +212,7 @@ export const MessageType = {
   PlayerDamaged: "player_damaged",
   PlayerDowned: "player_downed",
   RunEnded: "run_ended",
+  MeleeSwipe: "melee_swipe",  // M8 US-005
 } as const;
 
 export type MessageTypeName = (typeof MessageType)[keyof typeof MessageType];
