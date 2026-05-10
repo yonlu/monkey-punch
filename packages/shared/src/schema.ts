@@ -148,6 +148,11 @@ export class Enemy extends Schema {
   declare id: number;
   declare kind: number;
   declare x: number;
+  // M7 US-012: enemies snap to terrain. Enemies have no vy and do not
+  // jump (per PRD § US-010 in tasks/prd-m7-verticality.md): tickEnemies
+  // simply assigns `y = terrainHeight(x, z) + ENEMY_GROUND_OFFSET` after
+  // X/Z integration.
+  declare y: number;
   declare z: number;
   declare hp: number;
   constructor() {
@@ -155,6 +160,7 @@ export class Enemy extends Schema {
     this.id = 0;
     this.kind = 0;
     this.x = 0;
+    this.y = 0;
     this.z = 0;
     this.hp = 0;
   }
@@ -163,6 +169,7 @@ defineTypes(Enemy, {
   id: "uint32",
   kind: "uint8",
   x: "number",
+  y: "number",
   z: "number",
   hp: "uint16",
 });

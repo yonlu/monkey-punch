@@ -5,7 +5,13 @@ import { MAX_ENEMIES } from "@mp/shared";
 import { SnapshotBuffer } from "../net/snapshots.js";
 import { hudState } from "../net/hudState.js";
 
-const ENEMY_RENDER_Y = 0.6;
+// Visual lift from the enemy's authoritative y (terrain surface) to the
+// cone's centroid. The cone geometry below is height 1.2 with its origin
+// at its centroid, so half the height places the cone's base flush with
+// the ground. ENEMY_GROUND_OFFSET (in shared/constants.ts) stays at 0
+// for now per CLAUDE.md PRD Q2 — this lift is a render-only concern,
+// not a gameplay constant.
+const ENEMY_RENDER_LIFT = 0.6;
 
 export type EnemySwarmProps = {
   enemyIds: Set<number>;
@@ -62,7 +68,7 @@ export function EnemySwarm({ enemyIds, buffers }: EnemySwarmProps) {
       if (!buf) continue;
       const sample = buf.sample(renderTime);
       if (!sample) continue;
-      matrix.makeTranslation(sample.x, ENEMY_RENDER_Y, sample.z);
+      matrix.makeTranslation(sample.x, sample.y + ENEMY_RENDER_LIFT, sample.z);
       mesh.setMatrixAt(i, matrix);
     }
     mesh.count = count;

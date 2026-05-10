@@ -69,6 +69,15 @@ export const PLAYER_NAME_MAX_LEN = 16;
 export const PLAYER_GROUND_OFFSET = 0;
 
 /**
+ * Vertical offset from the terrain surface to an enemy's reported `y`.
+ * Same rationale as PLAYER_GROUND_OFFSET — current cone mesh has its
+ * origin at the cone's center and the renderer offsets visually for
+ * now. tickEnemies snaps `enemy.y = terrainHeight(x, z) +
+ * ENEMY_GROUND_OFFSET` after movement integration each tick.
+ */
+export const ENEMY_GROUND_OFFSET = 0;
+
+/**
  * Side length (world units) of the rendered terrain mesh on the client.
  * Larger than `MAP_RADIUS * 2` so the visible ground extends well past
  * the playable boundary; once US-016 lands fog with `far = MAP_RADIUS *

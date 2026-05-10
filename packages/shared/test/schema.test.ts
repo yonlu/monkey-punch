@@ -100,6 +100,7 @@ describe("Enemy schema", () => {
     expect(e.id).toBe(0);
     expect(e.kind).toBe(0);
     expect(e.x).toBe(0);
+    expect(e.y).toBe(0);
     expect(e.z).toBe(0);
     expect(e.hp).toBe(0);
   });

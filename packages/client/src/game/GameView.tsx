@@ -204,15 +204,16 @@ export function GameView({
         buf = new SnapshotBuffer();
         enemyBuffers.set(id, buf);
       }
-      // Enemy.y is added in US-012; for now push 0 so the snapshot buffer
-      // stays type-correct after Snapshot gained `y` for player Y interp.
-      buf.push({ t: performance.now(), x: enemy.x, y: 0, z: enemy.z });
+      // M7 US-012: enemy.y is now authoritative (snapped to terrainHeight by
+      // tickEnemies + spawner). Push it into the same buffer the swarm reads
+      // so per-instance Y interpolates between snapshots like X/Z.
+      buf.push({ t: performance.now(), x: enemy.x, y: enemy.y, z: enemy.z });
 
       const existing = perEnemyDisposers.get(id);
       if (existing) existing();
 
       const offChange = $(enemy).onChange(() => {
-        buf!.push({ t: performance.now(), x: enemy.x, y: 0, z: enemy.z });
+        buf!.push({ t: performance.now(), x: enemy.x, y: enemy.y, z: enemy.z });
       });
       perEnemyDisposers.set(id, offChange);
 

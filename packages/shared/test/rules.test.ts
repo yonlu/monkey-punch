@@ -33,6 +33,7 @@ import {
 import {
   PLAYER_SPEED,
   PLAYER_GROUND_OFFSET,
+  ENEMY_GROUND_OFFSET,
   GRAVITY,
   JUMP_VELOCITY,
   TERMINAL_FALL_SPEED,
@@ -1182,6 +1183,113 @@ describe("tickEnemies — M6", () => {
     addEnemy(state, 1, 30, 0);
     tickEnemies(state, 0.05);
     expect(state.enemies.has("1")).toBe(true);
+  });
+});
+
+describe("tickEnemies — M7 US-012 terrain Y snap", () => {
+  beforeAll(() => initTerrain(7));
+
+  it("snaps enemy.y to terrainHeight + ENEMY_GROUND_OFFSET after movement", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p", 0, 0);
+    p.x = 0; p.z = 0;
+    // Far from spawn ramp — terrainHeight should be a real noise sample.
+    const e = addEnemy(state, 1, 25, 30);
+    e.y = 999; // garbage, must be overwritten
+
+    tickEnemies(state, 0.05);
+
+    expect(e.y).toBeCloseTo(terrainHeight(e.x, e.z) + ENEMY_GROUND_OFFSET, 10);
+  });
+
+  it("Y tracks the post-movement (x, z), not the pre-movement position", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p", 0, 0);
+    p.x = 0; p.z = 0;
+    const e = addEnemy(state, 1, 15, 0);
+    const yAtPre = terrainHeight(e.x, e.z) + ENEMY_GROUND_OFFSET;
+
+    tickEnemies(state, 1.0);
+
+    // Enemy stepped toward player by ENEMY_SPEED * 1.0; Y must reflect new x/z.
+    expect(e.x).toBeLessThan(15);
+    const yAtPost = terrainHeight(e.x, e.z) + ENEMY_GROUND_OFFSET;
+    expect(e.y).toBeCloseTo(yAtPost, 10);
+    // Sanity — the two heights are not equal in general (otherwise this test
+    // would tautologically pass even if Y were snapped to the pre-position).
+    expect(yAtPost).not.toBeCloseTo(yAtPre, 5);
+  });
+
+  it("snaps Y when only downed players are present (freeze-in-place branch)", () => {
+    // tickEnemies bails out entirely on `state.players.size === 0`, so the
+    // freeze-in-place branch is reached only via "all players downed".
+    const state = new RoomState();
+    const dead = addPlayer(state, "dead", 0, 0); dead.x = 0; dead.z = 0; dead.downed = true;
+    const e = addEnemy(state, 1, 12, 4);
+    e.y = -50;
+
+    tickEnemies(state, 1.0);
+
+    // No movement (no living targets), but Y must still be snapped to terrain
+    // so a fresh enemy never spends a frame at y=0 (or whatever ctor garbage
+    // left it at) just because the only player is downed this tick.
+    expect(e.x).toBe(12);
+    expect(e.z).toBe(4);
+    expect(e.y).toBeCloseTo(terrainHeight(12, 4) + ENEMY_GROUND_OFFSET, 10);
+  });
+
+  it("two parallel simulations of the same enemy walk produce identical Y traces", () => {
+    // Determinism guard: two states with the same input start, same dt, same
+    // seed produce bit-identical y traces. If terrainHeight ever became
+    // stateful or tickEnemies stopped sourcing y from terrainHeight, this
+    // would catch it.
+    initTerrain(123);
+    function run(): number[] {
+      const state = new RoomState();
+      const p = addPlayer(state, "p", 0, 0); p.x = 0; p.z = 0;
+      const e = addEnemy(state, 1, 20, 20);
+      const ys: number[] = [];
+      for (let i = 0; i < 50; i++) {
+        tickEnemies(state, 0.05);
+        ys.push(e.y);
+      }
+      return ys;
+    }
+    const a = run();
+    const b = run();
+    expect(a).toEqual(b);
+    // And the trace must vary (otherwise the test is vacuous).
+    expect(new Set(a).size).toBeGreaterThan(1);
+  });
+
+  it("freshly-spawned enemies (tickSpawner) have y already snapped on insertion", () => {
+    initTerrain(99);
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const spawner = freshSpawner();
+    const rng = mulberry32(7);
+
+    tickSpawner(state, spawner, ENEMY_SPAWN_INTERVAL_S, rng);
+
+    const enemy = state.enemies.get("1")!;
+    expect(enemy.y).toBeCloseTo(terrainHeight(enemy.x, enemy.z) + ENEMY_GROUND_OFFSET, 10);
+  });
+
+  it("debug-burst enemies (spawnDebugBurst) have y already snapped on insertion", () => {
+    initTerrain(99);
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const spawner = freshSpawner();
+    const rng = mulberry32(11);
+
+    spawnDebugBurst(state, spawner, rng, p, 5, 0);
+
+    expect(state.enemies.size).toBe(5);
+    state.enemies.forEach((e) => {
+      expect(e.y).toBeCloseTo(terrainHeight(e.x, e.z) + ENEMY_GROUND_OFFSET, 10);
+    });
   });
 });
 

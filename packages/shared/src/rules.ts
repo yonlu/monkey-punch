@@ -10,6 +10,7 @@ import {
   ENEMY_CONTACT_COOLDOWN_S,
   ENEMY_CONTACT_DAMAGE,
   ENEMY_DESPAWN_RADIUS,
+  ENEMY_GROUND_OFFSET,
   ENEMY_HP,
   ENEMY_RADIUS,
   ENEMY_SPAWN_INTERVAL_S,
@@ -206,16 +207,28 @@ export function tickEnemies(state: RoomState, dt: number): void {
       }
     });
 
-    if (nearestSq === Infinity) return;        // no living players — freeze in place
+    if (nearestSq === Infinity) {
+      // No living players — freeze in place horizontally, but still snap Y
+      // (a fresh enemy spawned this tick has y=0 from the ctor; the snap
+      // makes its first rendered frame correct even before it moves).
+      enemy.y = terrainHeight(enemy.x, enemy.z) + ENEMY_GROUND_OFFSET;
+      return;
+    }
     if (nearestSq > despawnSq) {
       toDespawn.push(enemy.id);
       return;
     }
-    if (nearestSq === 0) return;
-    const dist = Math.sqrt(nearestSq);
-    const step = ENEMY_SPEED * dt;
-    enemy.x += (nearestDx / dist) * step;
-    enemy.z += (nearestDz / dist) * step;
+    if (nearestSq !== 0) {
+      const dist = Math.sqrt(nearestSq);
+      const step = ENEMY_SPEED * dt;
+      enemy.x += (nearestDx / dist) * step;
+      enemy.z += (nearestDz / dist) * step;
+    }
+    // M7 US-012: snap Y to terrain after horizontal movement. No vy, no
+    // gravity, no jump for enemies (per PRD § US-012). The render-side
+    // InstancedMesh keys by Enemy.id (CLAUDE.md rule 10) so per-instance
+    // Y reaches the GPU through the snapshot interpolation buffer.
+    enemy.y = terrainHeight(enemy.x, enemy.z) + ENEMY_GROUND_OFFSET;
   });
 
   for (const id of toDespawn) state.enemies.delete(String(id));
@@ -291,6 +304,7 @@ export function tickSpawner(
       enemy.kind = 0;
       enemy.x = x;
       enemy.z = z;
+      enemy.y = terrainHeight(x, z) + ENEMY_GROUND_OFFSET;
       enemy.hp = ENEMY_HP;
       state.enemies.set(String(enemy.id), enemy);
       placed = true;
@@ -324,6 +338,7 @@ export function spawnDebugBurst(
     enemy.kind = kind;
     enemy.x = centerPlayer.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
     enemy.z = centerPlayer.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
+    enemy.y = terrainHeight(enemy.x, enemy.z) + ENEMY_GROUND_OFFSET;
     enemy.hp = ENEMY_HP;
     state.enemies.set(String(enemy.id), enemy);
   }
