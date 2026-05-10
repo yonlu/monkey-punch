@@ -166,8 +166,8 @@
         "No work on US-009+ begins until this story is closed"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Approved 2026-05-10 by Luke after two playtest tuning rounds. Round 1 (commit 6ed981f): bumped melee swipe lifetime 80→250ms with two-phase intensity + expanding scale envelope, bigger CircleGeometry base (0.5→0.7), brighter materials; Gakkung arrow geometry 0.05x0.05x0.6 → 0.10x0.10x1.0 cylinder with stronger emissive; Ahlspiess swapped from cylinder to ConeGeometry (tapered spearhead silhouette, distinct from Gakkung's uniform shaft) with length 1.2→1.8. Round 2 (commit e32ed93): Damascus's slash was invisible — diagnosed as the CircleGeometry's bulge (+X local) ending up perpendicular to facing (world -Z) after tilt + yaw chain; Claymore's bigger range hid the bug, Damascus's 2.2 reach didn't. Fix: thetaStart -π/2 → -π puts the bulge in -Y local, which tilt -π/2 about X maps to +Z local, which yaw rotates to world facing. Paired changes: CircleGeometry radius 0.7→1.0 + per-instance scale = range (was 0.7×range) so disc forward extent matches actual hit reach; disc center positioned AT player (was halfRange forward). NO regressions to Bolt/Orbit (US-002 non-regression tests still pass). pnpm typecheck + 202 shared / 34 client / 43 server tests pass. Rule 12 grep clean across shared/server/client src. Unblocks US-009+."
     },
     {
       "id": "US-009",
