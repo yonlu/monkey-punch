@@ -22,6 +22,7 @@ import {
   tickContactDamage,
   tickRunEndCheck,
   canJump,
+  selectTarget,
   type SpawnerState,
   type Projectile,
   type WeaponContext,
@@ -603,16 +604,29 @@ function makeProjectile(overrides: Partial<Projectile>): Projectile {
     x: 0,
     y: 0,
     z: 0,
+    // M8 US-002: defaults match Bolt baseline — no homing, single-hit
+    // pierce (despawn on hit), no per-enemy cooldown. This preserves all
+    // M4–M7 tickProjectiles tests without modification: a Bolt-shaped
+    // projectile still hits-and-drops exactly as before.
+    lockedTargetId: -1,
+    homingTurnRate: 0,
+    pierceRemaining: 1,
+    hitCooldownPerEnemyMs: 0,
+    enemyHitCooldownsMs: new Map<number, number>(),
     ...overrides,
   };
 }
 
-function makeProjCtx(initialGemId = 1): { ctx: ProjectileContext; nextGem: () => number } {
+function makeProjCtx(initialGemId = 1, fixedNowMs = 1_000_000): { ctx: ProjectileContext; nextGem: () => number } {
   let next = initialGemId;
   return {
     ctx: {
       nextGemId: () => next++,
       orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+      // M8 US-002: pierce projectiles need serverNowMs for per-enemy cooldown.
+      // Test default is a constant — concrete cooldown timing is tested in the
+      // M8 US-002 cases that override this via the explicit second arg.
+      serverNowMs: () => fixedNowMs,
     },
     nextGem: () => next,
   };
@@ -1656,6 +1670,7 @@ describe("tickProjectiles — M6 kills", () => {
     const ctx: ProjectileContext = {
       nextGemId: () => 1,
       orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+      serverNowMs: () => 1_000_000,
     };
     tickProjectiles(state, projectiles, 0.05, ctx, () => {});
     expect(owner.kills).toBe(1);
@@ -1671,6 +1686,7 @@ describe("tickProjectiles — M6 kills", () => {
     const ctx: ProjectileContext = {
       nextGemId: () => 1,
       orbitHitCooldown: { tryHit: () => true, evictEnemy: () => {} },
+      serverNowMs: () => 1_000_000,
     };
     expect(() => tickProjectiles(state, projectiles, 0.05, ctx, () => {})).not.toThrow();
   });
@@ -2258,5 +2274,339 @@ describe("tickPlayers — M7 US-010 jump forgiveness (coyote + buffer)", () => {
     // Guards against an accidental retune outside US-017 polish-pass.
     expect(COYOTE_TIME).toBe(0.1);
     expect(JUMP_BUFFER).toBe(0.1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M8 US-002: WeaponBehavior refactor — targeting modes, homing, pierce.
+// All three new test blocks below cover the new behavior in isolation; the
+// existing M4–M7 tests above continue to verify Bolt's non-regression
+// (cooldown, fire-on-target, swept-sphere hit, kill credit) — preserved
+// because Bolt's def now reads `targeting: "nearest"`, `homingTurnRate: 0`,
+// `pierceCount: 1`, `hitCooldownPerEnemyMs: 0`.
+// ---------------------------------------------------------------------------
+
+describe("selectTarget — M8 US-002 targeting modes", () => {
+  const RANGE_SQ = TARGETING_MAX_RANGE * TARGETING_MAX_RANGE;
+
+  it("'nearest' picks the closest in-range enemy", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.y = 0; p.z = 0;
+    addEnemy(state, 1, 5, 0);
+    addEnemy(state, 2, 10, 0);
+    addEnemy(state, 3, 15, 0);
+
+    const sel = selectTarget(state, p, "nearest", RANGE_SQ);
+    expect(sel).not.toBeNull();
+    expect(sel!.lockedTargetId).toBe(1);
+    expect(sel!.dirX).toBeCloseTo(1);
+    expect(sel!.dirZ).toBeCloseTo(0);
+  });
+
+  it("'furthest' picks the farthest in-range enemy (still gated by range)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.y = 0; p.z = 0;
+    addEnemy(state, 1, 5, 0);
+    addEnemy(state, 2, 10, 0);
+    addEnemy(state, 3, 15, 0);
+    // Out of range — should not be selected:
+    addEnemy(state, 4, 100, 0);
+
+    const sel = selectTarget(state, p, "furthest", RANGE_SQ);
+    expect(sel).not.toBeNull();
+    expect(sel!.lockedTargetId).toBe(3); // 15 > 10 > 5; out-of-range #4 ignored
+    expect(sel!.dirX).toBeCloseTo(1);
+    expect(sel!.dirZ).toBeCloseTo(0);
+  });
+
+  it("'facing' returns player.facing dir (lockedTargetId = -1) when any enemy is in range", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.y = 0; p.z = 0;
+    p.facingX = 0; p.facingZ = 1;
+    addEnemy(state, 1, 5, 0); // off to the side, but in range — gates fire
+
+    const sel = selectTarget(state, p, "facing", RANGE_SQ);
+    expect(sel).not.toBeNull();
+    expect(sel!.lockedTargetId).toBe(-1);
+    expect(sel!.dirX).toBe(0);
+    expect(sel!.dirY).toBe(0);
+    expect(sel!.dirZ).toBe(1);
+  });
+
+  it("'facing' returns null when no enemy is in range (does not fire)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.y = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    // Empty enemy map — facing fire still gates.
+    expect(selectTarget(state, p, "facing", RANGE_SQ)).toBeNull();
+  });
+
+  it("'nearest'/'furthest' return null when no enemy is in range", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    addEnemy(state, 1, 100, 0); // out of range
+
+    expect(selectTarget(state, p, "nearest", RANGE_SQ)).toBeNull();
+    expect(selectTarget(state, p, "furthest", RANGE_SQ)).toBeNull();
+  });
+
+  it("'nearest' returns a unit-length 3D dir even when target is above/below", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.y = 0; p.z = 0;
+    addEnemy(state, 1, 3, 0);
+    state.enemies.get("1")!.y = 4; // 3-4-5 triangle: target at 3D distance 5
+
+    const sel = selectTarget(state, p, "nearest", RANGE_SQ);
+    expect(sel).not.toBeNull();
+    const len = Math.hypot(sel!.dirX, sel!.dirY, sel!.dirZ);
+    expect(len).toBeCloseTo(1);
+    expect(sel!.dirX).toBeCloseTo(0.6); // 3/5
+    expect(sel!.dirY).toBeCloseTo(0.8); // 4/5
+  });
+});
+
+describe("FireEvent — M8 US-002 carries weaponLevel + lockedTargetId", () => {
+  it("Bolt fire emits weaponLevel and lockedTargetId of the chosen enemy", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const w = attachBolt(p);
+    w.cooldownRemaining = 0;
+    w.level = 3; // mid-tier — should round-trip through FireEvent
+
+    addEnemy(state, 7, 5, 0);
+
+    const { fires, ctx } = makeCapture(42, 999_888);
+    const emit: Emit = (e) => fires.push(e);
+    tickWeapons(state, 0.05, ctx, emit);
+
+    expect(fires.length).toBe(1);
+    const fire = fires[0]!;
+    if (fire.type !== "fire") throw new Error("expected fire event");
+    expect(fire.weaponLevel).toBe(3);
+    expect(fire.lockedTargetId).toBe(7);
+  });
+});
+
+describe("tickProjectiles — M8 US-002 homing turn rate", () => {
+  it("rotates dir toward locked target each tick capped by homingTurnRate * dt", () => {
+    // Projectile at origin moving along +X (1,0,0). Target at (0,0,5) — 90°
+    // away in the XZ plane. With homingTurnRate = π rad/s and dt = 0.1s, the
+    // max turn per tick is π * 0.1 ≈ 0.314 rad ≈ 18°. After one tick, the
+    // dir should have rotated ~18° toward +Z but NOT all the way (90°).
+    const state = new RoomState();
+    const target = addEnemy(state, 1, 0, 5); target.hp = 100;
+
+    const proj = makeProjectile({
+      x: 0, y: 0, z: 0,
+      prevX: 0, prevY: 0, prevZ: 0,
+      dirX: 1, dirY: 0, dirZ: 0,
+      speed: 1, // small speed so 1 tick won't reach the target
+      lifetime: 10,
+      lockedTargetId: 1,
+      homingTurnRate: Math.PI, // ~3.14 rad/s
+    });
+    const active: Projectile[] = [proj];
+
+    const { ctx } = makeProjCtx();
+    const emit: Emit = () => {};
+    tickProjectiles(state, active, 0.1, ctx, emit);
+
+    // After one tick the dir should have rotated toward (0,0,1) by exactly
+    // π*0.1 radians (slerped by maxStep).
+    expect(active.length).toBe(1);
+    const newDir = active[0]!;
+    // dir is unit-length
+    const len = Math.hypot(newDir.dirX, newDir.dirY, newDir.dirZ);
+    expect(len).toBeCloseTo(1, 6);
+    // dirZ should now be positive (rotating from +X toward +Z), but
+    // less than 1 (not reached the target yet).
+    expect(newDir.dirZ).toBeGreaterThan(0);
+    expect(newDir.dirZ).toBeLessThan(1);
+    expect(newDir.dirX).toBeGreaterThan(0); // still has +X component
+    // The angle between new dir and original (1,0,0) should be ≈ maxStep.
+    const cosFromOriginal = newDir.dirX; // dot with (1,0,0)
+    const angle = Math.acos(Math.min(1, Math.max(-1, cosFromOriginal)));
+    expect(angle).toBeCloseTo(Math.PI * 0.1, 4);
+  });
+
+  it("snaps to target dir when angle within one step", () => {
+    // 5° offset, turn rate π rad/s → max step = π*0.1 ≈ 18° > 5°. Should snap.
+    const state = new RoomState();
+    const target = addEnemy(state, 1, 0.996, 0.087); target.hp = 100; // ≈5° from +X in XZ
+    target.y = 0;
+
+    const proj = makeProjectile({
+      x: 0, y: 0, z: 0, prevX: 0, prevY: 0, prevZ: 0,
+      dirX: 1, dirY: 0, dirZ: 0,
+      speed: 0.001, lifetime: 10, // negligible motion
+      lockedTargetId: 1,
+      homingTurnRate: Math.PI,
+    });
+    const active: Projectile[] = [proj];
+
+    const { ctx } = makeProjCtx();
+    tickProjectiles(state, active, 0.1, ctx, () => {});
+
+    // dir should now point at target (snapped — no overshoot).
+    expect(active.length).toBe(1);
+    const newDir = active[0]!;
+    expect(newDir.dirX).toBeCloseTo(0.996, 3);
+    expect(newDir.dirZ).toBeCloseTo(0.087, 3);
+  });
+
+  it("keeps current heading when locked target dies (no re-acquire — A3)", () => {
+    const state = new RoomState();
+    // No enemy with id=1 in state — simulates "locked target died".
+    const proj = makeProjectile({
+      x: 0, y: 0, z: 0, prevX: 0, prevY: 0, prevZ: 0,
+      dirX: 1, dirY: 0, dirZ: 0,
+      speed: 1, lifetime: 10,
+      lockedTargetId: 1,           // points at non-existent enemy
+      homingTurnRate: Math.PI,     // homing on, but target absent
+    });
+    const active: Projectile[] = [proj];
+
+    const { ctx } = makeProjCtx();
+    tickProjectiles(state, active, 0.1, ctx, () => {});
+
+    // Dir unchanged (no rotation applied without a target).
+    expect(active[0]!.dirX).toBeCloseTo(1);
+    expect(active[0]!.dirZ).toBeCloseTo(0);
+  });
+
+  it("non-homing projectile (homingTurnRate = 0) ignores locked target", () => {
+    // Bolt-shape: lockedTargetId may be set, but homingTurnRate = 0 means the
+    // dir vector never rotates — straight-line flight (M5 baseline preserved).
+    const state = new RoomState();
+    const target = addEnemy(state, 1, 0, 5); target.hp = 100;
+
+    const proj = makeProjectile({
+      x: 0, y: 0, z: 0, prevX: 0, prevY: 0, prevZ: 0,
+      dirX: 1, dirY: 0, dirZ: 0,
+      speed: 1, lifetime: 10,
+      lockedTargetId: 1,
+      homingTurnRate: 0,
+    });
+    const active: Projectile[] = [proj];
+
+    const { ctx } = makeProjCtx();
+    tickProjectiles(state, active, 0.1, ctx, () => {});
+
+    expect(active[0]!.dirX).toBeCloseTo(1);
+    expect(active[0]!.dirZ).toBeCloseTo(0);
+  });
+});
+
+describe("tickProjectiles — M8 US-002 pierce", () => {
+  it("pierceRemaining = 1 (Bolt baseline) drops on first hit, no second hit possible", () => {
+    const state = new RoomState();
+    addEnemy(state, 1, 1.0, 0).hp = 100;
+    addEnemy(state, 2, 1.5, 0).hp = 100;
+
+    const proj = makeProjectile({
+      x: 0, z: 0, prevX: 0, prevZ: 0,
+      pierceRemaining: 1,
+    });
+    const active: Projectile[] = [proj];
+
+    const fires: CombatEvent[] = [];
+    const { ctx } = makeProjCtx();
+    tickProjectiles(state, active, 0.05, ctx, (e) => fires.push(e));
+
+    // Projectile dropped after first hit.
+    expect(active.length).toBe(0);
+    // Only enemy 1 took damage (first in MapSchema order whose center lies
+    // within radiusSum of the segment). Enemy 2 untouched on this tick.
+    const hits = fires.filter((e) => e.type === "hit");
+    expect(hits.length).toBe(1);
+  });
+
+  it("pierceRemaining = 2 hits two enemies in one tick, then drops (and decrements pierce)", () => {
+    // Two enemies on the projectile's swept-sphere segment in the same tick.
+    // pierceRemaining 2 → hit both, drop. Verifies the multi-hit loop AND
+    // the decrement-by-hits-this-tick path.
+    const state = new RoomState();
+    addEnemy(state, 1, 0.5, 0).hp = 100;
+    addEnemy(state, 2, 0.8, 0).hp = 100;
+
+    const proj = makeProjectile({
+      x: 0, z: 0, prevX: 0, prevZ: 0,
+      speed: 18, // dt 0.05 → segment 0->0.9 covers both enemies
+      radius: 0.4,
+      pierceRemaining: 2,
+    });
+    const active: Projectile[] = [proj];
+
+    const fires: CombatEvent[] = [];
+    const { ctx } = makeProjCtx();
+    tickProjectiles(state, active, 0.05, ctx, (e) => fires.push(e));
+
+    const hits = fires.filter((e) => e.type === "hit");
+    expect(hits.length).toBe(2);
+    expect(active.length).toBe(0); // pierceRemaining hit 0 → dropped
+  });
+
+  it("pierceRemaining = -1 (infinite) does NOT drop on hit; only lifetime expires it", () => {
+    const state = new RoomState();
+    addEnemy(state, 1, 0.5, 0).hp = 100;
+
+    const proj = makeProjectile({
+      x: 0, z: 0, prevX: 0, prevZ: 0,
+      speed: 18, radius: 0.4,
+      lifetime: 10, age: 0,
+      pierceRemaining: -1, // infinite
+      hitCooldownPerEnemyMs: 200,
+    });
+    const active: Projectile[] = [proj];
+
+    const fires: CombatEvent[] = [];
+    const { ctx } = makeProjCtx();
+    tickProjectiles(state, active, 0.05, ctx, (e) => fires.push(e));
+
+    expect(active.length).toBe(1); // survives the hit
+    expect(active[0]!.pierceRemaining).toBe(-1); // infinite never decrements
+    expect(fires.filter((e) => e.type === "hit").length).toBe(1);
+  });
+
+  it("hitCooldownPerEnemyMs gates re-hits to the same enemy across ticks", () => {
+    // Infinite-pierce projectile; same enemy in radius across two ticks.
+    // First tick: hit, record cooldown. Second tick (dt=0.05s = 50ms <
+    // 200ms cooldown): no second hit emitted.
+    const state = new RoomState();
+    const e = addEnemy(state, 1, 0.5, 0); e.hp = 100;
+
+    const proj = makeProjectile({
+      x: 0, z: 0, prevX: 0, prevZ: 0,
+      speed: 0, // zero speed — segment is a point at (0,0). Stays inside enemy radius.
+      radius: 0.6, // enemy center 0.5 from origin; 0.6 + 0.5 ENEMY_RADIUS = 1.1 > 0.5
+      lifetime: 10, age: 0,
+      pierceRemaining: -1,
+      hitCooldownPerEnemyMs: 200,
+    });
+    const active: Projectile[] = [proj];
+
+    const fires: CombatEvent[] = [];
+    const { ctx } = makeProjCtx(1, 1_000_000);
+
+    // First tick at t=1_000_000 ms: hit
+    tickProjectiles(state, active, 0.05, ctx, (e) => fires.push(e));
+    expect(fires.filter((e) => e.type === "hit").length).toBe(1);
+
+    // Second tick: still nowMs = 1_000_000 (makeProjCtx is constant), so
+    // 0 ms have elapsed — well within the 200ms cooldown.
+    tickProjectiles(state, active, 0.05, ctx, (e) => fires.push(e));
+    expect(fires.filter((e) => e.type === "hit").length).toBe(1); // still 1, no re-hit
+
+    // Third tick after the cooldown window has passed: a fresh ctx with
+    // nowMs advanced past cooldown should let the hit through again.
+    const { ctx: ctx2 } = makeProjCtx(1, 1_000_000 + 250);
+    tickProjectiles(state, active, 0.05, ctx2, (e) => fires.push(e));
+    expect(fires.filter((e) => e.type === "hit").length).toBe(2);
   });
 });

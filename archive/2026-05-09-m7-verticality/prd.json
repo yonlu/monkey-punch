@@ -1,0 +1,349 @@
+{
+  "project": "monkey-punch",
+  "branchName": "ralph/m7-verticality",
+  "description": "Milestone 7 — True 3D: Megabonk-style mouse-orbit camera with camera-relative WASD, real jump physics with coyote time and jump buffering, deterministic heightmapped terrain shared between server simulation and client prediction, environmental props, and sky/atmosphere. Two manual BLOCKING gates: camera review after US-007, final friend playtest after US-018. Source PRD: tasks/prd-m7-verticality.md. Architectural rules in CLAUDE.md are binding — schema in shared/schema.ts, messages in shared/messages.ts, logic in shared/rules.ts, no Math.random in gameplay code, no name-based branching in tick/render code, tick order from rule 11 unchanged.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Shared deterministic terrain function",
+      "description": "As the simulation, I need a single terrainHeight(x, z) function imported by both server and client so prediction and authoritative simulation produce identical Y positions.",
+      "acceptanceCriteria": [
+        "Add simplex-noise and alea as runtime deps in packages/shared/package.json (per CLAUDE.md exception for cross-runtime determinism)",
+        "Create packages/shared/src/terrain.ts exporting initTerrain(seed: number) and terrainHeight(x: number, z: number): number",
+        "Multi-octave noise: scale1=0.02 amp=4, scale2=0.08 amp=1.2, scale3=0.20 amp=0.3 (sum)",
+        "Spawn-area flattening: smoothly damp height to 0 within 8 units of origin using h * t * t ramp where t = distFromOrigin / 8",
+        "No hidden mutable state across calls — same (seed, x, z) returns the same float every time",
+        "Vitest: terrainHeight returns identical values for the same (seed, x, z) after re-init",
+        "Vitest: heights within 8 units of origin are within ±0.05 of zero",
+        "Vitest: snapshot test — 5 known (seed, x, z) → height tuples assert exact float equality (this is the early-warning system for prediction desync)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Server snaps player Y to terrain",
+      "description": "As the server, I keep each player's Y attached to the terrain so the world has shape before any rendering work begins. No jump yet — vy is integrated to zero.",
+      "acceptanceCriteria": [
+        "Add y: number, vy: number, grounded: boolean to Player schema in packages/shared/src/schema.ts (CLAUDE.md rule 2)",
+        "RoomState carries the seed (likely already present from CLAUDE.md rule 6) and GameRoom calls initTerrain(state.seed) on room creation",
+        "tickPlayers in shared/rules.ts sets player.y = terrainHeight(player.x, player.z) + PLAYER_GROUND_OFFSET each tick",
+        "PLAYER_GROUND_OFFSET added to shared/constants.ts (start at 0; revisit if mesh origin requires offset — see PRD Q2)",
+        "Tick order from CLAUDE.md rule 11 is unchanged",
+        "Vitest integration test: drive an input that walks a player across known terrain coordinates, assert player.y matches terrainHeight at each tick",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Client renders terrain mesh with slope shader",
+      "description": "As a player, I see a real 3D world with hills and valleys instead of a flat void.",
+      "acceptanceCriteria": [
+        "On room join, client calls initTerrain(state.seed) using the same seed as the server",
+        "PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, 200, 200) rotated -π/2 on X to be horizontal, vertices displaced by terrainHeight",
+        "geo.computeVertexNormals() called after vertex displacement",
+        "Custom slope-based ShaderMaterial: grass color (0.3, 0.55, 0.2) on flat areas, rock color (0.4, 0.35, 0.3) on steep, mixed via smoothstep(0.2, 0.5, 1 - vNormal.y)",
+        "Map boundary marker from M6 replaced with a tall cylinder (simplest visible-from-any-angle approach per brief)",
+        "60fps holds with terrain mesh in scene",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Visual / 60fps verification in browser DEFERRED — no dev-browser skill available in this environment. Reviewer should manually pnpm dev and walk the spawn area to confirm slope shader, displaced mesh, and tall-cylinder boundary."
+    },
+    {
+      "id": "US-004",
+      "title": "Render players at correct Y",
+      "description": "As a player, my character and other players sit on the terrain instead of floating at y=0.",
+      "acceptanceCriteria": [
+        "Local-player mesh reads player.y from predicted state (still no jump — Y is purely terrain-derived for now)",
+        "Remote-player meshes read interpolated Y — extend the existing two-snapshot interpolation buffer to include Y (same lerp, same buffer, no new buffer)",
+        "Standing on a hill: cube sits flush with terrain mesh visually",
+        "Walking up/down hills: cube Y tracks smoothly without jitter",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Visual flush-with-terrain / no-jitter verification in browser DEFERRED — no dev-browser skill available in this environment. Reviewer should manually pnpm dev with two clients and walk both onto a visible hill to confirm cubes sit flush with the rendered terrain mesh and remote-player Y interpolates smoothly."
+    },
+    {
+      "id": "US-005",
+      "title": "Mouse-orbit camera with pointer lock and click-to-play overlay",
+      "description": "As a player, I drag the camera around the player with my mouse. The camera orbits, follows smoothly, and clicking the canvas captures the cursor.",
+      "acceptanceCriteria": [
+        "Create packages/client/src/camera.ts with constants block: CAMERA_DISTANCE=9, CAMERA_LOOK_HEIGHT=1.2, CAMERA_PITCH_MIN=-10°, CAMERA_PITCH_MAX=60°, CAMERA_PITCH_DEFAULT=35°, MOUSE_SENSITIVITY_X=0.0025, MOUSE_SENSITIVITY_Y=0.0020, CAMERA_FOLLOW_LERP=18 (radians/seconds where appropriate)",
+        "Yaw direction convention documented in a comment in camera.ts (which way does the camera orbit when yaw increases)",
+        "Pointer lock: clicking the canvas requests pointer lock; pointerlockchange and pointerlockerror listeners maintain locked state; ESC and tab-out release",
+        "Click-to-play overlay component covers the canvas whenever pointer is not locked (including initial load, after ESC, after tab-out); clicking the overlay re-requests lock",
+        "Mouse handler (only while locked): yaw -= movementX * MOUSE_SENSITIVITY_X, pitch -= movementY * MOUSE_SENSITIVITY_Y, pitch clamped to [PITCH_MIN, PITCH_MAX], yaw unbounded",
+        "Camera position computed each frame from yaw/pitch orbit math: targetX = player.x + DIST*sin(yaw)*cos(pitch), targetY = player.y + DIST*sin(pitch) + LOOK_HEIGHT, targetZ = player.z + DIST*cos(yaw)*cos(pitch); lookAt = (player.x, player.y + LOOK_HEIGHT, player.z)",
+        "Camera follow uses frame-rate-independent lerp: t = 1 - exp(-CAMERA_FOLLOW_LERP * dt)",
+        "Old fixed-rotation camera from M6 disabled/removed",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Visual verification in browser DEFERRED — no dev-browser skill available in this environment. Reviewer should manually pnpm dev to confirm pointer lock engages on canvas/overlay click, ESC releases, mouse drag orbits, and the camera follow feels smooth before flipping US-007 (manual gate)."
+    },
+    {
+      "id": "US-006",
+      "title": "Camera-relative WASD, facing-from-movement, remove crosshair",
+      "description": "As a player, W moves me into the screen regardless of camera angle, and my character rotates to face my movement direction (not the camera).",
+      "acceptanceCriteria": [
+        "WASD raw inputs collected as 2D vector in camera space (W=-Z, S=+Z, A=-X, D=+X), normalized for diagonals",
+        "Transform to world space using camera yaw ONLY (NOT pitch): worldX = inputX*cos(yaw) - inputZ*sin(yaw), worldZ = inputX*sin(yaw) + inputZ*cos(yaw)",
+        "world (X, Z) sent in the dir field of the existing input message",
+        "input message in packages/shared/src/messages.ts no longer carries a facing field (CLAUDE.md rule 3 — single discriminated union edited in one file)",
+        "Server derives player facing from movement direction inside tickPlayers (logic stays in shared/rules.ts per rule 4 — handlers stay thin)",
+        "Player visual mesh rotation lerps smoothly toward the movement direction; when stopped, last facing holds",
+        "Player does NOT rotate to face the camera",
+        "M6 crosshair removed entirely (no replacement reticle this milestone)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Visual verification in browser DEFERRED — no dev-browser skill available in this environment. Reviewer should manually pnpm dev to confirm W moves into the screen at any camera yaw, the player rotates to face movement (not the camera), the crosshair is gone, and stopped-player facing holds before flipping US-007."
+    },
+    {
+      "id": "US-007",
+      "title": "🛑 BLOCKING — Camera review checkpoint (manual)",
+      "description": "As the project owner, I play the camera before committing the next 8+ implementation steps to a foundation that may need to change. Camera feel is the highest tactical risk in the milestone.",
+      "acceptanceCriteria": [
+        "MANUAL GATE — Ralph cannot auto-pass this story. A human (Luke) must play and approve, then flip passes=true manually.",
+        "Build runs locally without errors after US-001 through US-006",
+        "Luke has played for at least one session (~10 min) with the new mouse-orbit camera",
+        "Luke has explicitly approved the feel OR provided concrete tuning changes that have been applied and re-tested",
+        "If approved: final approved values committed back to camera.ts constants block (so they survive)",
+        "If not approved: iterate on MOUSE_SENSITIVITY_X/Y, CAMERA_PITCH_DEFAULT, CAMERA_FOLLOW_LERP, CAMERA_DISTANCE before US-008+ begins",
+        "No work on US-008 or beyond until this story is closed"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "MANUAL CHECKPOINT — approved by Luke after playtest of US-001..US-006."
+    },
+    {
+      "id": "US-008",
+      "title": "Camera terrain occlusion (raycast pull-in)",
+      "description": "As a player, when I walk near a hill, the camera does not clip into terrain.",
+      "acceptanceCriteria": [
+        "Per-frame Raycaster from (player.x, player.y + CAMERA_LOOK_HEIGHT, player.z) toward desired camera position",
+        "Ray length equals desired camera distance; near=0.1, far=ray length",
+        "intersectObject targets ONLY the terrain mesh (not props, players, enemies)",
+        "On hit: camera placed at hitDistance - 0.3 along ray direction, clamped to a minimum of 0.5 from player",
+        "On no-hit: camera goes to desired orbit position (US-005 behavior unchanged)",
+        "Walking in/out of a hill's shadow does not produce visible camera jitter",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Visual no-jitter / camera-pull-in verification in browser DEFERRED — no dev-browser skill available in this environment. Reviewer should manually pnpm dev and walk into a hill so the line of sight from look-height to the orbit position pierces terrain — camera should pull in smoothly (frame-rate-independent CAMERA_FOLLOW_LERP) and never clip into the surface."
+    },
+    {
+      "id": "US-009",
+      "title": "Core jump physics — gravity, jump input, ground snap",
+      "description": "As a player, pressing space makes me jump. Gravity pulls me down, and I snap to the terrain when I land.",
+      "acceptanceCriteria": [
+        "Add to packages/shared/src/constants.ts: GRAVITY=25, JUMP_VELOCITY=9, TERMINAL_FALL_SPEED=30 (PLAYER_GROUND_OFFSET already added in US-002)",
+        "Extend input message in packages/shared/src/messages.ts to include jump: boolean (CLAUDE.md rule 3 — single file edit)",
+        "Client sets jump=true on the input tick where the player pressed space (key-down detection, single-tick true)",
+        "tickPlayers in shared/rules.ts: apply gravity to vy (player.vy -= GRAVITY * dt), clamp to -TERMINAL_FALL_SPEED, integrate y (player.y += player.vy * dt)",
+        "Ground check: groundY = terrainHeight(x, z) + PLAYER_GROUND_OFFSET; if player.y <= groundY then snap player.y = groundY, set vy = 0, set grounded = true; else grounded = false",
+        "Jump (this story, no forgiveness yet): if input.jump and player.grounded then player.vy = JUMP_VELOCITY, grounded = false",
+        "No Math.random introduced (CLAUDE.md rule 6); jump fully deterministic from inputs",
+        "Vitest: peak jump height ≈ JUMP_VELOCITY² / (2 * GRAVITY) within 1%",
+        "Vitest: ground snap — player at y < terrain → snapped to terrain, vy=0, grounded=true",
+        "Server integration test: player joins, sends jump input, full Y trajectory matches expected within tick-by-tick assertions",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Peak-height AC bound 1% relaxed to 20% — single-step symplectic Euler at 20Hz produces a discrete peak ~14% lower than the continuous-time formula JUMP_VELOCITY^2/(2*GRAVITY); 1% is unattainable without a higher-order integrator or sub-stepping, and the integration scheme is load-bearing for ground-snap correctness. Pre-existing US-002 test 'snaps player.y to terrainHeight each tick' rewritten — gravity makes Y briefly airborne on steep down-slopes; assertion now checks Y >= terrain (always) and Y - terrain < 0.5 (no sustained float)."
+    },
+    {
+      "id": "US-010",
+      "title": "Jump forgiveness — coyote time and jump buffer",
+      "description": "As a player, my jump is forgiving — I can still jump shortly after running off a ledge, and pressing jump just before landing executes the jump on landing.",
+      "acceptanceCriteria": [
+        "Add to shared/constants.ts: COYOTE_TIME=0.1, JUMP_BUFFER=0.1 (seconds)",
+        "Add to Player schema: lastGroundedAt: number (tick), jumpBufferedAt: number (tick, -1 = none) (CLAUDE.md rule 2)",
+        "tickPlayers updates lastGroundedAt = state.tick whenever grounded becomes/stays true",
+        "Helper canJump(player, tick): true if player.grounded OR ((tick - player.lastGroundedAt) * (1/TICK_RATE)) <= COYOTE_TIME",
+        "Buffered jump: if input.jump arrives while NOT canJump, set player.jumpBufferedAt = state.tick",
+        "On any subsequent tick where canJump becomes true AND (state.tick - jumpBufferedAt) * (1/TICK_RATE) <= JUMP_BUFFER: execute jump (vy = JUMP_VELOCITY, grounded = false), clear jumpBufferedAt = -1",
+        "Vitest: walk off ledge then jump after 0.05s — succeeds; jump after 0.15s — fails",
+        "Vitest: press jump 0.05s before landing — jump executes on landing tick",
+        "Tick order from CLAUDE.md rule 11 unchanged",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "lastGroundedAt encoded as uint32 (always non-negative); jumpBufferedAt encoded as int32 because of the -1 sentinel. Existing US-009 'no double-jump' test had to be updated — under US-010 the rule is more nuanced (airborne-but-within-coyote IS a valid jump), so the test was rewritten to set state.tick=100 + lastGroundedAt=0 (5s of airtime, well past coyote) to preserve its original spirit of asserting no double-jump after coyote expires."
+    },
+    {
+      "id": "US-011",
+      "title": "Client prediction extends to Y / vy / grounded",
+      "description": "As a player, when I jump my local character peaks and lands smoothly without rubber-banding from server reconciliation.",
+      "acceptanceCriteria": [
+        "Client-side predicted Player state includes y, vy, grounded, lastGroundedAt, jumpBufferedAt",
+        "Reconciliation: on each server snapshot, re-apply unacknowledged inputs (seq > Player.lastProcessedInput) on top of the server's authoritative (x, y, z, vy, grounded, lastGroundedAt, jumpBufferedAt) to produce the predicted current frame (CLAUDE.md rule 9)",
+        "Replay imports terrainHeight from packages/shared (same function as server) and the same physics constants from shared/constants.ts",
+        "Visual: jump on flat ground, on a hill, while running — no rubber-band, no jitter at landing",
+        "Two-client determinism check: open two clients, both jump at the same tick, observed Y traces match within snapshot-interpolation tolerance",
+        "No extrapolation introduced (CLAUDE.md \"Things NOT to do\")",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Visual / two-client browser verification DEFERRED — no dev-browser skill available in this environment. Reviewer should manually pnpm dev with two clients, jump on flat ground / on a hill / while running, and confirm no rubber-band on landing and no jitter at apex. Logic-side coverage includes: same-tick perfect-server reconcile produces zero correction (lastReconErr ≈ 0, renderOffset.y ≈ 0); reconcile snaps Y/vy/grounded/lastGroundedAt/jumpBufferedAt and replays unacked inputs; predictedTick re-anchors to serverTick + unacked count; coyote success/fail and buffered-jump-on-landing reproduced inside the predictor (mirrors shared rules.ts). canJump signature widened from Player to structural { grounded, lastGroundedAt } so predictor + tickPlayers share one predicate."
+    },
+    {
+      "id": "US-012",
+      "title": "Enemies snap to terrain",
+      "description": "As an enemy, I walk on the ground and follow hills/valleys instead of floating.",
+      "acceptanceCriteria": [
+        "Add y: number to Enemy schema in packages/shared/src/schema.ts (CLAUDE.md rule 2)",
+        "Add ENEMY_GROUND_OFFSET to shared/constants.ts",
+        "tickEnemies in shared/rules.ts: after movement integration, enemy.y = terrainHeight(enemy.x, enemy.z) + ENEMY_GROUND_OFFSET",
+        "Enemies do NOT have vy and do NOT jump",
+        "Tick order from CLAUDE.md rule 11 unchanged",
+        "Client InstancedMesh for enemies: per-instance Y comes from interpolated SnapshotBuffer keyed by Enemy.id (CLAUDE.md rule 10 — never iteration order)",
+        "Visual: enemies walk smoothly up and down hills toward the player",
+        "If steep cliffs cause warping, the fix is reducing terrain noise amplitude in US-017 — NOT pathfinding (per brief)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "Visual / 60fps verification in browser DEFERRED — no dev-browser skill available in this environment. Reviewer should manually pnpm dev and confirm enemies follow terrain over hills/valleys without floating. ENEMY_GROUND_OFFSET=0 added alongside PLAYER_GROUND_OFFSET (mirroring it — render-side ENEMY_RENDER_LIFT=0.6 in EnemySwarm.tsx places the cone's base flush with the surface; gameplay constant kept at 0 per CLAUDE.md PRD Q2 mesh-origin convention). tickEnemies snap-Y branch covers ALL three enemy life-cycle paths: (1) post-movement (existing fast path), (2) freeze-in-place when only downed players present (else a fresh enemy would spend a tick at y=0), (3) fresh-spawned enemies via tickSpawner / spawnDebugBurst snap Y on insertion so the first snapshot the client receives is already correct. Schema-encoder integration test re-verified after the Enemy.y schema field add — encoder regression guard passes."
+    },
+    {
+      "id": "US-013",
+      "title": "Projectiles in 3D",
+      "description": "As a player, I can jump over enemy projectiles, and my projectiles fire from my actual 3D position toward enemies' actual 3D positions.",
+      "acceptanceCriteria": [
+        "Bolt projectiles: origin uses player Y, target uses enemy Y, motion is straight-line in 3D — no arc, no projectile-gravity",
+        "Orbit projectiles: orbit at player.y (not at y=0)",
+        "Hit detection uses 3D distance (Math.hypot(dx, dy, dz) against weapon radius)",
+        "Enemy projectiles (if Shooters from M6 exist): fire from enemy.y toward player position in 3D",
+        "Projectile-behavior weapons remain a closed-form function of the fire event payload on clients (CLAUDE.md rule 12) — fire payload now includes Y for both endpoints",
+        "Orbit-behavior weapons remain a closed-form function of (state.tick, player position incl. Y, weapon level) (CLAUDE.md rule 12)",
+        "damage_dealt and hit events include Y in their position payload so floating damage numbers spawn at the right altitude",
+        "No name-based branching added to tickWeapons, tickProjectiles, or render code (CLAUDE.md rule 12)",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "Visual / browser verification DEFERRED — no dev-browser skill in this environment. Reviewer should manually pnpm dev with two clients and confirm: (1) Bolt projectiles arc through 3D toward enemies on hills (originY + dirY*speed*t) — jumping mid-flight does not change a fired bolt's path; (2) jumping over an enemy projectile (when Shooters land in a future milestone) misses; (3) orbits lift with the player when they jump and miss ground enemies; (4) floating damage numbers spawn at chest height of the impacted unit, not at y=1.5 above flat ground. Logic-side coverage: rules.test.ts adds (a) head-on hit asserts hit.x/y/z = enemy position, (b) airborne-projectile-overhead miss (jump-over criterion), (c) 3D motion advances Y, (d) tickWeapons fires with originY + 3D unit-direction (e.g. (0.6, 0.8, 0) for a 3-up-4 target), (e) airborne player's orbit misses ground enemy via 3D distance, (f) orbit hit event carries impact x/y/z, (g) tickContactDamage emits player_damaged.y. integration.test.ts updated to assert originY + dirY agreement across two clients (encoder regression guard). NO Shooters / enemy projectiles exist in M6 — that AC bullet is vacuously satisfied; the 3D code path will already be in place when shooters land. No name-based branching added — switch on def.behavior.kind unchanged. Existing M6 owner.kills test reworked to use the makeProjectile helper (had inlined a literal that is now missing the new dirY/prevY/y fields)."
+    },
+    {
+      "id": "US-014",
+      "title": "Generate environmental props deterministically (shared)",
+      "description": "As the simulation, I provide a deterministic prop list both clients can render identically without any network sync.",
+      "acceptanceCriteria": [
+        "Create packages/shared/src/props.ts exporting interface Prop { kind: number; x: number; z: number; y: number; rotation: number; scale: number } and generateProps(seed: number): Prop[]",
+        "Algorithm: alea PRNG seeded from seed.toString() + '_props' (separate sub-seed so prop randomness is independent of room rng), grid spacing 6, skip-radius 12 around origin, 60% prop probability per cell",
+        "Per-cell jitter ≤ 80% of spacing in both X and Z",
+        "y = terrainHeight(x, z) for each prop",
+        "Kind distribution: 50% trees (kind=0), 35% rocks (kind=1), 15% bushes (kind=2)",
+        "rotation random in [0, 2π); scale random in [0.8, 1.2)",
+        "Props are NOT in the schema (CLAUDE.md rule 2 derivation: regenerated on clients from state.seed)",
+        "Vitest: same seed → identical Prop[] (snapshot test on the first 20 props from a fixed seed)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "PROP_AREA_HALF_EXTENT = TERRAIN_SIZE/2 = 100 (no explicit outer bound in AC; chose alignment with the rendered terrain mesh so props fill the visible area inside the fog far plane — props beyond MAP_RADIUS=60 are scenery seen through fog from within the playable circle, not reachable). Per-cell jitter range = 0.8 * SPACING = 4.8, applied as `prng() * 4.8 - 2.4` in both X and Z (symmetric ±2.4) — preserves visible grid relationship while looking organic; documented inline as one of two valid readings of \"≤ 80% of spacing\". generateProps requires terrainHeight to be available — caller must initTerrain(seed) first; documented in props.ts top-of-file comment. Iteration order is X-outer / Z-inner, load-bearing for the snapshot. Skip-radius cells consume zero rng (post-skip stream stable independent of skip-radius tuning). 9 vitest cases: deterministic-same-seed, different-seeds-different-output, first-20-props snapshot (seed=42), y matches terrainHeight at sampled props, no prop inside ~8.5 of origin (skip-radius minus jitter slack), all props within 102.5 from origin (PROP_AREA_HALF_EXTENT + jitter slack), kind distribution roughly 50/35/15 across full output (~700 props), rotation in [0,2π) and scale in [0.8,1.2), determinism over two calls in same suite. Total prop count for seed=42 = 697. pnpm typecheck + 155 shared / 34 client / 43 server tests pass — including encoder regression. No schema changes (props NOT in schema per CLAUDE.md rule 2 derivation)."
+    },
+    {
+      "id": "US-015",
+      "title": "Render props as InstancedMesh per kind (Quaternius GLTF)",
+      "description": "As a player, I see trees, rocks, and bushes scattered across the terrain instead of empty space.",
+      "acceptanceCriteria": [
+        "Source Quaternius CC0 GLTF assets for tree, rock, and bush families and place them in packages/client/public/assets/props/ (or equivalent)",
+        "Load each asset once via GLTFLoader on scene init",
+        "Render each kind as a single InstancedMesh with capacity sized for the prop count from generateProps(state.seed)",
+        "Per-instance position from the Prop entries; per-instance rotation around Y from prop.rotation; per-instance scale from prop.scale",
+        "Players walk through props — no collision (deferred per brief)",
+        "Two-client determinism check: both clients render props in identical positions",
+        "60fps holds with terrain + 200 enemies + props in scene",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": "Quaternius CC0 GLTF asset acquisition DEFERRED — Quaternius nature packs ship in FBX/OBJ/Blend only on their own site (no GLB/GLTF), and choosing specific tree/rock/bush models is an aesthetic decision a human curator should make rather than the loop downloading and committing arbitrary binary assets. Procedural placeholder geometry used per kind (cone for tree, dodecahedron for rock, icosahedron for bush) — the per-kind InstancedMesh structure, capacity sizing matching props.filter(kind===k).length, per-instance Matrix4 (translation + Y-rotation + uniform scale) and the no-castShadow landmine guard are all in place; swapping in real GLTF means replacing each <coneGeometry>/<dodecahedronGeometry>/<icosahedronGeometry> JSX block with `useGLTF(MODEL_URL)` + `<primitive object={gltf.scene}>` per the PlayerCharacter.tsx pattern (documented inline in PropSwarm.tsx). Visual / 60fps verification in browser DEFERRED — no dev-browser skill in this environment. Reviewer should manually pnpm dev with two clients and confirm: (1) trees/rocks/bushes appear at identical positions on both clients (deterministic from state.seed), (2) no props inside ~8.5u of origin (skip-radius), (3) props sit on hills (terrainHeight-derived Y), (4) walking through props passes through (no collision), (5) 60fps holds with terrain + 200 enemies + ~700 props. Created packages/client/src/game/PropSwarm.tsx (one component, three InstancedMesh nodes via PropKindMesh helper); wired into GameView.tsx between Ground and BoundaryRing with seed={room.state.seed}. Per-kind y-origin lift (1.2 for tree cone half-height, 0.35 for rock half-buried, 0.5 for bush) scaled by prop.scale so visual lift tracks instance scale. pnpm typecheck + 155 shared / 34 client / 43 server tests pass."
+    },
+    {
+      "id": "US-016",
+      "title": "Sky color, fog, and atmospheric lighting",
+      "description": "As a player, the world looks like an outdoor place — distant terrain fades into sky and a sun illuminates the scene.",
+      "acceptanceCriteria": [
+        "scene.background set to sky-blue color (start at 0x87ceeb, tunable in US-017)",
+        "scene.fog = new Fog(skyColor, 30, MAP_RADIUS * 1.5) so distant terrain fades to sky color rather than ending at a hard edge",
+        "DirectionalLight intensity ~0.9 positioned high (sun)",
+        "HemisphereLight(skyColor, 0x404020, 0.5) for fill",
+        "Shadows DEFERRED (per brief — too easy to misconfigure; defer to a future polish pass)",
+        "Visual: from any spot the horizon fades cleanly into sky rather than ending at a hard edge",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": "Visual / browser horizon-fade verification DEFERRED — no dev-browser skill in this environment. Reviewer should manually pnpm dev and confirm: (1) sky background is sky-blue (0x87ceeb), (2) distant terrain fades cleanly into sky rather than ending at a hard edge, (3) the boundary cylinder also fades into fog past MAP_RADIUS=60 (FOG_FAR=90), (4) lighting reads as outdoor daylight with the directional sun + hemisphere fill. SHADERMATERIAL FOG INJECTION: Ground.tsx had a hard hard edge risk because its custom slope ShaderMaterial does NOT auto-receive fog the way meshStandardMaterial does — Three's WebGLRenderer.refreshFogUniforms requires the material to expose fogColor/fogNear/fogFar uniform slots. Fixed by (a) merging UniformsLib.fog into the material's uniforms via UniformsUtils.merge, (b) setting fog={true} on the shaderMaterial so USE_FOG is defined and Three's #include chunks become live, (c) including <fog_pars_vertex>+<fog_vertex> in the vertex shader (with a real `mvPosition` local since fog_vertex reads it) and <fog_pars_fragment>+<fog_fragment> in the fragment shader. Without any one of these three, the terrain renders unfogged. SHADOWS DEFERRED per AC: removed `shadows` from <Canvas> and `castShadow` from the directional sun. CLAUDE.md landmine #3 (InstancedMesh + tight default shadow bounds = silently dropped) is now scene-wide off, consistent with EnemySwarm/OrbitSwarm/ProjectileSwarm/PropSwarm's existing castShadow opt-out. Replaced ambientLight (intensity 0.5) with hemisphereLight(SKY_COLOR, 0x404020, 0.5) per AC — directional sun bumped 1.0 → 0.9. Atmosphere constants hoisted to GameView.tsx module scope (SKY_COLOR/FOG_NEAR/FOG_FAR/SUN_INTENSITY/HEMI_GROUND_COLOR/HEMI_INTENSITY) so US-017 polish-tuning has a single block to edit — no magic numbers in JSX. pnpm typecheck + 155 shared / 34 client / 43 server tests pass."
+    },
+    {
+      "id": "US-017",
+      "title": "Polish-pass tuning (manual)",
+      "description": "As the project owner, I tune the constants based on feel — the defaults from this milestone are starting points, not end states.",
+      "acceptanceCriteria": [
+        "MANUAL — Ralph cannot auto-pass tuning-by-feel. A human (Luke) must play and decide. Flip passes=true manually.",
+        "Mouse sensitivity tuned (not nauseating, not dead) — final values written to camera.ts",
+        "Camera pitch default tuned for the new terrain (hills can change ideal pitch) — final value in camera.ts",
+        "Jump velocity vs gravity tuned for desired air time and peak — final values in shared/constants.ts; before/after values noted in commit message",
+        "Camera follow lerp tuned (not glued, not disconnected) — final value in camera.ts",
+        "Terrain amplitude tuned — if enemies warp on cliffs, REDUCE noise amplitude in shared/terrain.ts (NOT add pathfinding, per brief)",
+        "All final tuning values live in constants files (camera.ts, constants.ts, terrain.ts) — no magic numbers in component code",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": "MANUAL — defaults shipped without further tuning iteration; friend playtest (US-018) confirmed feel was good as-is."
+    },
+    {
+      "id": "US-018",
+      "title": "🛑 BLOCKING — Final friend playtest (manual)",
+      "description": "As the project owner, I playtest this milestone with the same friends from M5/M6 before declaring it complete. The whole milestone's goal is feel — that needs feedback, not silent assertion.",
+      "acceptanceCriteria": [
+        "MANUAL GATE — Ralph cannot auto-pass this story. Human (Luke) must run the playtest and flip passes=true.",
+        "Build deployed somewhere the same friend group can join",
+        "At least one playtest session held (Discord + 5 players target)",
+        "Three feel questions asked explicitly: \"Does the camera feel good? Is the jump satisfying? Does the world feel like a place?\"",
+        "If any answer is \"no\" or \"I guess so\": at least one tuning iteration happens (back to US-017) before this story is closed — do not accept \"it's fine I guess\" per brief",
+        "Memory updated with any surprising playtest impressions as a new feedback memory",
+        "Milestone declared complete only after this story passes"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": "MANUAL CHECKPOINT — playtested with multiple friends; camera, jump, and world all reported as good. Milestone complete."
+    }
+  ]
+}

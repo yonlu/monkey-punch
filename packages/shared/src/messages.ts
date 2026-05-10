@@ -79,6 +79,19 @@ export type FireEvent = {
   type: "fire";
   fireId: number;
   weaponKind: number;
+  // M8 US-002: 1-indexed weapon level at fire time. Lifts the M5
+  // restriction (weapons.ts comment) that Bolt's visual stats are flat
+  // because the client had no level info. Per-level visual scaling now
+  // possible (Ahlspiess hitRadius growth in US-004); existing weapons
+  // (Bolt) deliberately keep flat visuals.
+  weaponLevel: number;
+  // M8 US-002: enemy id locked at fire time (-1 = no lock; e.g. facing-mode
+  // weapons such as Ahlspiess, or no enemies in range). Powers
+  // deterministic homing on the client for Gakkung Bow (US-003) — both
+  // server and client home toward the same locked target each tick. Per
+  // open-question A3: no re-acquire if the locked target dies; projectile
+  // continues on its current heading.
+  lockedTargetId: number;
   ownerId: string;
   originX: number;
   originY: number;

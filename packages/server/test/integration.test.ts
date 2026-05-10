@@ -238,6 +238,13 @@ describe("integration: cross-client fire event determinism", () => {
       serverFireTimeMs: number;
       ownerId: string;
       weaponKind: number;
+      // M8 US-002: new fields on FireEvent. weaponLevel powers per-level
+      // visual scaling on the client; lockedTargetId powers deterministic
+      // homing (Gakkung Bow US-003). Asserting them here is the encoder
+      // regression guard — if either were dropped from the schema the
+      // assertion below would catch it before any runtime crash.
+      weaponLevel: number;
+      lockedTargetId: number;
     };
     const firesA = new Map<number, FirePayload>();
     const firesB = new Map<number, FirePayload>();
@@ -270,6 +277,8 @@ describe("integration: cross-client fire event determinism", () => {
       expect(ea.serverFireTimeMs).toBe(eb.serverFireTimeMs);
       expect(ea.ownerId).toBe(eb.ownerId);
       expect(ea.weaponKind).toBe(eb.weaponKind);
+      expect(ea.weaponLevel).toBe(eb.weaponLevel);
+      expect(ea.lockedTargetId).toBe(eb.lockedTargetId);
     }
 
     await roomB.leave();

@@ -33,7 +33,7 @@ import {
   xpForLevel,
 } from "./constants.js";
 import { terrainHeight } from "./terrain.js";
-import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, type WeaponDef } from "./weapons.js";
+import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, type WeaponDef, type TargetingMode } from "./weapons.js";
 import type { Rng } from "./rng.js";
 import type {
   FireEvent,
@@ -369,6 +369,25 @@ export type Projectile = {
   x: number;
   y: number;
   z: number;
+  // M8 US-002: enemy locked at fire time (-1 = no lock). Used by tickProjectiles
+  // for homing — slerp dir toward target each tick — and emitted on FireEvent
+  // so client closed-form sim agrees with server. Per open-question A3, no
+  // re-acquire on death: a homing projectile whose locked target dies just
+  // continues on its current heading.
+  lockedTargetId: number;
+  // M8 US-002: rad/sec. 0 = straight-line (current Bolt behavior). >0 enables
+  // homing toward `lockedTargetId` capped at this turn rate. Baked onto the
+  // projectile at fire so the value can't drift mid-flight on a level-up.
+  homingTurnRate: number;
+  // M8 US-002: hits remaining before despawn. Baked from
+  // ProjectileLevel.pierceCount at fire. -1 = infinite (never decrements;
+  // only lifetime expiry despawns). 1 = M5 Bolt baseline (single-hit drop).
+  pierceRemaining: number;
+  hitCooldownPerEnemyMs: number;
+  // M8 US-002: per-projectile-per-enemy last-hit ms wallclock. Server-only
+  // off-schema state (rule 10 spirit). Used by tickProjectiles to gate
+  // re-hits when hitCooldownPerEnemyMs > 0.
+  enemyHitCooldownsMs: Map<number, number>;
 };
 
 export type CombatEvent =
@@ -412,6 +431,86 @@ export type WeaponContext = {
   nextGemId: () => number;
   orbitHitCooldown: OrbitHitCooldownLike;
 };
+
+/**
+ * M8 US-002: pick a fire target according to the projectile weapon's
+ * targeting mode. Exported separately from tickWeapons so the three modes
+ * can be unit-tested independently of the weapon table — and so any future
+ * non-projectile behavior that wants targeting (e.g. a homing aura) can
+ * reuse it.
+ *
+ * Returns null when no target/direction is selected (the caller should
+ * skip firing, leaving its cooldown clamped at 0 per AD10).
+ *
+ * - "nearest"   — pick the in-range enemy with the smallest 3D distance
+ *                 (M5 Bolt baseline). Returns its id and a unit-length 3D
+ *                 direction toward it.
+ * - "furthest"  — same gate, pick max 3D distance instead. Used by Gakkung
+ *                 Bow (US-003) — rewards positioning that builds a tail.
+ * - "facing"    — fire in player.facing (XZ plane, dirY = 0). Still gated
+ *                 on "any enemy in range" so empty fields don't waste shots.
+ *                 lockedTargetId = -1 (no specific lock; client renders
+ *                 a straight-line projectile).
+ */
+export type SelectedTarget = {
+  lockedTargetId: number;
+  dirX: number;
+  dirY: number;
+  dirZ: number;
+};
+
+export function selectTarget(
+  state: RoomState,
+  player: Player,
+  targeting: TargetingMode,
+  rangeSq: number,
+): SelectedTarget | null {
+  if (targeting === "facing") {
+    let anyInRange = false;
+    state.enemies.forEach((enemy: Enemy) => {
+      if (anyInRange) return;
+      const dx = enemy.x - player.x;
+      const dy = enemy.y - player.y;
+      const dz = enemy.z - player.z;
+      const sq = dx * dx + dy * dy + dz * dz;
+      if (sq <= rangeSq) anyInRange = true;
+    });
+    if (!anyInRange) return null;
+    return { lockedTargetId: -1, dirX: player.facingX, dirY: 0, dirZ: player.facingZ };
+  }
+
+  // `nearest` or `furthest` — initial best is set so the first in-range
+  // enemy always wins; subsequent candidates compete by min/max sq distance.
+  let bestSq = targeting === "furthest" ? -Infinity : Infinity;
+  let bestDx = 0, bestDy = 0, bestDz = 0;
+  let bestId = -1;
+  let hasTarget = false;
+  state.enemies.forEach((enemy: Enemy) => {
+    const dx = enemy.x - player.x;
+    const dy = enemy.y - player.y;
+    const dz = enemy.z - player.z;
+    const sq = dx * dx + dy * dy + dz * dz;
+    if (sq > rangeSq) return;
+    const better = targeting === "furthest" ? sq > bestSq : sq < bestSq;
+    if (better) {
+      bestSq = sq;
+      bestDx = dx;
+      bestDy = dy;
+      bestDz = dz;
+      bestId = enemy.id;
+      hasTarget = true;
+    }
+  });
+  if (!hasTarget) return null;
+  if (bestSq === 0) return null; // defensive — skip firing at exact same position to avoid NaN dir
+  const dist = Math.sqrt(bestSq);
+  return {
+    lockedTargetId: bestId,
+    dirX: bestDx / dist,
+    dirY: bestDy / dist,
+    dirZ: bestDz / dist,
+  };
+}
 
 /**
  * For each player's weapon: tick its cooldown; if ready and an in-range
@@ -465,39 +564,12 @@ export function tickWeapons(
           weapon.cooldownRemaining = Math.max(0, weapon.cooldownRemaining - dt);
           if (weapon.cooldownRemaining > 0) return;
 
-          // M7 US-013: target selection and aim are 3D. Range still uses
-          // TARGETING_MAX_RANGE but compared against the 3D squared
-          // distance (dx² + dy² + dz²); fire direction is a unit-length
-          // 3D vector toward the targeted enemy. With both ends usually
-          // sitting on terrain at similar altitudes, dy is small and 3D
-          // ≈ 2D in the common case — the change matters when a player
-          // jumps mid-fire or when terrain puts an enemy materially
-          // above/below the player.
-          let bestSq = Infinity;
-          let bestDx = 0;
-          let bestDy = 0;
-          let bestDz = 0;
-          let hasTarget = false;
-          state.enemies.forEach((enemy: Enemy) => {
-            const dx = enemy.x - player.x;
-            const dy = enemy.y - player.y;
-            const dz = enemy.z - player.z;
-            const sq = dx * dx + dy * dy + dz * dz;
-            if (sq <= rangeSq && sq < bestSq) {
-              bestSq = sq;
-              bestDx = dx;
-              bestDy = dy;
-              bestDz = dz;
-              hasTarget = true;
-            }
-          });
-          if (!hasTarget) return;
-          if (bestSq === 0) return;
-
-          const dist = Math.sqrt(bestSq);
-          const dirX = bestDx / dist;
-          const dirY = bestDy / dist;
-          const dirZ = bestDz / dist;
+          const sel = selectTarget(state, player, def.behavior.targeting, rangeSq);
+          if (!sel) return;
+          const dirX = sel.dirX;
+          const dirY = sel.dirY;
+          const dirZ = sel.dirZ;
+          const lockedTargetId = sel.lockedTargetId;
 
           const proj: Projectile = {
             fireId: ctx.nextFireId(),
@@ -517,6 +589,15 @@ export function tickWeapons(
             x: player.x,
             y: player.y,
             z: player.z,
+            // M8 US-002: bake homing/pierce/per-enemy-cooldown onto the
+            // projectile at fire so a mid-flight level-up doesn't change
+            // the in-flight projectile's behavior. Same single-writer-at-spawn
+            // pattern as `damage`/`speed`/`radius`/`lifetime` above.
+            lockedTargetId,
+            homingTurnRate: def.behavior.homingTurnRate,
+            pierceRemaining: stats.pierceCount,
+            hitCooldownPerEnemyMs: stats.hitCooldownPerEnemyMs,
+            enemyHitCooldownsMs: new Map(),
           };
           ctx.pushProjectile(proj);
 
@@ -524,6 +605,8 @@ export function tickWeapons(
             type: "fire",
             fireId: proj.fireId,
             weaponKind: weapon.kind,
+            weaponLevel: weapon.level,
+            lockedTargetId,
             ownerId: player.sessionId,
             originX: player.x,
             originY: player.y,
@@ -632,7 +715,59 @@ export function tickWeapons(
 export type ProjectileContext = {
   nextGemId: () => number;
   orbitHitCooldown: OrbitHitCooldownLike;
+  // M8 US-002: drives the per-projectile-per-enemy hit cooldown for pierce
+  // weapons (Ahlspiess, future homing-pierce weapons). Same wallclock source
+  // as WeaponContext.serverNowMs and OrbitHitCooldown — keeps the cooldown
+  // semantics consistent across orbit and projectile arms.
+  serverNowMs: () => number;
 };
+
+/**
+ * In-place slerp: rotate `proj.dir{X,Y,Z}` (assumed unit-length) toward the
+ * unit vector `(des*)` by at most `maxStepRad` radians. Used by
+ * tickProjectiles for homing weapons (Gakkung Bow). Determinism: pure math
+ * over `proj`'s already-deterministic state plus the target's deterministic
+ * position; no clock, no rng. Slerp of two unit vectors is unit-length
+ * analytically — fp drift accumulates at ~1e-12 per step which is far
+ * below any visible artifact over a projectile's seconds-long lifetime.
+ */
+function rotateDirTowardInPlace(
+  proj: Projectile,
+  desX: number, desY: number, desZ: number,
+  maxStepRad: number,
+): void {
+  let cosA = proj.dirX * desX + proj.dirY * desY + proj.dirZ * desZ;
+  if (cosA > 1) cosA = 1;
+  else if (cosA < -1) cosA = -1;
+  const angle = Math.acos(cosA);
+  if (angle === 0) return;
+  if (angle <= maxStepRad) {
+    // Within one step of the target — snap to desired so the projectile
+    // doesn't oscillate around the target by sub-step amounts.
+    proj.dirX = desX;
+    proj.dirY = desY;
+    proj.dirZ = desZ;
+    return;
+  }
+  const sinA = Math.sin(angle);
+  if (sinA < 1e-6) {
+    // Anti-parallel edge case (cosA ≈ -1). Slerp degenerates here. Snap to
+    // desired so a turning projectile doesn't get stuck.
+    proj.dirX = desX;
+    proj.dirY = desY;
+    proj.dirZ = desZ;
+    return;
+  }
+  const t = maxStepRad / angle;
+  const a = Math.sin((1 - t) * angle) / sinA;
+  const b = Math.sin(t * angle) / sinA;
+  const nx = a * proj.dirX + b * desX;
+  const ny = a * proj.dirY + b * desY;
+  const nz = a * proj.dirZ + b * desZ;
+  proj.dirX = nx;
+  proj.dirY = ny;
+  proj.dirZ = nz;
+}
 
 /**
  * Integrate each projectile by `dt`, swept-circle test against each
@@ -656,9 +791,32 @@ export function tickProjectiles(
   emit: Emit,
 ): void {
   if (state.runEnded) return;
+  const nowMs = ctx.serverNowMs();
   let w = 0;
   for (let r = 0; r < active.length; r++) {
     const proj = active[r]!;
+
+    // M8 US-002: homing — rotate dir toward locked target's current
+    // position, capped at homingTurnRate*dt radians per tick. Runs BEFORE
+    // integration so this tick's motion uses the new direction. If the
+    // locked target is gone (dead or removed), keep current heading per
+    // open-question A3 (no re-acquire).
+    if (proj.homingTurnRate > 0 && proj.lockedTargetId !== -1) {
+      const target = state.enemies.get(String(proj.lockedTargetId));
+      if (target) {
+        const tdx = target.x - proj.x;
+        const tdy = target.y - proj.y;
+        const tdz = target.z - proj.z;
+        const tdist = Math.sqrt(tdx * tdx + tdy * tdy + tdz * tdz);
+        if (tdist > 0) {
+          rotateDirTowardInPlace(
+            proj,
+            tdx / tdist, tdy / tdist, tdz / tdist,
+            proj.homingTurnRate * dt,
+          );
+        }
+      }
+    }
 
     // Integrate (3D, M7 US-013). Motion is straight-line: position
     // advances by `(dirX, dirY, dirZ) * speed * dt` with `(dir*)` already
@@ -676,24 +834,29 @@ export function tickProjectiles(
       continue;
     }
 
-    // Swept-sphere vs. each enemy in insertion order. First intersected
-    // wins. The geometry generalizes 2D segment-vs-disk: project the
-    // enemy center onto the segment in 3D, clamp the parameter to [0,1],
-    // and compare squared 3D distance to the sum-of-radii squared. With
-    // both ends sitting on terrain the segment has near-zero dy and the
-    // result matches the previous 2D behavior; when a player is mid-jump
-    // and an enemy is on the ground, the 3D distance correctly reports
-    // "out of reach" — that's the "jump over a projectile" criterion.
+    // Swept-sphere vs. each enemy in insertion order. The geometry
+    // generalizes 2D segment-vs-disk: project the enemy center onto the
+    // segment in 3D, clamp the parameter to [0,1], and compare squared
+    // 3D distance to the sum-of-radii squared.
+    //
+    // M8 US-002: collect ALL intersected enemies up to the projectile's
+    // pierce budget (was "first intersected wins" pre-M8). MapSchema
+    // iteration order is the same on every tick across server+clients,
+    // so the order in which a multi-pierce shot processes simultaneously
+    // intersected enemies is stable. The per-enemy cooldown gate stops a
+    // pierce projectile from re-hitting the same enemy on consecutive
+    // ticks while it remains inside the radius.
     const segX = proj.x - proj.prevX;
     const segY = proj.y - proj.prevY;
     const segZ = proj.z - proj.prevZ;
     const segLen2 = segX * segX + segY * segY + segZ * segZ;
     const radiusSum = proj.radius + ENEMY_RADIUS;
     const radiusSumSq = radiusSum * radiusSum;
+    const maxHits = proj.pierceRemaining === -1 ? Number.POSITIVE_INFINITY : proj.pierceRemaining;
 
-    let hitEnemy: Enemy | undefined;
+    const hitsThisTick: Enemy[] = [];
     state.enemies.forEach((enemy: Enemy) => {
-      if (hitEnemy) return; // first intersected wins; bail on rest
+      if (hitsThisTick.length >= maxHits) return;
 
       const toX = enemy.x - proj.prevX;
       const toY = enemy.y - proj.prevY;
@@ -714,49 +877,64 @@ export function tickProjectiles(
       const dx = enemy.x - closestX;
       const dy = enemy.y - closestY;
       const dz = enemy.z - closestZ;
-      if (dx * dx + dy * dy + dz * dz <= radiusSumSq) {
-        hitEnemy = enemy;
+      if (dx * dx + dy * dy + dz * dz > radiusSumSq) return;
+
+      // Per-enemy cooldown gate. Only meaningful when both pierce
+      // (>1 or -1) AND a positive cooldown ms are configured; otherwise
+      // a non-pierce shot already despawns after one hit.
+      if (proj.hitCooldownPerEnemyMs > 0) {
+        const lastMs = proj.enemyHitCooldownsMs.get(enemy.id);
+        if (lastMs !== undefined && nowMs - lastMs < proj.hitCooldownPerEnemyMs) return;
       }
+      hitsThisTick.push(enemy);
     });
 
-    if (hitEnemy) {
-      hitEnemy.hp -= proj.damage;
-      emit({
-        type: "hit",
-        fireId: proj.fireId,
-        enemyId: hitEnemy.id,
-        damage: proj.damage,
-        x: hitEnemy.x,
-        y: hitEnemy.y,
-        z: hitEnemy.z,
-        serverTick: state.tick,
-      });
-
-      if (hitEnemy.hp <= 0) {
-        const gem = new Gem();
-        gem.id = ctx.nextGemId();
-        gem.x = hitEnemy.x;
-        gem.z = hitEnemy.z;
-        gem.value = GEM_VALUE;
-        state.gems.set(String(gem.id), gem);
-
-        const deathX = hitEnemy.x;
-        const deathZ = hitEnemy.z;
-        const deathId = hitEnemy.id;
-        const owner = state.players.get(proj.ownerId);
-        if (owner) owner.kills += 1;
-        state.enemies.delete(String(hitEnemy.id));
-        ctx.orbitHitCooldown.evictEnemy(deathId);
-
+    if (hitsThisTick.length > 0) {
+      for (const enemy of hitsThisTick) {
+        if (proj.hitCooldownPerEnemyMs > 0) proj.enemyHitCooldownsMs.set(enemy.id, nowMs);
+        enemy.hp -= proj.damage;
         emit({
-          type: "enemy_died",
-          enemyId: deathId,
-          x: deathX,
-          z: deathZ,
+          type: "hit",
+          fireId: proj.fireId,
+          enemyId: enemy.id,
+          damage: proj.damage,
+          x: enemy.x,
+          y: enemy.y,
+          z: enemy.z,
+          serverTick: state.tick,
         });
+
+        if (enemy.hp <= 0) {
+          const gem = new Gem();
+          gem.id = ctx.nextGemId();
+          gem.x = enemy.x;
+          gem.z = enemy.z;
+          gem.value = GEM_VALUE;
+          state.gems.set(String(gem.id), gem);
+
+          const deathX = enemy.x;
+          const deathZ = enemy.z;
+          const deathId = enemy.id;
+          const owner = state.players.get(proj.ownerId);
+          if (owner) owner.kills += 1;
+          state.enemies.delete(String(enemy.id));
+          ctx.orbitHitCooldown.evictEnemy(deathId);
+
+          emit({
+            type: "enemy_died",
+            enemyId: deathId,
+            x: deathX,
+            z: deathZ,
+          });
+        }
       }
-      // Drop the projectile (consumed by the hit).
-      continue;
+
+      // Decrement pierce budget for finite-pierce projectiles. -1 (infinite)
+      // never decrements — only lifetime expiry despawns it.
+      if (proj.pierceRemaining > 0) {
+        proj.pierceRemaining -= hitsThisTick.length;
+        if (proj.pierceRemaining <= 0) continue; // budget exhausted; drop.
+      }
     }
 
     // Survives: copy forward.

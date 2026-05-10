@@ -163,6 +163,9 @@ export class GameRoom extends Room<RoomState> {
     this.projectileCtx = {
       nextGemId: () => this.nextGemId++,
       orbitHitCooldown: this.orbitHitCooldown,
+      // M8 US-002: pierce projectiles use serverNowMs() for the per-enemy
+      // hit cooldown — same wallclock source as WeaponContext + orbit.
+      serverNowMs: () => Date.now(),
     };
 
     // The matchmaker's filterBy(["code"]) matches against the room listing's
