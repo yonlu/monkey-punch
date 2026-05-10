@@ -2541,6 +2541,63 @@ describe("tickWeapons — M8 US-003 Gakkung Bow integration", () => {
   });
 });
 
+describe("tickWeapons — M8 US-004 Ahlspiess integration", () => {
+  it("fires along player.facing (lockedTargetId = -1) with infinite pierce + hitCooldownPerEnemyMs=200", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 0; p.facingZ = 1; // facing +Z
+    addEnemy(state, 1, 5, 0); // off to the side, but in range — gates fire
+
+    const w = new WeaponState();
+    w.kind = 3; // Ahlspiess per design doc kind index
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const { fires, projectiles, ctx } = makeCapture(77, 1_234_000);
+    const emit: Emit = (e) => fires.push(e);
+    tickWeapons(state, 0.05, ctx, emit);
+
+    expect(projectiles.length).toBe(1);
+    const proj = projectiles[0]!;
+    expect(proj.weaponKind).toBe(3);
+    // facing mode: dir is player.facing, not toward the enemy.
+    expect(proj.dirX).toBe(0);
+    expect(proj.dirZ).toBe(1);
+    expect(proj.dirY).toBe(0);
+    // No specific target locked — facing mode renders straight-line.
+    expect(proj.lockedTargetId).toBe(-1);
+    // Infinite pierce — never decrements; only lifetime expiry despawns.
+    expect(proj.pierceRemaining).toBe(-1);
+    expect(proj.hitCooldownPerEnemyMs).toBe(200);
+    expect(proj.homingTurnRate).toBe(0);
+  });
+
+  it("does NOT fire when no enemies are in range (still gated by 'any in range' even for facing)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    // No enemies anywhere: facing-mode fire still gates on any enemy in range.
+
+    const w = new WeaponState();
+    w.kind = 3;
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const { fires, projectiles, ctx } = makeCapture();
+    const emit: Emit = (e) => fires.push(e);
+    tickWeapons(state, 0.05, ctx, emit);
+
+    expect(projectiles).toEqual([]);
+    expect(fires).toEqual([]);
+    // Cooldown stays clamped at 0 (AD10).
+    expect(w.cooldownRemaining).toBe(0);
+  });
+});
+
 describe("tickProjectiles — M8 US-002 pierce", () => {
   it("pierceRemaining = 1 (Bolt baseline) drops on first hit, no second hit possible", () => {
     const state = new RoomState();

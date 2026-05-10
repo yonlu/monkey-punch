@@ -86,8 +86,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Done 2026-05-10. weapons.ts: ProjectileMesh enum gains 'spear' value; Ahlspiess added at index 3 with targeting:'facing', homingTurnRate:0, mesh:'spear', pierceCount:-1 at every level (infinite pierce — never decrements; only lifetime expires it), hitCooldownPerEnemyMs:200 across all levels (gates same-enemy double-hit on consecutive ticks via the per-projectile enemyHitCooldownsMs Map from US-002), hitRadius grows 0.50→0.80 across L1–L5 (gives the per-level visual scaling AC), damage 25→54. ProjectileSwarm.tsx adds third InstancedMesh (spear: cylinder 0.04x0.04x1.2, gold #e8c460); per-instance scale = stats.hitRadius / 0.4 baseline (Bolt + Gakkung: scale 1.0 always, Ahlspiess: 1.25 → 2.0); now uses matrix.compose for ALL three arms (sphere reads identity quaternion, elongated/spear use Y_AXIS→dir slerp). Tests: 5 in weapons.test.ts (kind index, behavior shape, infinite pierce at all levels, hitCooldownPerEnemyMs > 0, strictly-growing hitRadius+damage); 2 in rules.test.ts (Ahlspiess fires along player.facing with lockedTargetId=-1 + infinite pierce + cooldown baked; gates fire on any-enemy-in-range — empty field doesn't waste shots). NO name-based branching (rule 12 grep clean). pnpm typecheck + 182 shared (was 175) / 34 client / 43 server tests pass."
     },
     {
       "id": "US-005",

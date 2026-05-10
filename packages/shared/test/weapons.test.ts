@@ -58,6 +58,49 @@ describe("Orbit weapon", () => {
   });
 });
 
+describe("Ahlspiess — M8 US-004", () => {
+  it("is at index 3 and is a projectile with targeting=facing, no homing, mesh=spear", () => {
+    const def = WEAPON_KINDS[3]!;
+    expect(def.name).toBe("Ahlspiess");
+    if (def.behavior.kind !== "projectile") throw new Error("expected projectile behavior");
+    expect(def.behavior.targeting).toBe("facing");
+    expect(def.behavior.homingTurnRate).toBe(0);
+    expect(def.behavior.mesh).toBe("spear");
+  });
+
+  it("has infinite pierce (-1) at every level", () => {
+    const def = WEAPON_KINDS[3]!;
+    if (def.behavior.kind !== "projectile") throw new Error("expected projectile");
+    for (let lvl = 1; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).pierceCount).toBe(-1);
+    }
+  });
+
+  it("has hitCooldownPerEnemyMs > 0 at every level (avoids same-enemy double-hit)", () => {
+    const def = WEAPON_KINDS[3]!;
+    if (def.behavior.kind !== "projectile") throw new Error("expected projectile");
+    for (let lvl = 1; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).hitCooldownPerEnemyMs).toBeGreaterThan(0);
+    }
+  });
+
+  it("hitRadius strictly increases across levels (gives visible per-level growth)", () => {
+    const def = WEAPON_KINDS[3]!;
+    if (def.behavior.kind !== "projectile") throw new Error("expected projectile");
+    for (let lvl = 2; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).hitRadius).toBeGreaterThan(statsAt(def, lvl - 1).hitRadius);
+    }
+  });
+
+  it("damage strictly increases per level", () => {
+    const def = WEAPON_KINDS[3]!;
+    if (def.behavior.kind !== "projectile") throw new Error("expected projectile");
+    for (let lvl = 2; lvl <= def.levels.length; lvl++) {
+      expect(statsAt(def, lvl).damage).toBeGreaterThan(statsAt(def, lvl - 1).damage);
+    }
+  });
+});
+
 describe("Gakkung Bow — M8 US-003", () => {
   it("is at index 2 and is a projectile with targeting=furthest, mild homing, mesh=elongated", () => {
     const def = WEAPON_KINDS[2]!;

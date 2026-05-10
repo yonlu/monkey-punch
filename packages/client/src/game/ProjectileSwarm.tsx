@@ -50,23 +50,35 @@ const Y_AXIS = new Vector3(0, 1, 0);
  * Speed and lifetime come from WEAPON_KINDS[fe.weaponKind] — adding M5's
  * second weapon needs no new sync, just a row in the table.
  */
+// Visual scale baseline. M8 US-004: per-instance scale = stats.hitRadius /
+// HIT_RADIUS_BASELINE. Bolt and Gakkung have constant hitRadius 0.4 so this
+// resolves to 1.0 always (no visible per-level change). Ahlspiess hitRadius
+// grows 0.5 → 0.8 per level so its spear visibly lengthens at higher levels
+// — that's the per-level visual scaling AC. The mapping is uniform across
+// X/Y/Z so cylinders thicken AND lengthen together (looks more like "the
+// weapon got bigger" than just stretching).
+const HIT_RADIUS_BASELINE = 0.4;
+
 export function ProjectileSwarm({ fires, serverTime }: ProjectileSwarmProps) {
   const sphereMeshRef = useRef<InstancedMesh>(null);
   const elongatedMeshRef = useRef<InstancedMesh>(null);
+  const spearMeshRef = useRef<InstancedMesh>(null);
   const matrix = useMemo(() => new Matrix4(), []);
   const position = useMemo(() => new Vector3(), []);
   const dirVec = useMemo(() => new Vector3(), []);
   const quaternion = useMemo(() => new Quaternion(), []);
-  const scale = useMemo(() => new Vector3(1, 1, 1), []);
+  const scaleVec = useMemo(() => new Vector3(1, 1, 1), []);
 
   useFrame(() => {
     const sphereMesh = sphereMeshRef.current;
     const elongatedMesh = elongatedMeshRef.current;
-    if (!sphereMesh || !elongatedMesh) return;
+    const spearMesh = spearMeshRef.current;
+    if (!sphereMesh || !elongatedMesh || !spearMesh) return;
 
     const renderServerTimeMs = serverTime.serverNow() - hudState.interpDelayMs;
     let sphereI = 0;
     let elongatedI = 0;
+    let spearI = 0;
 
     for (const [fireId, fe] of fires) {
       const elapsedSec = (renderServerTimeMs - fe.serverFireTimeMs) / 1000;
@@ -90,25 +102,40 @@ export function ProjectileSwarm({ fires, serverTime }: ProjectileSwarmProps) {
       const px = fe.originX + fe.dirX * stats.projectileSpeed * t;
       const py = fe.originY + fe.dirY * stats.projectileSpeed * t;
       const pz = fe.originZ + fe.dirZ * stats.projectileSpeed * t;
+      const visualScale = stats.hitRadius / HIT_RADIUS_BASELINE;
 
-      // Dispatch to the right mesh by behavior.mesh. Adding a third mesh
+      // Dispatch to the right mesh by behavior.mesh. Adding a fourth mesh
       // kind would mean a new InstancedMesh sibling and a new arm here.
       if (def.behavior.mesh === "sphere") {
         if (sphereI >= PROJECTILE_MAX_CAPACITY) continue; // defense
-        matrix.makeTranslation(px, py, pz);
+        // Sphere is rotationally invariant — translation + uniform scale
+        // is enough; no quaternion needed.
+        position.set(px, py, pz);
+        scaleVec.set(visualScale, visualScale, visualScale);
+        matrix.compose(position, IDENTITY_QUAT, scaleVec);
         sphereMesh.setMatrixAt(sphereI, matrix);
         sphereI++;
-      } else {
-        // "elongated" — orient the cylinder along the unit dir vector.
-        // CylinderGeometry's default axis is Y, so the quaternion rotates
-        // (0,1,0) onto (dirX, dirY, dirZ).
+      } else if (def.behavior.mesh === "elongated") {
+        // Cylinder oriented along the unit dir vector. CylinderGeometry's
+        // default axis is Y, so the quaternion rotates (0,1,0) onto dir.
         if (elongatedI >= PROJECTILE_MAX_CAPACITY) continue;
         position.set(px, py, pz);
         dirVec.set(fe.dirX, fe.dirY, fe.dirZ);
         quaternion.setFromUnitVectors(Y_AXIS, dirVec);
-        matrix.compose(position, quaternion, scale);
+        scaleVec.set(visualScale, visualScale, visualScale);
+        matrix.compose(position, quaternion, scaleVec);
         elongatedMesh.setMatrixAt(elongatedI, matrix);
         elongatedI++;
+      } else {
+        // "spear" — same orientation math as elongated, different mesh.
+        if (spearI >= PROJECTILE_MAX_CAPACITY) continue;
+        position.set(px, py, pz);
+        dirVec.set(fe.dirX, fe.dirY, fe.dirZ);
+        quaternion.setFromUnitVectors(Y_AXIS, dirVec);
+        scaleVec.set(visualScale, visualScale, visualScale);
+        matrix.compose(position, quaternion, scaleVec);
+        spearMesh.setMatrixAt(spearI, matrix);
+        spearI++;
       }
     }
 
@@ -116,11 +143,13 @@ export function ProjectileSwarm({ fires, serverTime }: ProjectileSwarmProps) {
     sphereMesh.instanceMatrix.needsUpdate = true;
     elongatedMesh.count = elongatedI;
     elongatedMesh.instanceMatrix.needsUpdate = true;
-    hudState.projectileCount = sphereI + elongatedI;
+    spearMesh.count = spearI;
+    spearMesh.instanceMatrix.needsUpdate = true;
+    hudState.projectileCount = sphereI + elongatedI + spearI;
   });
 
   return (
-    // No castShadow on either mesh: same Three 0.164 InstancedMesh +
+    // No castShadow on any mesh: same Three 0.164 InstancedMesh +
     // shadow-camera landmine that EnemySwarm dodges. Projectiles are tiny
     // and bright; shadows wouldn't read at distance anyway.
     <>
@@ -144,6 +173,25 @@ export function ProjectileSwarm({ fires, serverTime }: ProjectileSwarmProps) {
         <cylinderGeometry args={[0.05, 0.05, 0.6, 6]} />
         <meshStandardMaterial color="#a86b3c" emissive="#a86b3c" emissiveIntensity={0.5} />
       </instancedMesh>
+      <instancedMesh
+        ref={spearMeshRef}
+        args={[undefined, undefined, PROJECTILE_MAX_CAPACITY]}
+        frustumCulled={false}
+      >
+        {/* M8 US-004: long thin spear body — narrower and longer than
+            Gakkung's elongated arrow (0.04 vs 0.05 radius, 1.2 vs 0.6
+            length). Gold material for the Ragnarok auger-spear visual
+            identity. Per-frame quaternion + per-instance uniform scale
+            from stats.hitRadius / 0.4 give Ahlspiess visible level
+            growth (L1 scale 1.25 → L5 scale 2.0). */}
+        <cylinderGeometry args={[0.04, 0.04, 1.2, 6]} />
+        <meshStandardMaterial color="#e8c460" emissive="#e8c460" emissiveIntensity={0.7} />
+      </instancedMesh>
     </>
   );
 }
+
+// Identity quaternion for the rotationally-invariant sphere mesh — declared
+// outside the component to avoid per-frame allocation. compose() reads it
+// but does not mutate.
+const IDENTITY_QUAT = new Quaternion();

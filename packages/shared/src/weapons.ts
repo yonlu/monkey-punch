@@ -15,7 +15,15 @@ export type TargetingMode = "nearest" | "furthest" | "facing";
 //                  per-frame quaternion needed.
 //   "elongated"  — thin cylinder oriented along its dir vector (Gakkung Bow).
 //                  Per-frame rotation matrix from the unit dir vector.
-export type ProjectileMesh = "sphere" | "elongated";
+//   "spear"      — long thin cylinder oriented along its dir vector
+//                  (Ahlspiess M8 US-004). Same orientation math as
+//                  "elongated" but a longer/thinner geometry and a gold
+//                  material — kept as a distinct mesh because materials
+//                  cannot vary per instance on a single InstancedMesh
+//                  without a custom shader path. Per-instance scale on
+//                  the matrix lets hitRadius growth per level read
+//                  visually (Ahlspiess L1 → L5: 0.5 → 0.8).
+export type ProjectileMesh = "sphere" | "elongated" | "spear";
 
 export type ProjectileLevel = {
   damage: number;
@@ -97,6 +105,26 @@ export const WEAPON_KINDS: readonly WeaponDef[] = [
       { damage: 26, cooldown: 0.75, hitRadius: 0.4, projectileSpeed: 28, projectileLifetime: 1.2, pierceCount: 2, hitCooldownPerEnemyMs: 0 },
       { damage: 30, cooldown: 0.70, hitRadius: 0.4, projectileSpeed: 28, projectileLifetime: 1.2, pierceCount: 2, hitCooldownPerEnemyMs: 0 },
       { damage: 36, cooldown: 0.65, hitRadius: 0.4, projectileSpeed: 28, projectileLifetime: 1.2, pierceCount: 3, hitCooldownPerEnemyMs: 0 },
+    ],
+  },
+  {
+    // M8 US-004: Ahlspiess (kind index 3). Piercing line projectile —
+    // travels along player.facing at fire (no homing), pierces ALL enemies
+    // in its path (pierceCount: -1), and uses per-enemy hit cooldown so the
+    // same enemy isn't double-hit on consecutive ticks while still in the
+    // radius. RO lore: "ignores DEF" → mechanically translates to "passes
+    // through enemies." Visual: long thin gold cylinder oriented along its
+    // dir vector. hitRadius grows per level (0.50 → 0.80) — FireEvent now
+    // carries weaponLevel so the client renderer can scale visual size
+    // accordingly.
+    name: "Ahlspiess",
+    behavior: { kind: "projectile", targeting: "facing", homingTurnRate: 0, mesh: "spear" },
+    levels: [
+      { damage: 25, cooldown: 1.00, hitRadius: 0.50, projectileSpeed: 22, projectileLifetime: 1.5, pierceCount: -1, hitCooldownPerEnemyMs: 200 },
+      { damage: 30, cooldown: 0.95, hitRadius: 0.55, projectileSpeed: 22, projectileLifetime: 1.5, pierceCount: -1, hitCooldownPerEnemyMs: 200 },
+      { damage: 36, cooldown: 0.90, hitRadius: 0.60, projectileSpeed: 22, projectileLifetime: 1.5, pierceCount: -1, hitCooldownPerEnemyMs: 200 },
+      { damage: 44, cooldown: 0.85, hitRadius: 0.70, projectileSpeed: 22, projectileLifetime: 1.5, pierceCount: -1, hitCooldownPerEnemyMs: 200 },
+      { damage: 54, cooldown: 0.80, hitRadius: 0.80, projectileSpeed: 22, projectileLifetime: 1.5, pierceCount: -1, hitCooldownPerEnemyMs: 200 },
     ],
   },
 ];
