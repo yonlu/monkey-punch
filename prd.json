@@ -110,8 +110,8 @@
         "Tests pass"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Done 2026-05-10. tickGems refactored to precompute per-player effective radius² AND xp multiplier ONCE at the start of the tick (NOT per gem) — performance: O(gems × players × constant) instead of O(gems × players × items). playerRadiusSq Map and playerXpMult Map populated by walking state.players once via getItemMultiplier(p, 'magnet_mult') / 'xp_mult'. fallbackRadiusSq = GEM_PICKUP_RADIUS² for defensive case (player not in cache — should never happen since seed loop covers all). Per-gem inner loop reads from Map by sessionId. xp gain: const xpMult = playerXpMult.get(collector.sessionId) ?? 1; xpGain = floor(gem.value * xpMult); applied to both player.xp AND player.xpGained cumulative counter. Event 'value' field stays the RAW gem.value (it's a gem property; the player's actual gain may differ — documented inline). Tests (7 new): Magnifier × 2 (L4 2.00× picks up gem at 1.99×GEM_PICKUP_RADIUS, no-Magnifier doesn't pick up at 1.5×radius); Bunny Top Hat × 4 (L2 1.20× on value=10 gives 12 xp, L5 1.50× on value=1 gives 1 xp boundary, event.value stays raw gem.value while internal xp DID multiply, no-Bunny gives exact 10 xp non-regression); Magnifier+Bunny stack × 1 (both effects independent — gem at 2×radius picked up AND xp = floor(10 * 1.50) = 15). NO name-based branching (rule 12 clean). pnpm typecheck + 287 shared (was 280) / 34 client / 43 server tests pass."
     },
     {
       "id": "US-006",

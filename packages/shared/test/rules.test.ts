@@ -4500,3 +4500,149 @@ describe("Sleipnir (speed_mult) — M9 US-004", () => {
     expect(p.z).toBe(5);
   });
 });
+
+// ---------------------------------------------------------------------------
+// M9 US-005: Magnifier (magnet_mult) + Bunny Top Hat (xp_mult). Both
+// apply in tickGems — magnet_mult scales the per-player pickup radius;
+// xp_mult scales the actual xp gain on pickup.
+// ---------------------------------------------------------------------------
+
+describe("Magnifier (magnet_mult) — M9 US-005", () => {
+  it("a player with Magnifier L4 (2.00×) picks up a gem at GEM_PICKUP_RADIUS × 2 - epsilon", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    attachItem(p, 4, 4); // Magnifier L4 → 2.00
+
+    const gem = new Gem();
+    gem.id = 1;
+    gem.x = GEM_PICKUP_RADIUS * 2 - 0.01; // just inside doubled radius
+    gem.z = 0;
+    gem.value = 1;
+    state.gems.set("1", gem);
+
+    const events: CombatEvent[] = [];
+    tickGems(state, (e) => events.push(e));
+
+    expect(state.gems.size).toBe(0);
+    expect(events.find((e) => e.type === "gem_collected")).toBeDefined();
+  });
+
+  it("a player WITHOUT Magnifier does NOT pick up a gem at 1.5× GEM_PICKUP_RADIUS", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+
+    const gem = new Gem();
+    gem.id = 1;
+    gem.x = GEM_PICKUP_RADIUS * 1.5;
+    gem.z = 0;
+    gem.value = 1;
+    state.gems.set("1", gem);
+
+    tickGems(state, () => {});
+
+    expect(state.gems.size).toBe(1); // not picked up
+  });
+});
+
+describe("Bunny Top Hat (xp_mult) — M9 US-005", () => {
+  it("a player with Bunny Top Hat L2 (1.20×) picking up gem.value=10 gains 12 xp", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.xp = 0; p.xpGained = 0;
+    attachItem(p, 5, 2); // Bunny L2 → 1.20
+
+    const gem = new Gem();
+    gem.id = 1;
+    gem.x = 0.5; gem.z = 0;
+    gem.value = 10;
+    state.gems.set("1", gem);
+
+    tickGems(state, () => {});
+
+    // 10 × 1.20 = 12.
+    expect(p.xp).toBe(12);
+    expect(p.xpGained).toBe(12);
+  });
+
+  it("a player with Bunny L5 (1.50×) picking up gem.value=1 gains floor(1.50)=1 xp (boundary)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.xp = 0;
+    attachItem(p, 5, 5);
+
+    const gem = new Gem();
+    gem.id = 1;
+    gem.x = 0; gem.z = 0;
+    gem.value = 1;
+    state.gems.set("1", gem);
+
+    tickGems(state, () => {});
+
+    expect(p.xp).toBe(1); // floor(1 * 1.50) = 1
+  });
+
+  it("event 'value' is the RAW gem.value (not the multiplied xp gain)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    attachItem(p, 5, 3); // Bunny L3 → 1.30
+
+    const gem = new Gem();
+    gem.id = 7;
+    gem.x = 0; gem.z = 0;
+    gem.value = 10;
+    state.gems.set("7", gem);
+
+    const events: CombatEvent[] = [];
+    tickGems(state, (e) => events.push(e));
+
+    const ev = events.find((e) => e.type === "gem_collected");
+    if (!ev || ev.type !== "gem_collected") throw new Error("expected gem_collected");
+    // Raw gem.value, NOT the multiplied xp gain.
+    expect(ev.value).toBe(10);
+    // Internal xp gain DID multiply.
+    expect(p.xp).toBe(13); // floor(10 * 1.30)
+  });
+
+  it("Magnifier + Bunny stack (both effects independent)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.xp = 0;
+    attachItem(p, 4, 5); // Magnifier L5 → 2.25
+    attachItem(p, 5, 5); // Bunny L5 → 1.50
+
+    // Gem outside default radius but inside Magnifier × 2.25 range.
+    const gem = new Gem();
+    gem.id = 1;
+    gem.x = GEM_PICKUP_RADIUS * 2;
+    gem.z = 0;
+    gem.value = 10;
+    state.gems.set("1", gem);
+
+    tickGems(state, () => {});
+
+    expect(state.gems.size).toBe(0);    // picked up (Magnifier brought it in range)
+    expect(p.xp).toBe(15);              // floor(10 * 1.50) (Bunny scaled xp)
+  });
+
+  it("a player with no Bunny picking up gem.value=10 gains exactly 10 xp (non-regression)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.xp = 0;
+
+    const gem = new Gem();
+    gem.id = 1;
+    gem.x = 0; gem.z = 0;
+    gem.value = 10;
+    state.gems.set("1", gem);
+
+    tickGems(state, () => {});
+
+    expect(p.xp).toBe(10);
+  });
+});

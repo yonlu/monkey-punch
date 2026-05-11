@@ -1865,19 +1865,40 @@ export function tickProjectiles(
  */
 export function tickGems(state: RoomState, emit: Emit): void {
   if (state.runEnded) return;
-  const radiusSq = GEM_PICKUP_RADIUS * GEM_PICKUP_RADIUS;
+  // M9 US-005: per-player effective magnet radius (Magnifier) and xp
+  // gain multiplier (Bunny Top Hat). Computed ONCE per player at the
+  // start of the tick — items don't change mid-tick, so caching is
+  // safe and the inner pickup loop stays O(gems × players × constant)
+  // instead of O(gems × players × items).
+  const playerRadiusSq = new Map<string, number>();
+  const playerXpMult = new Map<string, number>();
+  state.players.forEach((p) => {
+    const r = GEM_PICKUP_RADIUS * getItemMultiplier(p, "magnet_mult");
+    playerRadiusSq.set(p.sessionId, r * r);
+    playerXpMult.set(p.sessionId, getItemMultiplier(p, "xp_mult"));
+  });
+  // Fallback radius for players that somehow aren't in the cache
+  // (defensive — should never happen since the forEach above seeds
+  // every player). Equals the unmodified GEM_PICKUP_RADIUS².
+  const fallbackRadiusSq = GEM_PICKUP_RADIUS * GEM_PICKUP_RADIUS;
+
   state.gems.forEach((gem: Gem, key: string) => {
     let collector: Player | undefined;
     state.players.forEach((p: Player) => {
       if (collector) return;
       const dx = p.x - gem.x;
       const dz = p.z - gem.z;
+      const radiusSq = playerRadiusSq.get(p.sessionId) ?? fallbackRadiusSq;
       if (dx * dx + dz * dz <= radiusSq) collector = p;
     });
     if (!collector) return;
 
-    collector.xp += gem.value;
-    collector.xpGained += gem.value;
+    // M9 US-005: xp_mult applied at gain. Event value stays the raw gem
+    // value (it's a gem property); the player's actual xp gain may differ.
+    const xpMult = playerXpMult.get(collector.sessionId) ?? 1;
+    const xpGain = Math.floor(gem.value * xpMult);
+    collector.xp += xpGain;
+    collector.xpGained += xpGain;
     state.gems.delete(key);
     emit({
       type: "gem_collected",
