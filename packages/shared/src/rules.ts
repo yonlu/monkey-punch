@@ -138,8 +138,12 @@ export function tickPlayers(
   const max2 = MAP_RADIUS * MAP_RADIUS;
   state.players.forEach((p) => {
     if (p.downed) return;
-    p.x += p.inputDir.x * PLAYER_SPEED * dt;
-    p.z += p.inputDir.z * PLAYER_SPEED * dt;
+    // M9 US-004: Sleipnir (speed_mult) multiplies PLAYER_SPEED. Default
+    // 1.0 (no items) preserves M5–M8 behavior — existing tickPlayers
+    // tests stay green.
+    const speedMult = getItemMultiplier(p, "speed_mult");
+    p.x += p.inputDir.x * PLAYER_SPEED * speedMult * dt;
+    p.z += p.inputDir.z * PLAYER_SPEED * speedMult * dt;
     const r2 = p.x * p.x + p.z * p.z;
     if (r2 > max2) {
       const scale = MAP_RADIUS / Math.sqrt(r2);

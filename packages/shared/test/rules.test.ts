@@ -4442,3 +4442,61 @@ describe("Wind of Verdure (cooldown_mult) — M9 US-003", () => {
     expect(w.cooldownRemaining).toBeCloseTo(0.57);
   });
 });
+
+// ---------------------------------------------------------------------------
+// M9 US-004: Apple of Idun + Sleipnir. Apple of Idun's max_hp logic was
+// wired in US-002 (max_hp_mult is applied immediately at item pickup in
+// resolveLevelUp); the US-002 test suite already covers full/half/low HP
+// pickup cases. This block adds Sleipnir (speed_mult) coverage in
+// tickPlayers.
+// ---------------------------------------------------------------------------
+
+describe("Sleipnir (speed_mult) — M9 US-004", () => {
+  it("a player with Sleipnir L3 moves at PLAYER_SPEED × 1.15 per tick", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 1, 0); // inputDir = (1, 0)
+    p.x = 0; p.z = 0;
+    attachItem(p, 3, 3); // Sleipnir L3 → 1.15
+
+    tickPlayers(state, /* dt */ 0.1);
+
+    // Expected: PLAYER_SPEED × 1.15 × 0.1.
+    expect(p.x).toBeCloseTo(PLAYER_SPEED * 1.15 * 0.1, 6);
+  });
+
+  it("Sleipnir L5 (1.25×) — maximum speed boost in M9", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 1, 0);
+    p.x = 0; p.z = 0;
+    attachItem(p, 3, 5); // Sleipnir L5 → 1.25
+
+    tickPlayers(state, 0.1);
+
+    expect(p.x).toBeCloseTo(PLAYER_SPEED * 1.25 * 0.1, 6);
+  });
+
+  it("a player with NO Sleipnir moves at unmodified PLAYER_SPEED (non-regression)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 1, 0);
+    p.x = 0; p.z = 0;
+    // No items.
+
+    tickPlayers(state, 0.1);
+
+    expect(p.x).toBeCloseTo(PLAYER_SPEED * 0.1, 6);
+  });
+
+  it("downed players are NOT moved by inputDir even with Sleipnir (existing tickPlayers gate)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 1, 0);
+    p.x = 5; p.z = 5;
+    p.downed = true;
+    attachItem(p, 3, 5);
+
+    tickPlayers(state, 0.1);
+
+    // No movement.
+    expect(p.x).toBe(5);
+    expect(p.z).toBe(5);
+  });
+});

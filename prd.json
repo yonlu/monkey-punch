@@ -89,8 +89,8 @@
         "Tests pass"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Done 2026-05-10. Apple of Idun (max_hp_mult) — max_hp recompute + heal-diff at pickup was wired in US-002's resolveLevelUp implementation; the US-002 test suite (full HP/half HP/low HP pickup) already covers the AC. Sleipnir (speed_mult) — added const speedMult = getItemMultiplier(p, 'speed_mult') in tickPlayers, multiplied into p.x/z step. Default 1.0 (no items) preserves M5-M8 behavior — existing tickPlayers tests stay green (non-regression). Tests (4 new for Sleipnir): L3 1.15× expected speed * 1.15 * dt, L5 1.25× max-boost, no-item baseline (PLAYER_SPEED * dt unchanged), downed players still skip movement even with Sleipnir (existing tickPlayers gate). NO name-based branching (rule 12 clean). pnpm typecheck + 280 shared (was 276) / 34 client / 43 server tests pass."
     },
     {
       "id": "US-005",
