@@ -129,8 +129,8 @@
         "No work on US-007+ begins until this story is closed"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Approved 2026-05-10 by Luke. One playtest iteration before approval: item cards initially showed only level info (L1 → L2) without describing the effect. Fix in commit fdcf7fc: NEW describeItemEffect(def, level) in shared/items.ts returns human-readable percentage delta per effect kind (rule 12 — dispatches on effect enum); LevelUpOverlay item cards now show 'NEW → +10% weapon damage' / '+10% → +20% damage' / 'L5 MAX (+50% damage)' formats. All 6 items confirmed mechanically working + readable in choice pool. No regressions to M5-M8. Unblocks US-007+."
     },
     {
       "id": "US-007",
@@ -145,8 +145,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Done 2026-05-10. LevelUpOverlay.tsx polish — item cards now visually distinct from weapon cards. ITEM_ICONS lookup keyed by ItemEffect enum (🔥 damage, ⚡ cooldown, ❤️ max HP, 🥾 speed, 🔍 magnet, 🐰 xp) per design doc A4 emoji-placeholder resolution — adding a new effect kind requires one new entry, dispatches on enum not name (rule 12 clean). CardLabel type extended with isItem:boolean + icon:string fields populated in describeChoice. ITEM_CARD_STYLE_OVERRIDE composed atop base CARD_STYLE for items only — gold border (rgba(230,190,90,0.7)) + warm dark background (rgba(40,30,15,0.85)) + subtle gold glow (boxShadow 0 0 10px gold-tinted). CARD_TAG_STYLE shows 'ITEM' / 'WEAPON' label at the top of each card, color-matched to the card border (gold for items, blue for weapons). Item card line1 prepended with emoji icon; weapons unchanged (per-level weapon details vary by behavior, full weapon descriptions are a future polish-pass concern). pnpm typecheck + 288 shared / 34 client / 43 server tests pass (UI-only change, no test impact)."
     },
     {
       "id": "US-008",
