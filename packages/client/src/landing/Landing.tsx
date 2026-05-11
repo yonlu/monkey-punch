@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import type { RoomState } from "@mp/shared";
 import { Card } from "@/components/ui/8bit/card";
 import { Input } from "@/components/ui/8bit/input";

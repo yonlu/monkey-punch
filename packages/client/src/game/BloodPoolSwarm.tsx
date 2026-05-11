@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { InstancedMesh, Matrix4, Quaternion, Vector3 } from "three";
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import type { RoomState, BloodPool } from "@mp/shared";
 import { terrainHeight } from "@mp/shared";
 

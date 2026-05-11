@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { InstancedMesh, Matrix4 } from "three";
-import type { Room } from "colyseus.js";
-import { getStateCallbacks } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
+import { getStateCallbacks } from "@colyseus/sdk";
 import type { Gem, RoomState } from "@mp/shared";
 import { PROJECTILE_MAX_CAPACITY } from "@mp/shared";
 

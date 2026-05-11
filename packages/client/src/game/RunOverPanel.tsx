@@ -1,6 +1,6 @@
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import { useEffect, useState } from "react";
-import { getStateCallbacks } from "colyseus.js";
+import { getStateCallbacks } from "@colyseus/sdk";
 import type { RoomState, Player } from "@mp/shared";
 import { TICK_RATE } from "@mp/shared";
 

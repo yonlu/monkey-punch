@@ -1,6 +1,6 @@
 // packages/client/src/game/LevelUpOverlay.tsx
 import { useEffect, useRef, useState } from "react";
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import type { Player, RoomState, LevelUpChoice, ItemEffect } from "@mp/shared";
 import { SIM_DT_S, WEAPON_KINDS, ITEM_KINDS, LEVEL_UP_CHOICE_ITEM, describeItemEffect } from "@mp/shared";
 

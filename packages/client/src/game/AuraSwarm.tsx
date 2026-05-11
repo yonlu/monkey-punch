@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { InstancedMesh, Matrix4, Quaternion, Vector3 } from "three";
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import type { Player, RoomState } from "@mp/shared";
 import { WEAPON_KINDS, isAuraWeapon, statsAt } from "@mp/shared";
 import type { LocalPredictor } from "../net/prediction.js";

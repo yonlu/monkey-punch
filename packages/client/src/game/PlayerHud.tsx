@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import type { Player, PlayerDamagedEvent, RoomState, WeaponState } from "@mp/shared";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "@mp/shared";
 

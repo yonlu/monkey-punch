@@ -1,7 +1,7 @@
 import { Canvas } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Room } from "colyseus.js";
-import { getStateCallbacks } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
+import { getStateCallbacks } from "@colyseus/sdk";
 import type {
   BoomerangThrownEvent,
   Enemy,

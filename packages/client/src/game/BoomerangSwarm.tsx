@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { InstancedMesh, Matrix4, Quaternion, Vector3 } from "three";
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import type { BoomerangThrownEvent, RoomState, Player } from "@mp/shared";
 import type { ServerTime } from "../net/serverTime.js";
 import type { LocalPredictor } from "../net/prediction.js";

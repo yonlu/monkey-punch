@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Group, Mesh } from "three";
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import type { Player, RoomState, LevelUpResolvedEvent } from "@mp/shared";
 import type { LocalPredictor } from "../net/prediction.js";
 import type { SnapshotBuffer } from "../net/snapshots.js";

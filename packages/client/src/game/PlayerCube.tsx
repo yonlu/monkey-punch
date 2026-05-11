@@ -2,7 +2,7 @@ import { useFrame } from "@react-three/fiber";
 import { Billboard, Text } from "@react-three/drei";
 import { useEffect, useRef, useState } from "react";
 import type { Group } from "three";
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import type { RoomState } from "@mp/shared";
 import { PLAYER_SPEED } from "@mp/shared";
 import { SnapshotBuffer } from "../net/snapshots.js";

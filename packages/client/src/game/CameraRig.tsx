@@ -1,5 +1,5 @@
 import { useFrame, useThree } from "@react-three/fiber";
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import { useMemo, useRef } from "react";
 import { type PerspectiveCamera, Raycaster, Vector3 } from "three";
 import type { Player, RoomState } from "@mp/shared";

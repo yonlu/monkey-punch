@@ -1,5 +1,5 @@
 import { Server, matchMaker } from "colyseus";
-import { listen } from "@colyseus/tools";
+import config, { listen } from "@colyseus/tools";
 import { Encoder } from "@colyseus/schema";
 import { GameRoom } from "./GameRoom.js";
 
@@ -15,9 +15,12 @@ Encoder.BUFFER_SIZE = 32 * 1024;
 // instead of competing for the same TCP port, which is what makes rolling
 // deploys (pm2.scale 1→2→1) work without EADDRINUSE. Locally it falls back
 // to TCP on PORT (default 2567), with NODE_APP_INSTANCE-based offset.
-listen({
+listen(config({
   initializeGameServer: (gameServer: Server) => {
-    gameServer.define("game", GameRoom).filterBy(["code"]);
+    // 0.17 filterBy supports nested paths; "metadata.code" lets a
+    // second client's join({ code }) resolve to the right room via
+    // matchmaker query against the room's setMetadata payload.
+    gameServer.define("game", GameRoom).filterBy(["metadata.code"]);
   },
   initializeExpress: (app) => {
     // GET /rooms/:roomName — matchmaker listing for the in-app room browser.
@@ -57,7 +60,7 @@ listen({
       }
     });
   },
-}).catch((err) => {
+})).catch((err) => {
   console.error("[server] failed to start:", err);
   process.exit(1);
 });

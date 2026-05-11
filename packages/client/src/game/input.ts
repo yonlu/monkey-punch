@@ -1,4 +1,4 @@
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import type { RoomState } from "@mp/shared";
 import { LocalPredictor, STEP_INTERVAL_MS } from "../net/prediction.js";
 import { getYaw } from "../camera.js";

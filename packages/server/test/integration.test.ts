@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Server } from "colyseus";
-import { Client } from "colyseus.js";
+import { Client } from "@colyseus/sdk";
 import { GameRoom } from "../src/GameRoom.js";
 
 // End-to-end integration test. Boots a real Colyseus server in-process and

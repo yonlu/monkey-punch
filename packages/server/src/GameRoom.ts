@@ -1,4 +1,4 @@
-import { Room, Client } from "colyseus";
+import { Room, Client, CloseCode } from "colyseus";
 import {
   Player,
   WeaponState,
@@ -89,7 +89,7 @@ type JoinOptions = {
   code?: string;
 };
 
-export class GameRoom extends Room<RoomState> {
+export class GameRoom extends Room<{ state: RoomState }> {
   override maxClients = MAX_PLAYERS;
   // Assigned in onCreate before setSimulationInterval is called; tick()
   // cannot fire until after that, so the definite-assignment assertion
@@ -215,14 +215,11 @@ export class GameRoom extends Room<RoomState> {
       orbitHitCooldown: this.orbitHitCooldown,
     };
 
-    // The matchmaker's filterBy(["code"]) matches against the room listing's
-    // top-level fields, which Colyseus initializes from the CREATING client's
-    // options. Since the creating client doesn't know the code yet (we just
-    // generated it), we have to write it onto the listing manually so a
-    // second client's join({ code }) can find this room. setMetadata only
-    // updates listing.metadata, which the matchmaker's driver query does
-    // NOT read — it would not be sufficient on its own.
-    this.listing.code = code;
+    // Generated room code goes on metadata; the matchmaker is configured
+    // with filterBy(["metadata.code"]) (index.ts) so a second client's
+    // join({ code }) resolves to this room. Colyseus 0.17 supports
+    // nested filter paths — in 0.16 we had to write code onto the
+    // (now-removed) `this.listing` field directly.
     await this.setMetadata({ code, hostName: null });
 
     this.onMessage<InputMessage>("input", (client, message) => {
@@ -399,7 +396,7 @@ export class GameRoom extends Room<RoomState> {
     }
   }
 
-  override async onLeave(client: Client, consented: boolean): Promise<void> {
+  override async onLeave(client: Client, code: number): Promise<void> {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
 
@@ -408,7 +405,7 @@ export class GameRoom extends Room<RoomState> {
     player.inputDir.x = 0;
     player.inputDir.z = 0;
 
-    if (consented) {
+    if (code === CloseCode.CONSENTED) {
       this.state.players.delete(client.sessionId);
       this.orbitHitCooldown.evictPlayer(client.sessionId);
       this.contactCooldown.evictPlayer(client.sessionId);

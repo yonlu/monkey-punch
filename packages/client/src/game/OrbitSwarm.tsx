@@ -1,7 +1,7 @@
 import { useMemo, useRef, useEffect } from "react";
 import { useFrame } from "@react-three/fiber";
 import { InstancedMesh, Matrix4 } from "three";
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import type { Player, RoomState } from "@mp/shared";
 import {
   MAX_ORB_COUNT_EVER,

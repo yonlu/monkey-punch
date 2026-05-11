@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import type { RoomState } from "@mp/shared";
 import { Landing } from "./landing/Landing.js";
 import { GameView } from "./game/GameView.js";

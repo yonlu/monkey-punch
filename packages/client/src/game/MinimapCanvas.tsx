@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import type { RoomState } from "@mp/shared";
 import { MAP_RADIUS } from "@mp/shared";
 import type { LocalPredictor } from "../net/prediction.js";

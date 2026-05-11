@@ -2,7 +2,7 @@ import { Text } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { useEffect, forwardRef, useRef, useState } from "react";
 import type { Group } from "three";
-import type { Room } from "colyseus.js";
+import type { Room } from "@colyseus/sdk";
 import type { HitEvent, PlayerDamagedEvent, RoomState } from "@mp/shared";
 import { SnapshotBuffer } from "../net/snapshots.js";
 import { hudState } from "../net/hudState.js";

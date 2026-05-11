@@ -12,14 +12,15 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@colyseus/schema": "^3.0.0",
-    "@colyseus/tools": "^0.16.0",
+    "@colyseus/schema": "^4.0.25",
+    "@colyseus/tools": "^0.17.19",
+    "@colyseus/ws-transport": "^0.17.13",
     "@mp/shared": "workspace:*",
-    "colyseus": "^0.16.0"
+    "colyseus": "^0.17.10"
   },
   "devDependencies": {
+    "@colyseus/sdk": "^0.17.42",
     "@types/node": "^20.12.0",
-    "colyseus.js": "^0.16.0",
     "tsx": "^4.7.0",
     "vitest": "^1.6.0"
   }

@@ -17,7 +17,7 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@colyseus/schema": "^3.0.0",
+    "@colyseus/schema": "^4.0.25",
     "alea": "^1.0.1",
     "simplex-noise": "^4.0.3"
   },
