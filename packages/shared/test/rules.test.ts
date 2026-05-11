@@ -4226,3 +4226,219 @@ describe("Player.items schema — M9 US-002 default + encoder regression", () =>
     expect(p.items[0]!.level).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// M9 US-003: Ifrit's Talisman + Wind of Verdure — damage_mult and
+// cooldown_mult wired into all damage emit sites and weapon cooldowns.
+// Single-writer-at-spawn baking for projectile/boomerang/blood pool;
+// emit-time application for orbit/melee_arc/aura.
+// ---------------------------------------------------------------------------
+
+function attachItem(p: Player, kind: number, level: number): void {
+  const it = new ItemState();
+  it.kind = kind; it.level = level;
+  p.items.push(it);
+}
+
+describe("Ifrit's Talisman (damage_mult) — M9 US-003", () => {
+  it("Bolt projectile damage baked at fire with Ifrit's L3 multiplier (1.30×)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const w = attachBolt(p);
+    w.cooldownRemaining = 0;
+    addEnemy(state, 1, 5, 0);
+    attachItem(p, 0, 3); // Ifrit's Talisman L3 → 1.30
+
+    const cap = makeCapture(42);
+    tickWeapons(state, 0.05, cap.ctx, () => {});
+
+    expect(cap.projectiles.length).toBe(1);
+    const proj = cap.projectiles[0]!;
+    // Bolt L1 damage 10 × 1.30 = 13.
+    expect(proj.damage).toBeCloseTo(13);
+  });
+
+  it("Damascus crit hit stacks Ifrit's multiplicatively (base × critMult × itemMult)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    addEnemy(state, 1, 1.5, 0).hp = 10000;
+    attachItem(p, 0, 5); // Ifrit's L5 → 1.50
+
+    const def = makeMeleeArcDef({ damage: 10, critChance: 1, critMultiplier: 2 }); // always crit
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+    runMeleeArcSwing(state, p, def, 1, ctx, (e) => events.push(e));
+
+    const hit = events.find((e) => e.type === "hit");
+    if (!hit || hit.type !== "hit") throw new Error("expected hit");
+    // 10 base × 2 crit × 1.50 Ifrit's = 30
+    expect(hit.damage).toBeCloseTo(30);
+  });
+
+  it("Kronos aura tick damage scales with Ifrit's (applied at emit time)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    addEnemy(state, 1, 1, 0).hp = 1000;
+    attachItem(p, 0, 2); // Ifrit's L2 → 1.20
+
+    const def = makeAuraDef({ damage: 10, radius: 3 });
+    const events: CombatEvent[] = [];
+    const { ctx } = makeCapture();
+    runAuraTick(state, p, def, 1, ctx, (e) => events.push(e));
+
+    const hit = events.find((e) => e.type === "hit");
+    if (!hit || hit.type !== "hit") throw new Error("expected hit");
+    // 10 × 1.20 = 12.
+    expect(hit.damage).toBeCloseTo(12);
+  });
+
+  it("Bloody Axe damage AND bloodPool damagePerTick baked at throw with Ifrit's L4 (1.40×)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    attachItem(p, 0, 4); // Ifrit's L4 → 1.40
+
+    const def = makeBoomerangDef({
+      damage: 30,
+      leavesBloodPool: true,
+      bloodPoolDamagePerTick: 8,
+    });
+    const cap = makeCapture();
+    runBoomerangThrow(state, p, def, 1, cap.ctx, () => {});
+
+    expect(cap.boomerangs.length).toBe(1);
+    const b = cap.boomerangs[0]!;
+    // 30 × 1.40 = 42.
+    expect(b.damage).toBeCloseTo(42);
+    // 8 × 1.40 = 11.2 — kept as fractional on the Boomerang struct, will
+    // be floored when assigned to BloodPool schema's uint16 damagePerTick.
+    expect(b.bloodPoolDamagePerTick).toBeCloseTo(11.2);
+  });
+
+  it("Single-writer-at-spawn: mid-flight pickup does NOT retroactively boost in-flight projectile damage", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const w = attachBolt(p);
+    w.cooldownRemaining = 0;
+    addEnemy(state, 1, 5, 0);
+    // No Ifrit's yet at fire.
+    const cap = makeCapture(42);
+    tickWeapons(state, 0.05, cap.ctx, () => {});
+
+    const proj = cap.projectiles[0]!;
+    const damageAtFire = proj.damage; // 10 × 1.0 = 10
+
+    // Now pick up Ifrit's L5 mid-flight.
+    attachItem(p, 0, 5);
+    // proj.damage is BAKED — should not change.
+    expect(proj.damage).toBe(damageAtFire);
+    expect(proj.damage).toBeCloseTo(10);
+  });
+
+  it("Orbit damage applied at emit time (no spawn-baking — orbit is continuous)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const orbit = new WeaponState();
+    orbit.kind = 1; orbit.level = 1; orbit.cooldownRemaining = 0;
+    p.weapons.push(orbit);
+    // L1 orbit: orbCount=2, orbRadius=2.0, orbAngularSpeed=2.4. At tick=0, orb 0 at (2,0).
+    addEnemy(state, 1, 2.0, 0).hp = 1000;
+    attachItem(p, 0, 1); // Ifrit's L1 → 1.10
+
+    const events: CombatEvent[] = [];
+    const cap = makeCapture(1, 1_000_000);
+    state.tick = 0;
+    tickWeapons(state, 0.05, cap.ctx, (e) => events.push(e));
+
+    const hit = events.find((e) => e.type === "hit");
+    if (!hit || hit.type !== "hit") throw new Error("expected hit");
+    // Orbit L1 damage 6 × 1.10 = 6.6
+    expect(hit.damage).toBeCloseTo(6.6);
+  });
+});
+
+describe("Wind of Verdure (cooldown_mult) — M9 US-003", () => {
+  it("Bolt cooldownRemaining set to base × Wind's L2 (0.90×) after fire", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const w = attachBolt(p);
+    w.cooldownRemaining = 0;
+    addEnemy(state, 1, 5, 0);
+    attachItem(p, 1, 2); // Wind of Verdure L2 → 0.90
+
+    const cap = makeCapture();
+    tickWeapons(state, 0.05, cap.ctx, () => {});
+
+    // Bolt L1 cooldown 0.60 × 0.90 = 0.54
+    expect(w.cooldownRemaining).toBeCloseTo(0.54);
+  });
+
+  it("Damascus cooldownRemaining scales with Wind's", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    p.facingX = 1; p.facingZ = 0;
+    addEnemy(state, 1, 1.5, 0).hp = 100;
+    attachItem(p, 1, 5); // Wind's L5 → 0.75
+
+    const w = new WeaponState();
+    w.kind = 3; // Damascus
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const cap = makeCapture();
+    tickWeapons(state, 0.05, cap.ctx, () => {});
+
+    // Damascus L1 cooldown 0.35 × 0.75 = 0.2625
+    expect(w.cooldownRemaining).toBeCloseTo(0.2625);
+  });
+
+  it("Kronos aura tick interval scales with Wind's (faster ticks at high cooldown_mult)", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    addEnemy(state, 1, 1, 0).hp = 1000;
+    attachItem(p, 1, 3); // Wind's L3 → 0.85
+
+    const w = new WeaponState();
+    w.kind = 7; // Kronos
+    w.level = 1;
+    w.cooldownRemaining = 0;
+    p.weapons.push(w);
+
+    const cap = makeCapture();
+    tickWeapons(state, 0.05, cap.ctx, () => {});
+
+    // Kronos L1 tickIntervalMs 500 → 0.5s × 0.85 = 0.425
+    expect(w.cooldownRemaining).toBeCloseTo(0.425);
+  });
+
+  it("Stacking Ifrit's L1 + Wind's L1: damage × cooldown applied independently", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.x = 0; p.z = 0;
+    const w = attachBolt(p);
+    w.cooldownRemaining = 0;
+    addEnemy(state, 1, 5, 0);
+    attachItem(p, 0, 1); // Ifrit's L1 → 1.10
+    attachItem(p, 1, 1); // Wind's L1 → 0.95
+
+    const cap = makeCapture();
+    tickWeapons(state, 0.05, cap.ctx, () => {});
+
+    const proj = cap.projectiles[0]!;
+    // 10 × 1.10 = 11
+    expect(proj.damage).toBeCloseTo(11);
+    // 0.60 × 0.95 = 0.57
+    expect(w.cooldownRemaining).toBeCloseTo(0.57);
+  });
+});

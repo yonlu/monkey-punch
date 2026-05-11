@@ -759,11 +759,15 @@ export function tickWeapons(
           const dirZ = sel.dirZ;
           const lockedTargetId = sel.lockedTargetId;
 
+          // M9 US-003: damage_mult BAKED into proj.damage at fire (not
+          // re-read at hit time). Matches the single-writer-at-spawn
+          // pattern: mid-flight item pickup doesn't retroactively boost
+          // in-flight projectiles.
           const proj: Projectile = {
             fireId: ctx.nextFireId(),
             ownerId: player.sessionId,
             weaponKind: weapon.kind,
-            damage: stats.damage,
+            damage: stats.damage * getItemMultiplier(player, "damage_mult"),
             speed: stats.projectileSpeed,
             radius: stats.hitRadius,
             lifetime: stats.projectileLifetime,
@@ -806,7 +810,8 @@ export function tickWeapons(
             serverFireTimeMs: ctx.serverNowMs(),
           });
 
-          weapon.cooldownRemaining = stats.cooldown;
+          // M9 US-003: cooldown_mult shortens the cooldown countdown.
+          weapon.cooldownRemaining = stats.cooldown * getItemMultiplier(player, "cooldown_mult");
           break;
         }
         case "orbit": {
@@ -842,11 +847,17 @@ export function tickWeapons(
               if (dx * dx + dy * dy + dz * dz <= radiusSumSq) toHit.push(enemy);
             });
 
+            // M9 US-003: damage_mult item effect applied AT EMIT TIME for
+            // orbit (no fire-event spawn to bake into). Read once per
+            // orbit cycle instead of per hit — items don't change
+            // mid-cycle.
+            const damageMult = getItemMultiplier(player, "damage_mult");
             for (const enemy of toHit) {
               if (!ctx.orbitHitCooldown.tryHit(player.sessionId, weaponIndex, enemy.id, nowMs, stats.hitCooldownPerEnemyMs)) {
                 continue;
               }
-              enemy.hp -= stats.damage;
+              const orbitDamage = stats.damage * damageMult;
+              enemy.hp -= orbitDamage;
 
               // fireId=0 sentinel — orbit hits don't correlate to a fire event.
               // M4 starts nextFireId at 1, so 0 is unambiguously "non-projectile".
@@ -854,7 +865,7 @@ export function tickWeapons(
                 type: "hit",
                 fireId: 0,
                 enemyId: enemy.id,
-                damage: stats.damage,
+                damage: orbitDamage,
                 x: enemy.x,
                 y: enemy.y,
                 z: enemy.z,
@@ -896,7 +907,8 @@ export function tickWeapons(
           const fired = runMeleeArcSwing(state, player, def, weapon.level, ctx, emit);
           if (fired) {
             const stats = statsAt(def, weapon.level);
-            weapon.cooldownRemaining = stats.cooldown;
+            // M9 US-003: cooldown_mult applies.
+            weapon.cooldownRemaining = stats.cooldown * getItemMultiplier(player, "cooldown_mult");
           }
           break;
         }
@@ -919,7 +931,8 @@ export function tickWeapons(
           });
           if (!anyInReach) return;
           runBoomerangThrow(state, player, def, weapon.level, ctx, emit);
-          weapon.cooldownRemaining = stats.cooldown;
+          // M9 US-003: cooldown_mult applies.
+          weapon.cooldownRemaining = stats.cooldown * getItemMultiplier(player, "cooldown_mult");
           break;
         }
         case "aura": {
@@ -934,7 +947,9 @@ export function tickWeapons(
           if (weapon.cooldownRemaining > 0) return;
           runAuraTick(state, player, def, weapon.level, ctx, emit);
           const stats = statsAt(def, weapon.level);
-          weapon.cooldownRemaining = stats.tickIntervalMs / 1000;
+          // M9 US-003: cooldown_mult applies to aura ticks too — Kronos
+          // ticks faster with Wind of Verdure stacked.
+          weapon.cooldownRemaining = (stats.tickIntervalMs / 1000) * getItemMultiplier(player, "cooldown_mult");
           break;
         }
         default: {
@@ -1021,11 +1036,16 @@ export function runMeleeArcSwing(
 
   // Apply hits. Knockback mutates enemy x/z; safe now that we're outside
   // the forEach. Crit roll: ctx.rng() ∈ [0,1); roll < critChance → crit.
+  //
+  // M9 US-003: damage_mult applied at emit time (not baked at swing —
+  // melee_arc has no fire-event spawn to bake into). Stacks
+  // multiplicatively with crit: final damage = base × critMult × itemMult.
+  const damageMult = getItemMultiplier(player, "damage_mult");
   let anyCrit = false;
   for (const enemy of candidates) {
     const isCrit = stats.critChance > 0 && ctx.rng() < stats.critChance;
     if (isCrit) anyCrit = true;
-    const damage = isCrit ? stats.damage * stats.critMultiplier : stats.damage;
+    const damage = (isCrit ? stats.damage * stats.critMultiplier : stats.damage) * damageMult;
 
     if (stats.knockback > 0) {
       const dx = enemy.x - player.x;
@@ -1155,15 +1175,19 @@ export function runAuraTick(
     hits.push(enemy);
   });
 
+  // M9 US-003: damage_mult applied at emit time for aura (no fire-event
+  // spawn to bake into). Computed once per aura tick.
+  const auraDamage = stats.damage * getItemMultiplier(player, "damage_mult");
+
   for (const enemy of hits) {
-    enemy.hp -= stats.damage;
+    enemy.hp -= auraDamage;
     applySlow(enemy, stats.slowMultiplier, slowDurationTicks, state.tick);
 
     emit({
       type: "hit",
       fireId: 0, // non-projectile sentinel
       enemyId: enemy.id,
-      damage: stats.damage,
+      damage: auraDamage,
       x: enemy.x,
       y: enemy.y,
       z: enemy.z,
@@ -1229,19 +1253,25 @@ export function runBoomerangThrow(
 ): void {
   const stats = statsAt(def, weaponLevel);
   const fireId = ctx.nextFireId();
+  // M9 US-003: damage_mult BAKED into both boomerang damage AND
+  // bloodPoolDamagePerTick at throw time. Single-writer-at-spawn so a
+  // mid-flight item pickup doesn't retroactively change in-flight axe
+  // or pool damage (matches the existing single-writer-at-throw pattern
+  // boomerang already uses for its own damage).
+  const damageMult = getItemMultiplier(player, "damage_mult");
   const boomerang: Boomerang = {
     fireId,
     ownerId: player.sessionId,
     weaponKind: WEAPON_KINDS.indexOf(def),
     weaponLevel,
-    damage: stats.damage,
+    damage: stats.damage * damageMult,
     hitRadius: stats.hitRadius,
     outboundDistance: stats.outboundDistance,
     outboundSpeed: stats.outboundSpeed,
     returnSpeed: stats.returnSpeed,
     hitCooldownPerEnemyMs: stats.hitCooldownPerEnemyMs,
     leavesBloodPool: stats.leavesBloodPool,
-    bloodPoolDamagePerTick: stats.bloodPoolDamagePerTick,
+    bloodPoolDamagePerTick: stats.bloodPoolDamagePerTick * damageMult,
     bloodPoolTickIntervalMs: stats.bloodPoolTickIntervalMs,
     bloodPoolLifetimeMs: stats.bloodPoolLifetimeMs,
     bloodPoolSpawnIntervalUnits: stats.bloodPoolSpawnIntervalUnits,
@@ -1412,7 +1442,12 @@ export function tickBoomerangs(
         pool.expiresAt = state.tick + Math.max(1, Math.ceil((boomerang.bloodPoolLifetimeMs * TICK_RATE) / 1000));
         pool.ownerId = boomerang.ownerId;
         pool.weaponKind = boomerang.weaponKind;
-        pool.damagePerTick = boomerang.bloodPoolDamagePerTick;
+        // M9 US-003: bloodPoolDamagePerTick on the Boomerang struct may
+        // be fractional (item damage_mult applied at throw time). Floor
+        // to the uint16 schema field — Math.floor is explicit; without
+        // it the underlying schema cast would still truncate, but the
+        // intent is clearer this way.
+        pool.damagePerTick = Math.floor(boomerang.bloodPoolDamagePerTick);
         pool.tickIntervalMs = boomerang.bloodPoolTickIntervalMs;
         state.bloodPools.set(String(pool.id), pool);
       }
