@@ -163,8 +163,8 @@
         "Tests pass"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Approved 2026-05-11 by Luke. M9 ships: 6 items across 6 effect kinds (damage_mult, cooldown_mult, max_hp_mult, speed_mult, magnet_mult, xp_mult), single getItemMultiplier helper as the rule-12 dispatch point, mixed weapons+items level-up pool (14 entries equally weighted), single-writer-at-spawn for projectile/boomerang/blood pool damage, apply-at-emit for orbit/melee_arc/aura/movement/magnet/xp. NO new tick functions (tick order unchanged from M8 — items are pure data read at existing tick sites). Player.items + LevelUpChoice schema additions ride Colyseus correctly (landmine #1 avoided). One playtest iteration during US-006 added describeItemEffect helper for item descriptions in the overlay. Visual polish in US-007: gold-bordered item cards with emoji icons (🔥⚡❤️🥾🔍🐰), ITEM/WEAPON tags. Rule 12 grep clean milestone-wide for all 8 weapons + 6 items. Final test counts: 288 shared / 34 client / 43 server. No regressions to M5-M8. Balance is starting values per design doc — final tuning is queued for a follow-up milestone, not this one. Items shipped — M10+ candidates: weapon evolutions, animated character art, sound, first boss."
     }
   ]
 }
