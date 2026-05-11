@@ -78,3 +78,26 @@ export function isItemEffect(s: string): s is ItemEffect {
  * this when player.items is empty.
  */
 export const NEUTRAL_MULTIPLIER = 1.0;
+
+/**
+ * Human-readable effect description for the level-up overlay (and any
+ * future HUD that lists item effects). Per-effect templates render the
+ * value as a percentage delta from 1.0 — e.g., damage_mult value 1.30
+ * renders as "+30% weapon damage". Cooldown is shown as a REDUCTION
+ * (cooldown_mult 0.85 → "-15% weapon cooldown") which reads more
+ * intuitively than "weapons fire at 85% interval".
+ *
+ * Dispatches on `effect` enum value (rule 12 — never on item name).
+ * Adding a new ItemEffect requires adding a new branch here.
+ */
+export function describeItemEffect(def: ItemDef, level: number): string {
+  const v = itemValueAt(def, level);
+  switch (def.effect) {
+    case "damage_mult":   return `+${Math.round((v - 1) * 100)}% weapon damage`;
+    case "cooldown_mult": return `-${Math.round((1 - v) * 100)}% weapon cooldown`;
+    case "max_hp_mult":   return `+${Math.round((v - 1) * 100)}% max HP`;
+    case "speed_mult":    return `+${Math.round((v - 1) * 100)}% movement speed`;
+    case "magnet_mult":   return `+${Math.round((v - 1) * 100)}% gem magnet range`;
+    case "xp_mult":       return `+${Math.round((v - 1) * 100)}% XP gain`;
+  }
+}

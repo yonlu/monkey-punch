@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Room } from "colyseus.js";
 import type { Player, RoomState, LevelUpChoice } from "@mp/shared";
-import { SIM_DT_S, WEAPON_KINDS, ITEM_KINDS, LEVEL_UP_CHOICE_ITEM } from "@mp/shared";
+import { SIM_DT_S, WEAPON_KINDS, ITEM_KINDS, LEVEL_UP_CHOICE_ITEM, describeItemEffect } from "@mp/shared";
 
 const OVERLAY_STYLE: React.CSSProperties = {
   position: "fixed",
@@ -45,22 +45,29 @@ const COUNTDOWN_STYLE: React.CSSProperties = {
 
 type CardLabel = { line1: string; line2: string };
 
-// M9 US-002: choices are now structured {type, index}. Weapon vs item
-// dispatch happens here; UI polish (visual distinction, item icons,
-// effect description) is in US-007.
+// M9 US-002 + US-006 iteration: choices are structured {type, index}.
+// Weapon vs item dispatch happens here. Items show a human-readable
+// effect description (e.g., "+10% weapon damage"); weapons just show
+// "NEW" or "L1 → L2" since per-level weapon details vary by behavior
+// kind. Full visual distinction (gold border, item icons) lands in US-007.
 function describeChoice(localPlayer: Player, choice: LevelUpChoice): CardLabel {
   if (choice.type === LEVEL_UP_CHOICE_ITEM) {
     const def = ITEM_KINDS[choice.index];
     if (!def) return { line1: "?", line2: "?" };
     const existing = localPlayer.items.find((it) => it.kind === choice.index);
     if (!existing) {
-      return { line1: def.name, line2: "NEW ITEM" };
+      // First pickup — show what L1 grants.
+      return { line1: def.name, line2: `NEW → ${describeItemEffect(def, 1)}` };
     }
     const cap = def.values.length;
     if (existing.level >= cap) {
-      return { line1: def.name, line2: `L${cap} (MAX)` };
+      return { line1: def.name, line2: `L${cap} MAX (${describeItemEffect(def, cap)})` };
     }
-    return { line1: def.name, line2: `L${existing.level} → L${existing.level + 1}` };
+    // Upgrade — show current → next.
+    return {
+      line1: def.name,
+      line2: `${describeItemEffect(def, existing.level)} → ${describeItemEffect(def, existing.level + 1)}`,
+    };
   }
   const def = WEAPON_KINDS[choice.index];
   if (!def) return { line1: "?", line2: "?" };

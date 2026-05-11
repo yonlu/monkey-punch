@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { RoomState, Player, Enemy, WeaponState, Gem, BloodPool, LevelUpChoice, ItemState } from "../src/schema.js";
-import { ITEM_KINDS } from "../src/items.js";
+import { ITEM_KINDS, describeItemEffect } from "../src/items.js";
 import { initTerrain, terrainHeight } from "../src/terrain.js";
 
 // M7 US-002: tickPlayers calls terrainHeight which requires initTerrain.
@@ -4644,5 +4644,30 @@ describe("Bunny Top Hat (xp_mult) — M9 US-005", () => {
     tickGems(state, () => {});
 
     expect(p.xp).toBe(10);
+  });
+});
+
+describe("describeItemEffect — M9 US-006 iteration (item descriptions in level-up overlay)", () => {
+  it("formats each effect kind with the right delta string", () => {
+    // Use the actual ITEM_KINDS to lock in copy.
+    const ifrits = ITEM_KINDS[0]!;     // damage_mult
+    const wind = ITEM_KINDS[1]!;        // cooldown_mult
+    const apple = ITEM_KINDS[2]!;       // max_hp_mult
+    const sleipnir = ITEM_KINDS[3]!;    // speed_mult
+    const magnifier = ITEM_KINDS[4]!;   // magnet_mult
+    const bunny = ITEM_KINDS[5]!;       // xp_mult
+
+    expect(describeItemEffect(ifrits, 1)).toBe("+10% weapon damage");
+    expect(describeItemEffect(ifrits, 5)).toBe("+50% weapon damage");
+    expect(describeItemEffect(wind, 1)).toBe("-5% weapon cooldown");
+    expect(describeItemEffect(wind, 5)).toBe("-25% weapon cooldown");
+    expect(describeItemEffect(apple, 1)).toBe("+20% max HP");
+    expect(describeItemEffect(apple, 5)).toBe("+100% max HP");
+    expect(describeItemEffect(sleipnir, 1)).toBe("+5% movement speed");
+    expect(describeItemEffect(sleipnir, 5)).toBe("+25% movement speed");
+    expect(describeItemEffect(magnifier, 1)).toBe("+25% gem magnet range");
+    expect(describeItemEffect(magnifier, 5)).toBe("+125% gem magnet range");
+    expect(describeItemEffect(bunny, 1)).toBe("+10% XP gain");
+    expect(describeItemEffect(bunny, 5)).toBe("+50% XP gain");
   });
 });
