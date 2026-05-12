@@ -99,6 +99,138 @@ namespace MonkeyPunch.Combat {
       SpawnDamageNumber(damage, new Vector3((float)x, (float)y + 1.0f, (float)z));
     }
 
+    // Called from NetworkClient.OnMessage("boomerang_thrown", ...).
+    // Boomerang travels in 3 phases (outbound → brief stop → return).
+    // The owner's interpolated position is needed for the return phase
+    // (the axe homes back to wherever the owner is RIGHT NOW), so we
+    // poll NetworkClient for the owner Transform each frame.
+    public void OnBoomerangThrown(int fireId, string ownerId,
+                                  double originX, double originY, double originZ,
+                                  double dirX, double dirZ,
+                                  double outboundDistance, double outboundSpeed, double returnSpeed,
+                                  double serverFireTimeMs) {
+      var go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+      go.transform.localScale = new Vector3(0.15f, 0.5f, 0.15f);
+      go.transform.position = new Vector3((float)originX, (float)originY, (float)originZ);
+      var col = go.GetComponent<Collider>();
+      if (col != null) Destroy(col);
+      go.name = $"Boomerang:{fireId}";
+      var rend = go.GetComponent<Renderer>();
+      if (rend != null) rend.material.color = new Color(0.5f, 0.25f, 0.1f);  // bronze/wood
+      StartCoroutine(BoomerangCoroutine(go, ownerId,
+        originX, originY, originZ, dirX, dirZ,
+        outboundDistance, outboundSpeed, returnSpeed, serverFireTimeMs));
+    }
+
+    private IEnumerator BoomerangCoroutine(GameObject go, string ownerId,
+                                           double ox, double oy, double oz,
+                                           double dx, double dz,
+                                           double outboundDistance, double outboundSpeed, double returnSpeed,
+                                           double serverFireTimeMs) {
+      // Outbound: travel `outboundDistance` units along (dx,dz) at outboundSpeed.
+      // Stop: 1 tick (~50ms).
+      // Return: travel toward owner's current position at returnSpeed until close.
+      double outboundDurMs = (outboundDistance / outboundSpeed) * 1000.0;
+      double stopDurMs = 50.0;
+      while (go != null) {
+        double serverNow = NetworkClient.Instance != null ? NetworkClient.Instance.ServerNowMs() : NowMs();
+        double elapsedMs = serverNow - serverFireTimeMs;
+        Vector3 pos;
+        if (elapsedMs <= outboundDurMs) {
+          double tSec = elapsedMs / 1000.0;
+          pos = new Vector3(
+            (float)(ox + dx * outboundSpeed * tSec),
+            (float)oy,
+            (float)(oz + dz * outboundSpeed * tSec)
+          );
+        } else if (elapsedMs <= outboundDurMs + stopDurMs) {
+          pos = new Vector3(
+            (float)(ox + dx * outboundDistance),
+            (float)oy,
+            (float)(oz + dz * outboundDistance)
+          );
+        } else {
+          // Return phase: home toward owner. If owner isn't ours, fall
+          // back to the throw origin so the boomerang still feels coherent.
+          Vector3 ownerPos = LookupPlayerPosition(ownerId, new Vector3((float)ox, (float)oy, (float)oz));
+          Vector3 returnStart = new Vector3(
+            (float)(ox + dx * outboundDistance),
+            (float)oy,
+            (float)(oz + dz * outboundDistance)
+          );
+          double returnElapsedMs = elapsedMs - outboundDurMs - stopDurMs;
+          double returnDurMs = (Vector3.Distance(returnStart, ownerPos) / returnSpeed) * 1000.0;
+          if (returnDurMs <= 0) { Destroy(go); yield break; }
+          float u = (float)Mathf.Clamp01((float)(returnElapsedMs / returnDurMs));
+          pos = Vector3.Lerp(returnStart, ownerPos, u);
+          if (u >= 1f) { Destroy(go); yield break; }
+        }
+        go.transform.position = pos;
+        // Spin for visual flair.
+        go.transform.Rotate(0f, 720f * UnityEngine.Time.deltaTime, 0f);
+        yield return null;
+      }
+    }
+
+    // Called from NetworkClient.OnMessage("melee_swipe", ...).
+    // Brief arc flash (200ms) at the attacker's facing direction.
+    public void OnMeleeSwipe(string ownerId,
+                             double originX, double originY, double originZ,
+                             double facingX, double facingZ,
+                             double arcAngle, double range) {
+      var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
+      go.transform.localScale = new Vector3((float)range * 1.5f, (float)range * 1.5f, 1f);
+      go.transform.position = new Vector3((float)originX + (float)facingX * (float)range * 0.5f,
+                                          (float)originY + 0.5f,
+                                          (float)originZ + (float)facingZ * (float)range * 0.5f);
+      // Lay the quad flat on the ground, facing up.
+      go.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+      var col = go.GetComponent<Collider>();
+      if (col != null) Destroy(col);
+      go.name = $"MeleeSwipe:{ownerId}";
+      var rend = go.GetComponent<Renderer>();
+      if (rend != null) rend.material.color = new Color(1f, 0.9f, 0.5f, 0.7f);
+      StartCoroutine(FadeAndDestroyCoroutine(go, 0.2f));
+    }
+
+    // Called from NetworkClient.OnMessage("player_damaged", ...).
+    // Red flash on the player GameObject + damage number above them.
+    public void OnPlayerDamaged(string playerId, int damage,
+                                double x, double y, double z,
+                                GameObject playerGo) {
+      if (playerGo != null) {
+        StartCoroutine(FlashCoroutine(playerGo, new Color(1f, 0.2f, 0.2f), 0.15f));
+      }
+      SpawnDamageNumber(damage, new Vector3((float)x, (float)y + 1.5f, (float)z));
+    }
+
+    private Vector3 LookupPlayerPosition(string sessionId, Vector3 fallback) {
+      // CombatVfx doesn't own player GameObjects; lookup goes through
+      // NetworkClient via a public method. Avoids tight coupling and
+      // works whether the player is local or remote.
+      if (NetworkClient.Instance == null) return fallback;
+      var go = NetworkClient.Instance.GetPlayerObject(sessionId);
+      return go != null ? go.transform.position : fallback;
+    }
+
+    private IEnumerator FadeAndDestroyCoroutine(GameObject go, float duration) {
+      if (go == null) yield break;
+      var rend = go.GetComponent<Renderer>();
+      Color startColor = rend != null ? rend.material.color : Color.white;
+      float t = 0f;
+      while (t < duration && go != null) {
+        float u = t / duration;
+        if (rend != null && rend.material != null) {
+          var c = startColor;
+          c.a = 1f - u;
+          rend.material.color = c;
+        }
+        t += UnityEngine.Time.deltaTime;
+        yield return null;
+      }
+      if (go != null) Destroy(go);
+    }
+
     // Called from NetworkClient.OnMessage("enemy_died", ...).
     public void OnEnemyDied(uint enemyId, double x, double z, GameObject enemyGo) {
       // Simple kill burst — small expanding sphere that fades. The enemy

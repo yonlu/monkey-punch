@@ -123,6 +123,38 @@ namespace MonkeyPunch.Net {
       public bool autoPicked;
     }
 
+    [Serializable]
+    private class BoomerangThrownEventMsg {
+      public string type;
+      public int fireId;
+      public string ownerId;
+      public byte weaponKind;
+      public byte weaponLevel;
+      public double originX, originY, originZ;
+      public double dirX, dirZ;
+      public double outboundDistance;
+      public double outboundSpeed;
+      public double returnSpeed;
+      public bool leavesBloodPool;
+      public int serverTick;
+      public double serverFireTimeMs;
+    }
+
+    [Serializable]
+    private class MeleeSwipeEventMsg {
+      public string type;
+      public string ownerId;
+      public byte weaponKind;
+      public byte weaponLevel;
+      public double originX, originY, originZ;
+      public double facingX, facingZ;
+      public double arcAngle;
+      public double range;
+      public bool isCrit;
+      public int serverTick;
+      public double serverSwingTimeMs;
+    }
+
     // Static so a sibling CameraFollow can find us without inspector wiring.
     // Single-NetworkClient assumption; if that ever changes, swap for a
     // proper service locator.
@@ -226,7 +258,27 @@ namespace MonkeyPunch.Net {
         // when its schema entry leaves (HandleGemRemove).
       });
       room.OnMessage("player_damaged", (PlayerDamagedEventMsg ev) => {
-        // Red screen flash + damage number on the player — follow-up.
+        if (CombatVfx.Instance != null) {
+          playerObjects.TryGetValue(ev.playerId, out var go);
+          CombatVfx.Instance.OnPlayerDamaged(ev.playerId, ev.damage, ev.x, ev.y, ev.z, go);
+        }
+      });
+      room.OnMessage("boomerang_thrown", (BoomerangThrownEventMsg ev) => {
+        if (CombatVfx.Instance != null) {
+          CombatVfx.Instance.OnBoomerangThrown(ev.fireId, ev.ownerId,
+            ev.originX, ev.originY, ev.originZ,
+            ev.dirX, ev.dirZ,
+            ev.outboundDistance, ev.outboundSpeed, ev.returnSpeed,
+            ev.serverFireTimeMs);
+        }
+      });
+      room.OnMessage("melee_swipe", (MeleeSwipeEventMsg ev) => {
+        if (CombatVfx.Instance != null) {
+          CombatVfx.Instance.OnMeleeSwipe(ev.ownerId,
+            ev.originX, ev.originY, ev.originZ,
+            ev.facingX, ev.facingZ,
+            ev.arcAngle, ev.range);
+        }
       });
       room.OnMessage("player_downed", (PlayerDownedEventMsg ev) => {
         Debug.Log($"[NetworkClient] player_downed playerId={ev.playerId} tick={ev.serverTick}");
@@ -248,6 +300,39 @@ namespace MonkeyPunch.Net {
     // the same fireId. Public so CombatVfx (different namespace) can
     // call without a friend-assembly trick.
     public double ServerNowMs() => serverTime.ServerNow();
+
+    // Lookup the GameObject for an arbitrary sessionId. Used by
+    // BoomerangCoroutine to home toward the owner's current position
+    // and by player-damaged VFX to flash the right cube. Returns null
+    // if the sessionId isn't currently in playerObjects (player left
+    // mid-flight). Local player is registered in playerObjects too.
+    public GameObject GetPlayerObject(string sessionId) {
+      playerObjects.TryGetValue(sessionId, out var go);
+      return go;
+    }
+
+    private void DebugGrantWeapon(int weaponKind) {
+      if (room == null) return;
+      try {
+        _ = room.Send("debug_grant_weapon", new Dictionary<string, object> {
+          { "type", "debug_grant_weapon" }, { "weaponKind", weaponKind }
+        });
+        Debug.Log($"[NetworkClient] debug_grant_weapon kind={weaponKind}");
+      } catch (Exception ex) {
+        Debug.LogWarning($"[NetworkClient] grant failed: {ex.Message}");
+      }
+    }
+
+    private void DebugSpawnEnemies(int count) {
+      if (room == null) return;
+      try {
+        _ = room.Send("debug_spawn", new Dictionary<string, object> {
+          { "type", "debug_spawn" }, { "count", count }
+        });
+      } catch (Exception ex) {
+        Debug.LogWarning($"[NetworkClient] spawn failed: {ex.Message}");
+      }
+    }
 
     private IEnumerator PingLoop() {
       var wait = new WaitForSeconds(1f);
@@ -428,6 +513,21 @@ namespace MonkeyPunch.Net {
       var kb = Keyboard.current;
       if (kb != null && kb.spaceKey.wasPressedThisFrame) {
         jumpQueued = true;
+      }
+
+      // Phase-4 dev shortcuts. The server accepts debug_grant_weapon
+      // (and a few others) when ALLOW_DEBUG_MESSAGES=true on GameRoom.
+      //   1 → grant Mjolnir (orbit) at next level
+      //   2 → grant Bloody Axe (boomerang) at next level
+      //   3 → grant something melee at next level
+      //   B → debug_spawn 10 enemies
+      // Indices are guesses based on weapons.ts comment order; if a
+      // grant lands on the wrong weapon, swap below.
+      if (room != null && kb != null) {
+        if (kb.digit1Key.wasPressedThisFrame) DebugGrantWeapon(2);  // Mjolnir
+        if (kb.digit2Key.wasPressedThisFrame) DebugGrantWeapon(3);  // Bloody Axe
+        if (kb.digit3Key.wasPressedThisFrame) DebugGrantWeapon(4);  // melee candidate
+        if (kb.bKey.wasPressedThisFrame) DebugSpawnEnemies(10);
       }
 
       if (room == null) return;
