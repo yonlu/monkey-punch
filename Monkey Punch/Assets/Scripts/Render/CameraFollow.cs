@@ -48,14 +48,15 @@ namespace MonkeyPunch.Render {
 
     [Header("Mouse Control")]
     [Tooltip("Radians per pixel of horizontal mouse motion (right-drag).")]
-    // Defaults 5× the TS reference values. The TS client used pointer-
-    // lock with unlimited mouse travel; the Unity editor's Game view
-    // does NOT lock the cursor, so the mouse hits the screen edge fast
-    // and the perceived rate-per-screen needs to be higher. Tunable in
-    // Inspector — bump higher for more aggressive feel.
-    [SerializeField] private float mouseSensitivityX = 0.012f;
+    // Defaults ~25× the TS reference values (TS X was 0.0025). The TS
+    // client used pointer-lock with unlimited mouse travel; the Unity
+    // editor's Game view does NOT lock the cursor, so the mouse hits
+    // the screen edge fast and the perceived rate-per-screen needs to
+    // be much higher. At 0.06 rad/px a ~105-pixel sweep is a full 360°.
+    // Tunable in Inspector — drop lower if it overshoots.
+    [SerializeField] private float mouseSensitivityX = 0.060f;
     [Tooltip("Radians per pixel of vertical mouse motion (right-drag).")]
-    [SerializeField] private float mouseSensitivityY = 0.010f;
+    [SerializeField] private float mouseSensitivityY = 0.050f;
 
     private const double DEG = Math.PI / 180.0;
     private const double DEFAULT_PITCH = 35.0 * DEG;
