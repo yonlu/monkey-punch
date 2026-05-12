@@ -71,11 +71,13 @@ namespace MonkeyPunch.UI {
       levelUpChoices = choices;
       onLevelUpClicked = onClick;
       levelUpVisible = true;
+      RefreshCursorState();
     }
     public void HideLevelUp() {
       levelUpVisible = false;
       levelUpChoices = null;
       onLevelUpClicked = null;
+      RefreshCursorState();
     }
     public bool LevelUpOpen => levelUpVisible;
 
@@ -89,11 +91,33 @@ namespace MonkeyPunch.UI {
       runOverReason = reason;
       onRestartClicked = onRestart;
       runOverVisible = true;
+      RefreshCursorState();
     }
     public void HideRunOver() {
       runOverVisible = false;
       runOverReason = null;
       onRestartClicked = null;
+      RefreshCursorState();
+    }
+
+    public bool AnyModalOpen => levelUpVisible || runOverVisible;
+
+    /// <summary>
+    /// Megabonk-style cursor management: locked + invisible during
+    /// gameplay so mouse motion drives the camera continuously;
+    /// unlocked + visible when a modal is showing so the user can
+    /// click Pick / Restart. CameraFollow polls Cursor.lockState in
+    /// its Update and skips rotation when unlocked, so the two
+    /// components stay decoupled — GameUI owns the lock decision.
+    /// </summary>
+    private void RefreshCursorState() {
+      if (AnyModalOpen) {
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+      } else {
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+      }
     }
 
     // ----- MonoBehaviour -----

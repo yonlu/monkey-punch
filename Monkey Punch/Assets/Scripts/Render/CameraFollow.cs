@@ -46,29 +46,17 @@ namespace MonkeyPunch.Render {
     [Tooltip("Frame-rate-independent follow rate. Per-frame factor = 1 - exp(-rate * dt). Higher = snappier.")]
     [SerializeField] private float followRate = 18f;    // matches CAMERA_FOLLOW_LERP
 
-    [Header("Mouse Control")]
-    [Tooltip("Radians per pixel of horizontal mouse motion (right-drag).")]
-    // Defaults ~25× the TS reference values (TS X was 0.0025). The TS
-    // client used pointer-lock with unlimited mouse travel; the Unity
-    // editor's Game view does NOT lock the cursor, so the mouse hits
-    // the screen edge fast and the perceived rate-per-screen needs to
-    // be much higher. At 0.06 rad/px a ~105-pixel sweep is a full 360°.
-    // Tunable in Inspector — drop lower if it overshoots.
-    [SerializeField] private float mouseSensitivityX = 0.060f;
-    [Tooltip("Radians per pixel of vertical mouse motion (right-drag).")]
-    [SerializeField] private float mouseSensitivityY = 0.050f;
+    [Header("Mouse Control (Megabonk-style continuous mouselook)")]
+    [Tooltip("Radians per Mouse.delta count (horizontal). In Cursor.lockState=Locked, Unity reads raw HID deltas — magnitude differs from screen pixels, so this is tuned independently from any windowed-cursor approach.")]
+    [SerializeField] private float mouseSensitivityX = 0.005f;
+    [Tooltip("Radians per Mouse.delta count (vertical).")]
+    [SerializeField] private float mouseSensitivityY = 0.004f;
 
     private const double DEG = Math.PI / 180.0;
     private const double DEFAULT_PITCH = 35.0 * DEG;
     private const double PITCH_MIN = -10.0 * DEG;
     private const double PITCH_MAX = 60.0 * DEG;
 
-    // Mouse-pos snapshot so we can compute screen-pixel deltas ourselves.
-    // Mouse.delta.ReadValue() on macOS / Retina reports sub-pixel values
-    // that no reasonable sensitivity scalar makes feel right; diffing
-    // Mouse.position is robust to those quirks.
-    private Vector2 lastMousePos;
-    private bool rightHeldLastFrame;
     private bool didLogDeltaSample;
 
     void Awake() {
@@ -76,56 +64,45 @@ namespace MonkeyPunch.Render {
         Debug.LogWarning("[CameraFollow] Multiple instances detected — using the latest.");
       }
       Instance = this;
+      // Megabonk-style mouselook: lock the cursor on entry so mouse
+      // motion drives the camera continuously, no right-click gate.
+      // GameUI is responsible for unlocking when a modal is shown
+      // (level-up overlay needs button clicks; run-over needs the
+      // Restart button).
+      Cursor.lockState = CursorLockMode.Locked;
+      Cursor.visible = false;
     }
 
     void Update() {
-      // Right-mouse-drag adjusts yaw/pitch. We don't use Cursor.lockState
-      // (yet) — Phase 8 polish could add proper pointer-lock so the
-      // pointer doesn't leave the window during long drags.
-      //
-      // Delta source: we diff Mouse.position frame-to-frame instead of
-      // calling Mouse.delta.ReadValue(). On macOS / Retina screens the
-      // Input System's `delta` channel can be sub-pixel (a slow
-      // accumulator that doesn't reflect true cursor travel), which
-      // makes any sensitivity scalar feel weak no matter how high.
-      // Diffing position gives honest screen-pixel deltas everywhere.
+      // If a modal owns the cursor (GameUI explicitly unlocked it),
+      // skip camera rotation entirely — the user is clicking UI, not
+      // aiming. CameraFollow polls cursor state rather than asking
+      // GameUI directly so the two components stay decoupled.
+      if (Cursor.lockState != CursorLockMode.Locked) return;
+
       var mouse = Mouse.current;
-      if (mouse == null) {
-        rightHeldLastFrame = false;
-        return;
-      }
-      Vector2 currentPos = mouse.position.ReadValue();
-      bool held = mouse.rightButton.isPressed;
-      if (!held) {
-        rightHeldLastFrame = false;
-        lastMousePos = currentPos;
-        return;
-      }
-      // Edge case: right button just went down this frame. Skip the
-      // delta — lastMousePos still holds wherever the cursor was last
-      // frame (possibly far away if the user moved without holding
-      // right), so diffing here would produce a huge spurious yaw kick.
-      if (!rightHeldLastFrame) {
-        rightHeldLastFrame = true;
-        lastMousePos = currentPos;
-        return;
-      }
+      if (mouse == null) return;
 
-      Vector2 d = currentPos - lastMousePos;
-      lastMousePos = currentPos;
+      // In Locked mode the Input System routes raw mouse motion (HID
+      // deltas) directly to Mouse.delta. macOS / Retina's sub-pixel
+      // accumulator quirk only affects the UNLOCKED cursor path; with
+      // the cursor locked, delta magnitudes are honest counts and the
+      // sensitivity scalar works as expected.
+      Vector2 d = mouse.delta.ReadValue();
 
-      // One-shot diagnostic on the first non-zero delta of a session —
-      // helps debug "no movement at all" reports without spamming the
-      // console.
+      // One-shot diagnostic so we have a concrete sample if the
+      // sensitivity feels wrong on this hardware. Logged at the first
+      // non-trivial frame of motion only.
       if (!didLogDeltaSample && (Mathf.Abs(d.x) > 0.5f || Mathf.Abs(d.y) > 0.5f)) {
         didLogDeltaSample = true;
-        Debug.Log($"[CameraFollow] First mouse delta sample: dx={d.x:F2} dy={d.y:F2} " +
+        Debug.Log($"[CameraFollow] First locked-mode mouse delta: dx={d.x:F2} dy={d.y:F2} " +
                   $"sensX={mouseSensitivityX:F3} sensY={mouseSensitivityY:F3}");
       }
 
       Yaw -= d.x * mouseSensitivityX;
-      // Unity screen Y is bottom-origin: Mouse.position.y INCREASES as
-      // the cursor moves UP the screen. Subtract so mouse-up = look-up.
+      // Unity Mouse.delta.y is POSITIVE when the mouse moves up the
+      // screen. We want mouse-up = look-up (camera lowers / view tilts
+      // toward sky) so subtract.
       Pitch -= d.y * mouseSensitivityY;
       if (Pitch < PITCH_MIN) Pitch = PITCH_MIN;
       if (Pitch > PITCH_MAX) Pitch = PITCH_MAX;
