@@ -48,6 +48,9 @@ namespace MonkeyPunch.Combat {
     }
 
     private readonly Dictionary<int, ProjectileInstance> projectiles = new Dictionary<int, ProjectileInstance>();
+    private readonly List<GameObject> orbitOrbs = new List<GameObject>();
+    private bool runEnded;
+    private bool localPlayerDowned;
 
     // weaponKind → behavior table mirroring WEAPON_KINDS order in
     // packages/shared/src/weapons.ts. Used to dispatch OnFire to the
@@ -299,6 +302,70 @@ namespace MonkeyPunch.Combat {
     }
 
     private double NowMs() => UnityEngine.Time.realtimeSinceStartupAsDouble * 1000.0;
+
+    // Phase-4.3 continuous orbit rendering. Reads the local player's
+    // weapons each frame; if any have behavior=orbit, renders 3 orbs
+    // circling the local-player cube. Uses wall-clock angular phase
+    // (NOT state.tick) for simplicity — visually correct but
+    // cross-client orb positions may differ by a few degrees. Server
+    // tick-based would be bit-deterministic per CLAUDE.md rule 12;
+    // upgrade if cross-client orb alignment becomes user-visible.
+    public void UpdateOrbits(bool hasOrbitWeapon, Transform localTransform) {
+      if (!hasOrbitWeapon || localTransform == null) {
+        if (orbitOrbs.Count > 0) {
+          foreach (var go in orbitOrbs) if (go != null) Destroy(go);
+          orbitOrbs.Clear();
+        }
+        return;
+      }
+      const int OrbCount = 3;
+      const float Radius = 2.0f;
+      const float AngSpeed = Mathf.PI * 1.4f; // ~0.7 revs/sec
+      while (orbitOrbs.Count < OrbCount) {
+        var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        go.transform.localScale = Vector3.one * 0.4f;
+        var col = go.GetComponent<Collider>();
+        if (col != null) Destroy(col);
+        go.name = $"OrbitOrb:{orbitOrbs.Count}";
+        var rend = go.GetComponent<Renderer>();
+        if (rend != null) rend.material.color = new Color(0.5f, 0.7f, 1.0f);
+        orbitOrbs.Add(go);
+      }
+      float baseAngle = (float)(Time.realtimeSinceStartupAsDouble * AngSpeed);
+      for (int i = 0; i < orbitOrbs.Count; i++) {
+        var go = orbitOrbs[i];
+        if (go == null) continue;
+        float angle = baseAngle + i * (Mathf.PI * 2f / OrbCount);
+        go.transform.position = localTransform.position + new Vector3(
+          Mathf.Cos(angle) * Radius, 1.0f, Mathf.Sin(angle) * Radius);
+      }
+    }
+
+    public void OnPlayerDowned(bool isLocal) {
+      if (isLocal) localPlayerDowned = true;
+    }
+
+    public void OnRunEnded() {
+      runEnded = true;
+    }
+
+    void OnGUI() {
+      if (runEnded) {
+        var s = new GUIStyle(GUI.skin.label) {
+          fontSize = 48, alignment = TextAnchor.MiddleCenter,
+          normal = { textColor = new Color(1f, 0.3f, 0.3f) }
+        };
+        GUI.Label(new Rect(0, Screen.height / 2 - 40, Screen.width, 80), "RUN ENDED", s);
+        return;
+      }
+      if (localPlayerDowned) {
+        var s = new GUIStyle(GUI.skin.label) {
+          fontSize = 48, alignment = TextAnchor.MiddleCenter,
+          normal = { textColor = new Color(1f, 0.5f, 0.2f) }
+        };
+        GUI.Label(new Rect(0, Screen.height / 2 - 40, Screen.width, 80), "DOWNED", s);
+      }
+    }
 
     void Update() {
       // Closed-form projectile integration. Per AD1/AD2 we use server

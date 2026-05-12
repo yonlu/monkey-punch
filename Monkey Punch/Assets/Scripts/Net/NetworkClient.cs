@@ -282,9 +282,15 @@ namespace MonkeyPunch.Net {
       });
       room.OnMessage("player_downed", (PlayerDownedEventMsg ev) => {
         Debug.Log($"[NetworkClient] player_downed playerId={ev.playerId} tick={ev.serverTick}");
+        if (CombatVfx.Instance != null) {
+          CombatVfx.Instance.OnPlayerDowned(ev.playerId == room?.SessionId);
+        }
       });
       room.OnMessage("run_ended", (RunEndedEventMsg ev) => {
         Debug.Log($"[NetworkClient] run_ended tick={ev.serverTick}");
+        if (CombatVfx.Instance != null) {
+          CombatVfx.Instance.OnRunEnded();
+        }
       });
       room.OnMessage("level_up_offered", (LevelUpOfferedEventMsg ev) => {
         Debug.Log($"[NetworkClient] level_up_offered to {ev.playerId} newLevel={ev.newLevel}");
@@ -547,6 +553,22 @@ namespace MonkeyPunch.Net {
         if (enemyBuffers.TryGetValue(kv.Key, out var buf) && buf.Sample(renderTime, out var pos)) {
           kv.Value.transform.position = pos;
         }
+      }
+
+      // Phase-4.3: orbit weapon → continuous orbs around local player.
+      // Check the local player's weapons list each frame; the cost is
+      // O(weapons) which is small (<5 typically).
+      bool hasOrbit = false;
+      if (room.State?.players != null) {
+        var localPlayer = room.State.players[room.SessionId];
+        if (localPlayer != null && localPlayer.weapons != null) {
+          for (int i = 0; i < localPlayer.weapons.Count; i++) {
+            if (localPlayer.weapons[i].kind == 1) { hasOrbit = true; break; }
+          }
+        }
+      }
+      if (CombatVfx.Instance != null) {
+        CombatVfx.Instance.UpdateOrbits(hasOrbit, LocalPlayerTransform);
       }
     }
 
