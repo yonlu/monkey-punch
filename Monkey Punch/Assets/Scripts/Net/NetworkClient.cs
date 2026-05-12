@@ -515,18 +515,20 @@ namespace MonkeyPunch.Net {
         jumpQueued = true;
       }
 
-      // Phase-4 dev shortcuts. The server accepts debug_grant_weapon
-      // (and a few others) when ALLOW_DEBUG_MESSAGES=true on GameRoom.
-      //   1 → grant Mjolnir (orbit) at next level
-      //   2 → grant Bloody Axe (boomerang) at next level
-      //   3 → grant something melee at next level
-      //   B → debug_spawn 10 enemies
-      // Indices are guesses based on weapons.ts comment order; if a
-      // grant lands on the wrong weapon, swap below.
+      // Phase-4 dev shortcuts. Server accepts debug_grant_weapon /
+      // debug_spawn when ALLOW_DEBUG_MESSAGES=true (GameRoom.ts).
+      // Mapping per packages/shared/src/weapons.ts WEAPON_KINDS order:
+      //   1 → Orbit (kind=1, behavior=orbit) — renderer NYI, no visual
+      //   2 → Bloody Axe (kind=6, behavior=boomerang) — see axes
+      //                  fly out and return
+      //   3 → Damascus (kind=3, behavior=melee_arc) — see swipe flash
+      //   4 → Kronos (kind=7, behavior=aura) — see cyan pulse ring
+      //   B → debug_spawn 10 enemies for instant targets
       if (room != null && kb != null) {
-        if (kb.digit1Key.wasPressedThisFrame) DebugGrantWeapon(2);  // Mjolnir
-        if (kb.digit2Key.wasPressedThisFrame) DebugGrantWeapon(3);  // Bloody Axe
-        if (kb.digit3Key.wasPressedThisFrame) DebugGrantWeapon(4);  // melee candidate
+        if (kb.digit1Key.wasPressedThisFrame) DebugGrantWeapon(1);
+        if (kb.digit2Key.wasPressedThisFrame) DebugGrantWeapon(6);
+        if (kb.digit3Key.wasPressedThisFrame) DebugGrantWeapon(3);
+        if (kb.digit4Key.wasPressedThisFrame) DebugGrantWeapon(7);
         if (kb.bKey.wasPressedThisFrame) DebugSpawnEnemies(10);
       }
 

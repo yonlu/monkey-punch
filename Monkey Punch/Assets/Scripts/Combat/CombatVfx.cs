@@ -49,6 +49,26 @@ namespace MonkeyPunch.Combat {
 
     private readonly Dictionary<int, ProjectileInstance> projectiles = new Dictionary<int, ProjectileInstance>();
 
+    // weaponKind → behavior table mirroring WEAPON_KINDS order in
+    // packages/shared/src/weapons.ts. Used to dispatch OnFire to the
+    // right per-behavior renderer. NOT a full WeaponDef table —
+    // per-weapon stats (speed/lifetime/damage) still use the defaults
+    // above. Adding a new weapon means appending a row here AND in
+    // weapons.ts on the server. Indices:
+    //   0 Bolt        projectile
+    //   1 Orbit       orbit
+    //   2 Gakkung Bow projectile
+    //   3 Damascus    melee_arc (own event path: OnMeleeSwipe)
+    //   4 Claymore    melee_arc
+    //   5 Ahlspiess   projectile
+    //   6 Bloody Axe  boomerang (own event path: OnBoomerangThrown)
+    //   7 Kronos      aura
+    private static readonly Dictionary<byte, string> WeaponBehavior = new Dictionary<byte, string> {
+      { 0, "projectile" }, { 1, "orbit" }, { 2, "projectile" },
+      { 3, "melee_arc" }, { 4, "melee_arc" }, { 5, "projectile" },
+      { 6, "boomerang" }, { 7, "aura" },
+    };
+
     void Awake() { Instance = this; }
 
     // Called from NetworkClient.OnMessage("fire", ...).
@@ -56,6 +76,23 @@ namespace MonkeyPunch.Combat {
                        double originX, double originY, double originZ,
                        double dirX, double dirY, double dirZ,
                        double serverFireTimeMs) {
+      // Dispatch on weapon behavior. Aura → expanding pulse at origin.
+      // Orbit → no per-fire VFX (orbit is continuous, NOT YET RENDERED —
+      // Phase 4.3 follow-up). Default → projectile (handles Bolt /
+      // Gakkung / Ahlspiess and any unrecognized weaponKind).
+      if (WeaponBehavior.TryGetValue(weaponKind, out var behavior)) {
+        if (behavior == "aura") {
+          OnAuraPulse(originX, originY, originZ);
+          return;
+        }
+        if (behavior == "orbit") {
+          // No-op — orbit rendering belongs to a continuous Update loop
+          // walking state.players[local].weapons (deferred to Phase 4.3).
+          return;
+        }
+      }
+
+      // Projectile fallthrough.
       // Defensive: replace if a fireId collides (shouldn't on a well-
       // behaved server, but cheap to handle).
       if (projectiles.TryGetValue(fireId, out var existing) && existing.Go != null) {
@@ -97,6 +134,20 @@ namespace MonkeyPunch.Combat {
 
       // Spawn floating damage number.
       SpawnDamageNumber(damage, new Vector3((float)x, (float)y + 1.0f, (float)z));
+    }
+
+    // Aura pulse: expanding sphere centered on origin, fades over ~0.5s.
+    // Kronos triggers this via a fire event on each pulse tick.
+    private void OnAuraPulse(double originX, double originY, double originZ) {
+      var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+      go.transform.localScale = Vector3.one * 0.3f;
+      go.transform.position = new Vector3((float)originX, (float)originY + 0.5f, (float)originZ);
+      var col = go.GetComponent<Collider>();
+      if (col != null) Destroy(col);
+      go.name = "AuraPulse";
+      var rend = go.GetComponent<Renderer>();
+      if (rend != null) rend.material.color = new Color(0.3f, 0.9f, 0.9f, 0.6f);
+      StartCoroutine(BurstCoroutine(go, 0.5f, 8f));
     }
 
     // Called from NetworkClient.OnMessage("boomerang_thrown", ...).
