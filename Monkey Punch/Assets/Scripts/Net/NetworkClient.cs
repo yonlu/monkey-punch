@@ -428,6 +428,22 @@ namespace MonkeyPunch.Net {
       }
     }
 
+    // Phase 8 polish: lets the user damage themselves for quick testing
+    // of the downed → run-ended → restart flow. Server already supports
+    // debug_damage_self (GameRoom.onMessage<DebugDamageSelfMessage>) and
+    // clamps `amount` to the player's current HP.
+    private void DebugDamageSelf(int amount) {
+      if (room == null) return;
+      try {
+        _ = room.Send("debug_damage_self", new Dictionary<string, object> {
+          { "type", "debug_damage_self" }, { "amount", amount }
+        });
+        Debug.Log($"[NetworkClient] debug_damage_self {amount} hp");
+      } catch (Exception ex) {
+        Debug.LogWarning($"[NetworkClient] damage_self failed: {ex.Message}");
+      }
+    }
+
     private IEnumerator PingLoop() {
       var wait = new WaitForSeconds(1f);
       while (room != null) {
@@ -484,14 +500,30 @@ namespace MonkeyPunch.Net {
     private Vector2 ComputeWorldDir() {
       var kb = Keyboard.current;
       if (kb == null) return Vector2.zero;
-      float x = 0f, z = 0f;
-      if (kb.dKey.isPressed) x += 1f;
-      if (kb.aKey.isPressed) x -= 1f;
-      if (kb.wKey.isPressed) z += 1f;
-      if (kb.sKey.isPressed) z -= 1f;
-      float len = Mathf.Sqrt(x * x + z * z);
-      if (len > 0f) { x /= len; z /= len; }
-      return new Vector2(x, z);
+      // Camera-space WASD (matches packages/client/src/game/input.ts
+      // computeCameraDir): W=-Z (forward away from camera), D=+X (right).
+      // The sign flip on W is the change from Phase 3's raw-WASD send.
+      float cx = 0f, cz = 0f;
+      if (kb.dKey.isPressed) cx += 1f;
+      if (kb.aKey.isPressed) cx -= 1f;
+      if (kb.wKey.isPressed) cz -= 1f;
+      if (kb.sKey.isPressed) cz += 1f;
+      float len = Mathf.Sqrt(cx * cx + cz * cz);
+      if (len > 0f) { cx /= len; cz /= len; }
+
+      // Transform by camera yaw — TS transformToWorld:
+      //   worldX =  cx * cos(yaw) + cz * sin(yaw)
+      //   worldZ = -cx * sin(yaw) + cz * cos(yaw)
+      // CameraFollow.Instance is null until LateUpdate has run at least
+      // once; until then we send pre-yaw camera-space, which equals
+      // world-space at yaw=0 (the default). Harmless.
+      double yaw = CameraFollow.Instance != null ? CameraFollow.Instance.Yaw : 0.0;
+      float c = (float)Math.Cos(yaw);
+      float s = (float)Math.Sin(yaw);
+      return new Vector2(
+        cx * c + cz * s,
+        -cx * s + cz * c
+      );
     }
 
     // --- Players ---
@@ -652,6 +684,11 @@ namespace MonkeyPunch.Net {
         if (kb.digit3Key.wasPressedThisFrame) DebugGrantWeapon(3);
         if (kb.digit4Key.wasPressedThisFrame) DebugGrantWeapon(7);
         if (kb.bKey.wasPressedThisFrame) DebugSpawnEnemies(10);
+        // Phase 8 polish: K → 10 hp self damage. Useful for testing the
+        // downed / run-ended modal + Restart flow without farming enemy
+        // contact. Server clamps to current HP, so spamming K eventually
+        // downs the player.
+        if (kb.kKey.wasPressedThisFrame) DebugDamageSelf(10);
       }
 
       if (room == null) return;
