@@ -28,6 +28,10 @@
 # They also could contain extremely sensitive data
 /[Mm]emoryCaptures/
 
+# Coplay MCP debug screenshots — local diagnostic artifacts, not source assets
+/Assets/Screenshots/
+/Assets/Screenshots.meta
+
 # Recordings can get excessive in size
 /[Rr]ecordings/
 
