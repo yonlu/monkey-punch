@@ -168,11 +168,16 @@ namespace MonkeyPunch.Net {
     private Room<RoomState> room;
     private readonly ServerTime serverTime = new ServerTime();
 
-    // Phase 3 input state. seq is monotonic across the session; server
-    // ignores duplicate or stale seqs (Player.lastProcessedInput guard
-    // in GameRoom.onMessage<InputMessage>).
-    private int inputSeq;
+    // Phase 3 input state. Now owned by LocalPredictor (seq is bumped
+    // inside predictor.Step) but jumpQueued remains a NetworkClient
+    // concern — it's an edge-triggered intent read from Keyboard.
     private bool jumpQueued;
+
+    // Phase 5: local-player prediction. Owns X/Z. Null until the local
+    // player's schema first appears (HandlePlayerAdd). See LocalPredictor.cs
+    // for the X/Z-only scope rationale.
+    private LocalPredictor predictor;
+    private double lastPredictorRenderTimeMs;
 
     private readonly Dictionary<string, SnapshotBuffer> playerBuffers = new Dictionary<string, SnapshotBuffer>();
     private readonly Dictionary<string, GameObject> playerObjects = new Dictionary<string, GameObject>();
@@ -358,22 +363,34 @@ namespace MonkeyPunch.Net {
     // No camera-yaw transform yet — sends raw WASD as world dir aligned
     // with the spectator camera (looking +Z). Phase 7 will swap in a
     // Cinemachine FreeLook + yaw transform per packages/client/src/game/
-    // input.ts. Phase 5 will add prediction so this feels responsive
-    // (right now movement is round-trip-laggy by design).
+    // input.ts.
+    //
+    // Phase 5: input now flows through LocalPredictor.Step() which
+    // queues the message for replay-on-reconcile and advances the
+    // predictor by one server-equivalent tick. The predictor owns seq;
+    // we just forward its message via room.Send.
     private IEnumerator InputLoop() {
       var wait = new WaitForSeconds(0.05f);
       while (room != null) {
-        inputSeq++;
         Vector2 dir = ComputeWorldDir();
         bool jump = jumpQueued;
         jumpQueued = false;
-        try {
-          _ = room.Send("input", new Dictionary<string, object> {
+        Dictionary<string, object> msg;
+        if (predictor != null) {
+          msg = predictor.Step(dir.x, dir.y, jump);
+        } else {
+          // Predictor not initialized yet (local player schema hasn't
+          // arrived). Fall back to a non-predicted send so the server
+          // still sees inputs from frame 0.
+          msg = new Dictionary<string, object> {
             { "type", "input" },
-            { "seq", inputSeq },
+            { "seq", 0 },
             { "dir", new Dictionary<string, object> { { "x", (double)dir.x }, { "z", (double)dir.y } } },
             { "jump", jump },
-          });
+          };
+        }
+        try {
+          _ = room.Send("input", msg);
         } catch (Exception ex) {
           Debug.LogWarning($"[NetworkClient] input send failed: {ex.Message}");
         }
@@ -412,11 +429,27 @@ namespace MonkeyPunch.Net {
           : new Color(0.3f, 0.5f, 1.0f);  // blue = remote
       }
       playerObjects[sessionId] = go;
-      if (isLocal) LocalPlayerTransform = go.transform;
+      if (isLocal) {
+        LocalPlayerTransform = go.transform;
+        // Phase 5: spin up the predictor once we have a server-authoritative
+        // starting X/Z. Tick comes from the room state (it's set before
+        // OnAdd fires).
+        predictor = new LocalPredictor();
+        int initialTick = room?.State != null ? (int)room.State.tick : 0;
+        predictor.Initialize(p.x, p.z, initialTick);
+        lastPredictorRenderTimeMs = NowMs();
+        Debug.Log($"[NetworkClient] Predictor initialized at x={p.x:F3} z={p.z:F3} tick={initialTick}");
+      }
 
       cb.OnChange(p, () => {
         if (playerBuffers.TryGetValue(sessionId, out var b)) {
           b.Push(NowMs(), p.x, p.y, p.z);
+        }
+        // Phase 5: reconcile the local player against the authoritative
+        // snapshot. lastProcessedInput is the highest seq the server has
+        // applied — anything > that is unacked and gets replayed.
+        if (isLocal && predictor != null && room?.State != null) {
+          predictor.Reconcile(p.x, p.z, (int)p.lastProcessedInput, (int)room.State.tick);
         }
       });
     }
@@ -543,7 +576,31 @@ namespace MonkeyPunch.Net {
 
       double renderTime = NowMs() - interpDelayMs;
 
+      // Phase 5: render the local player from the predictor (X/Z) +
+      // server Y. Other players still interpolate.
+      string localSid = room?.SessionId;
       foreach (var kv in playerObjects) {
+        bool isLocal = predictor != null && kv.Key == localSid;
+        if (isLocal) {
+          double nowMs = NowMs();
+          double dtSeconds = Math.Max(0.0, (nowMs - lastPredictorRenderTimeMs) / 1000.0);
+          predictor.DecayRenderOffset(dtSeconds);
+          lastPredictorRenderTimeMs = nowMs;
+
+          // Y comes from the latest server snapshot (interp buffer's
+          // newest sample). Walking is responsive; jumping inherits the
+          // 50ms server-tick lag — see "SCOPE LIMIT" in LocalPredictor.cs.
+          float renderY = kv.Value.transform.position.y;
+          if (playerBuffers.TryGetValue(kv.Key, out var localBuf) && localBuf.Sample(renderTime, out var sampledLocal)) {
+            renderY = sampledLocal.y;
+          }
+          kv.Value.transform.position = new Vector3(
+            (float)(predictor.X + predictor.RenderOffsetX),
+            renderY,
+            (float)(predictor.Z + predictor.RenderOffsetZ)
+          );
+          continue;
+        }
         if (playerBuffers.TryGetValue(kv.Key, out var buf) && buf.Sample(renderTime, out var pos)) {
           kv.Value.transform.position = pos;
         }
@@ -582,8 +639,11 @@ namespace MonkeyPunch.Net {
       if (room == null) return;
       var boxStyle = new GUIStyle(GUI.skin.box) { alignment = TextAnchor.UpperLeft };
       var labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 12 };
-      GUI.Box(new Rect(10, 10, 300, 142), GUIContent.none, boxStyle);
-      GUI.Label(new Rect(20, 16, 280, 132),
+      GUI.Box(new Rect(10, 10, 300, 170), GUIContent.none, boxStyle);
+      string predLine = predictor == null
+        ? "Predict: (not initialized)"
+        : $"Predict: x={predictor.X:F2} z={predictor.Z:F2} err={predictor.LastReconErr:F3} off=({predictor.RenderOffsetX:F2},{predictor.RenderOffsetZ:F2})";
+      GUI.Label(new Rect(20, 16, 280, 160),
         $"Room:    {room.RoomId} (code: {room.State?.code})\n" +
         $"Session: {room.SessionId}\n" +
         $"Tick:    {lastTickSeen}\n" +
@@ -591,7 +651,8 @@ namespace MonkeyPunch.Net {
         $"Gems:    {gemObjects.Count}  | Pools: {bloodPoolObjects.Count}\n" +
         $"Ping:    {pingMs:F0} ms\n" +
         $"Offset:  {serverTime.OffsetMs:F0} ms (server-local)\n" +
-        $"Interp:  {interpDelayMs:F0} ms behind",
+        $"Interp:  {interpDelayMs:F0} ms behind\n" +
+        predLine,
         labelStyle);
     }
 
