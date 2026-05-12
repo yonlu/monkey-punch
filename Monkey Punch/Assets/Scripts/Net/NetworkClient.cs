@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using Colyseus;
 using MonkeyPunch.Wire;
 
@@ -35,9 +36,24 @@ namespace MonkeyPunch.Net {
     [Serializable]
     private class PongMessage { public string type; public double t; public double serverNow; }
 
+    // Static so a sibling CameraFollow can find us without inspector wiring.
+    // Single-NetworkClient assumption; if that ever changes, swap for a
+    // proper service locator.
+    public static NetworkClient Instance { get; private set; }
+
+    // Transform of the local player's cube. Null until the self
+    // OnPlayerAdd callback fires. CameraFollow polls this each LateUpdate.
+    public Transform LocalPlayerTransform { get; private set; }
+
     private Client client;
     private Room<RoomState> room;
     private readonly ServerTime serverTime = new ServerTime();
+
+    // Phase 3 input state. seq is monotonic across the session; server
+    // ignores duplicate or stale seqs (Player.lastProcessedInput guard
+    // in GameRoom.onMessage<InputMessage>).
+    private int inputSeq;
+    private bool jumpQueued;
 
     private readonly Dictionary<string, SnapshotBuffer> playerBuffers = new Dictionary<string, SnapshotBuffer>();
     private readonly Dictionary<string, GameObject> playerObjects = new Dictionary<string, GameObject>();
@@ -77,6 +93,7 @@ namespace MonkeyPunch.Net {
       });
 
       StartCoroutine(PingLoop());
+      StartCoroutine(InputLoop());
 
       var cb = Colyseus.Schema.Callbacks.Get(room);
 
@@ -107,6 +124,46 @@ namespace MonkeyPunch.Net {
       }
     }
 
+    // 20Hz input send loop matching the TS client's STEP_INTERVAL_MS=50.
+    // No camera-yaw transform yet — sends raw WASD as world dir aligned
+    // with the spectator camera (looking +Z). Phase 7 will swap in a
+    // Cinemachine FreeLook + yaw transform per packages/client/src/game/
+    // input.ts. Phase 5 will add prediction so this feels responsive
+    // (right now movement is round-trip-laggy by design).
+    private IEnumerator InputLoop() {
+      var wait = new WaitForSeconds(0.05f);
+      while (room != null) {
+        inputSeq++;
+        Vector2 dir = ComputeWorldDir();
+        bool jump = jumpQueued;
+        jumpQueued = false;
+        try {
+          _ = room.Send("input", new Dictionary<string, object> {
+            { "type", "input" },
+            { "seq", inputSeq },
+            { "dir", new Dictionary<string, object> { { "x", (double)dir.x }, { "z", (double)dir.y } } },
+            { "jump", jump },
+          });
+        } catch (Exception ex) {
+          Debug.LogWarning($"[NetworkClient] input send failed: {ex.Message}");
+        }
+        yield return wait;
+      }
+    }
+
+    private Vector2 ComputeWorldDir() {
+      var kb = Keyboard.current;
+      if (kb == null) return Vector2.zero;
+      float x = 0f, z = 0f;
+      if (kb.dKey.isPressed) x += 1f;
+      if (kb.aKey.isPressed) x -= 1f;
+      if (kb.wKey.isPressed) z += 1f;
+      if (kb.sKey.isPressed) z -= 1f;
+      float len = Mathf.Sqrt(x * x + z * z);
+      if (len > 0f) { x /= len; z /= len; }
+      return new Vector2(x, z);
+    }
+
     // --- Players ---
 
     private void HandlePlayerAdd(Colyseus.Schema.StateCallbackStrategy<RoomState> cb, string sessionId, MonkeyPunch.Wire.Player p) {
@@ -114,14 +171,18 @@ namespace MonkeyPunch.Net {
       buf.Push(NowMs(), p.x, p.y, p.z);
       playerBuffers[sessionId] = buf;
 
-      if (room != null && sessionId != room.SessionId) {
-        var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        go.name = $"Player:{sessionId}:{p.name}";
-        go.transform.position = new Vector3(p.x, p.y, p.z);
-        var rend = go.GetComponent<Renderer>();
-        if (rend != null) rend.material.color = new Color(0.3f, 0.5f, 1.0f);
-        playerObjects[sessionId] = go;
+      bool isLocal = room != null && sessionId == room.SessionId;
+      var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+      go.name = $"Player:{sessionId}:{p.name}{(isLocal ? " [LOCAL]" : "")}";
+      go.transform.position = new Vector3(p.x, p.y, p.z);
+      var rend = go.GetComponent<Renderer>();
+      if (rend != null) {
+        rend.material.color = isLocal
+          ? new Color(0.3f, 1.0f, 0.3f)   // green = local (you)
+          : new Color(0.3f, 0.5f, 1.0f);  // blue = remote
       }
+      playerObjects[sessionId] = go;
+      if (isLocal) LocalPlayerTransform = go.transform;
 
       cb.OnChange(p, () => {
         if (playerBuffers.TryGetValue(sessionId, out var b)) {
@@ -132,6 +193,7 @@ namespace MonkeyPunch.Net {
 
     private void HandlePlayerRemove(string sessionId) {
       if (playerObjects.TryGetValue(sessionId, out var go)) {
+        if (LocalPlayerTransform == go.transform) LocalPlayerTransform = null;
         Destroy(go);
         playerObjects.Remove(sessionId);
       }
@@ -214,7 +276,21 @@ namespace MonkeyPunch.Net {
 
     // --- Per-frame: drive transforms from interpolated snapshots ---
 
+    void Awake() {
+      if (Instance != null && Instance != this) {
+        Debug.LogWarning("[NetworkClient] Multiple instances detected — using the latest.");
+      }
+      Instance = this;
+    }
+
     void Update() {
+      // Edge-trigger jump from Space key. InputLoop reads + clears
+      // jumpQueued on the next 20Hz tick.
+      var kb = Keyboard.current;
+      if (kb != null && kb.spaceKey.wasPressedThisFrame) {
+        jumpQueued = true;
+      }
+
       if (room == null) return;
       if (room.State != null) lastTickSeen = (int)room.State.tick;
 
