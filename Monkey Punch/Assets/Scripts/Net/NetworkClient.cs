@@ -204,6 +204,23 @@ namespace MonkeyPunch.Net {
     private LocalPredictor predictor;
     private double lastPredictorRenderTimeMs;
 
+    // Phase 8 (fix camera shake while walking). Predictor.X / Z only
+    // advance every 50ms inside InputLoop, but render runs at 60fps.
+    // Without extrapolation the local cube sits motionless for ~3
+    // frames at a time and the camera follow-lerp visibly catches up
+    // each step → "shake". We extrapolate live-input motion between
+    // predictor steps so the local position is smooth at render rate.
+    // Direction changes mid-step are absorbed into RenderOffset (same
+    // mechanism as reconcile snaps) so the visual doesn't pop.
+    //   lastPredictorStepMs — NowMs() of the most recent predictor.Step.
+    //   lastLiveDirX / Z    — live input direction read on the most
+    //                          recent render frame; NaN sentinel means
+    //                          "no previous frame to diff against".
+    private double lastPredictorStepMs;
+    private float lastLiveDirX = float.NaN;
+    private float lastLiveDirZ = float.NaN;
+    private const double EXTRAP_CLAMP_MS = 50.0; // one predictor step
+
     private readonly Dictionary<string, SnapshotBuffer> playerBuffers = new Dictionary<string, SnapshotBuffer>();
     private readonly Dictionary<string, GameObject> playerObjects = new Dictionary<string, GameObject>();
 
@@ -477,6 +494,7 @@ namespace MonkeyPunch.Net {
         Dictionary<string, object> msg;
         if (predictor != null) {
           msg = predictor.Step(dir.x, dir.y, jump);
+          lastPredictorStepMs = NowMs();
         } else {
           // Predictor not initialized yet (local player schema hasn't
           // arrived). Fall back to a non-predicted send so the server
@@ -500,12 +518,16 @@ namespace MonkeyPunch.Net {
     private Vector2 ComputeWorldDir() {
       var kb = Keyboard.current;
       if (kb == null) return Vector2.zero;
-      // Camera-space WASD (matches packages/client/src/game/input.ts
-      // computeCameraDir): W=-Z (forward away from camera), D=+X (right).
-      // The sign flip on W is the change from Phase 3's raw-WASD send.
+      // Camera-space WASD. Three.js is right-handed; Unity is left-handed.
+      // At yaw=0 the camera sits at +Z looking toward origin: its
+      // transform.right is world −X (a 180° Y-rotation from the default
+      // identity-rotated camera). So the player's "screen-right" is the
+      // world's −X axis. To make D feel like "screen-right", D pushes
+      // cx = −1 (and A pushes +1). The Z convention stays as in TS:
+      // W = −Z (forward), S = +Z (back).
       float cx = 0f, cz = 0f;
-      if (kb.dKey.isPressed) cx += 1f;
-      if (kb.aKey.isPressed) cx -= 1f;
+      if (kb.dKey.isPressed) cx -= 1f;
+      if (kb.aKey.isPressed) cx += 1f;
       if (kb.wKey.isPressed) cz -= 1f;
       if (kb.sKey.isPressed) cz += 1f;
       float len = Mathf.Sqrt(cx * cx + cz * cz);
@@ -696,8 +718,10 @@ namespace MonkeyPunch.Net {
 
       double renderTime = NowMs() - interpDelayMs;
 
-      // Phase 5: render the local player from the predictor (X/Z) +
-      // server Y. Other players still interpolate.
+      // Phase 5/8: render the local player from the predictor (X/Z) +
+      // server Y, with live-input extrapolation between 20Hz predictor
+      // steps so the per-frame motion is smooth. Other players still
+      // interpolate from snapshot buffer.
       string localSid = room?.SessionId;
       foreach (var kv in playerObjects) {
         bool isLocal = predictor != null && kv.Key == localSid;
@@ -707,6 +731,40 @@ namespace MonkeyPunch.Net {
           predictor.DecayRenderOffset(dtSeconds);
           lastPredictorRenderTimeMs = nowMs;
 
+          // Live input → between-step extrapolation. The predictor's X/Z
+          // only update inside InputLoop (50ms cadence). To keep the
+          // local cube moving smoothly at 60fps we add liveDir * speed *
+          // tSinceStep to the predictor's position, clamped at one step
+          // so we never extrapolate past the next predictor result. When
+          // tSinceStep == 50ms the extrap exactly equals the displacement
+          // the predictor is about to apply, so the visual is continuous
+          // across the step boundary (provided the live direction hasn't
+          // changed since the step).
+          Vector2 live = ComputeWorldDir();
+          double tSinceStepMs = Math.Max(0.0, nowMs - lastPredictorStepMs);
+          double tClampedMs = Math.Min(tSinceStepMs, EXTRAP_CLAMP_MS);
+          double tClampedS = tClampedMs / 1000.0;
+
+          // Direction change between frames produces a visual jump of
+          // (newLive − oldLive) * speed * tClampedS. Absorb that jump
+          // into RenderOffset (mirrors LocalPredictor.Reconcile's AD4
+          // smoothing pattern) so a key press / release mid-step does
+          // not pop the local cube. The offset decays continuously via
+          // DecayRenderOffset above.
+          if (!float.IsNaN(lastLiveDirX)) {
+            double dDirX = live.x - lastLiveDirX;
+            double dDirZ = live.y - lastLiveDirZ;
+            double absorbX = dDirX * PredictorConstants.PLAYER_SPEED * tClampedS;
+            double absorbZ = dDirZ * PredictorConstants.PLAYER_SPEED * tClampedS;
+            predictor.RenderOffsetX -= absorbX;
+            predictor.RenderOffsetZ -= absorbZ;
+          }
+          lastLiveDirX = live.x;
+          lastLiveDirZ = live.y;
+
+          double extrapX = live.x * PredictorConstants.PLAYER_SPEED * tClampedS;
+          double extrapZ = live.y * PredictorConstants.PLAYER_SPEED * tClampedS;
+
           // Y comes from the latest server snapshot (interp buffer's
           // newest sample). Walking is responsive; jumping inherits the
           // 50ms server-tick lag — see "SCOPE LIMIT" in LocalPredictor.cs.
@@ -715,9 +773,9 @@ namespace MonkeyPunch.Net {
             renderY = sampledLocal.y;
           }
           kv.Value.transform.position = new Vector3(
-            (float)(predictor.X + predictor.RenderOffsetX),
+            (float)(predictor.X + predictor.RenderOffsetX + extrapX),
             renderY,
-            (float)(predictor.Z + predictor.RenderOffsetZ)
+            (float)(predictor.Z + predictor.RenderOffsetZ + extrapZ)
           );
           continue;
         }

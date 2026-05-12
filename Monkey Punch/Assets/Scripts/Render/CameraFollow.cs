@@ -48,9 +48,14 @@ namespace MonkeyPunch.Render {
 
     [Header("Mouse Control")]
     [Tooltip("Radians per pixel of horizontal mouse motion (right-drag).")]
-    [SerializeField] private float mouseSensitivityX = 0.0025f;
+    // Defaults 5× the TS reference values. The TS client used pointer-
+    // lock with unlimited mouse travel; the Unity editor's Game view
+    // does NOT lock the cursor, so the mouse hits the screen edge fast
+    // and the perceived rate-per-screen needs to be higher. Tunable in
+    // Inspector — bump higher for more aggressive feel.
+    [SerializeField] private float mouseSensitivityX = 0.012f;
     [Tooltip("Radians per pixel of vertical mouse motion (right-drag).")]
-    [SerializeField] private float mouseSensitivityY = 0.0020f;
+    [SerializeField] private float mouseSensitivityY = 0.010f;
 
     private const double DEG = Math.PI / 180.0;
     private const double DEFAULT_PITCH = 35.0 * DEG;
@@ -73,7 +78,13 @@ namespace MonkeyPunch.Render {
       if (mouse == null || !mouse.rightButton.isPressed) return;
       Vector2 d = mouse.delta.ReadValue();
       Yaw -= d.x * mouseSensitivityX;
-      Pitch += d.y * mouseSensitivityY;
+      // Unity Input System reports delta.y POSITIVE on mouse-up (Unity
+      // screen Y is bottom-origin), whereas the browser TS handler used
+      // movementY POSITIVE on mouse-down. The TS sign of `pitch += dy`
+      // therefore inverts in Unity. Flip the sign so mouse-up = look-up
+      // (camera lowers / view tilts toward sky), which matches FPS
+      // muscle memory.
+      Pitch -= d.y * mouseSensitivityY;
       if (Pitch < PITCH_MIN) Pitch = PITCH_MIN;
       if (Pitch > PITCH_MAX) Pitch = PITCH_MAX;
     }
