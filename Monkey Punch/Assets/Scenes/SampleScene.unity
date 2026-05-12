@@ -457,6 +457,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1049207157}
   - component: {fileID: 1049207158}
+  - component: {fileID: 1049207159}
   m_Layer: 0
   m_Name: GameRoot
   m_TagString: Untagged
@@ -494,6 +495,21 @@ MonoBehaviour:
   serverUrl: ws://localhost:2567
   roomName: game
   playerName: UnitySpectator
+  interpDelayMs: 100
+--- !u!114 &1049207159
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1049207155}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e4dc2804ed358448bb6f523ae6dd1ac5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MonkeyPunch.Combat.CombatVfx
+  defaultProjectileSpeed: 22
+  defaultProjectileLifetime: 1.2
   interpDelayMs: 100
 --- !u!1660057539 &9223372036854775807
 SceneRoots:

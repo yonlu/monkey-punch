@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using Colyseus;
 using MonkeyPunch.Wire;
+using MonkeyPunch.Combat;
 
 namespace MonkeyPunch.Net {
   // Phase 2 passive spectator client. Joins the server, decodes RoomState,
@@ -35,6 +36,92 @@ namespace MonkeyPunch.Net {
 
     [Serializable]
     private class PongMessage { public string type; public double t; public double serverNow; }
+
+    // --- Combat event DTOs (server→client). Must match the wire shape
+    //     defined in packages/shared/src/messages.ts. Public fields,
+    //     no constructors — that's what Colyseus C# SDK expects for
+    //     msgpackr deserialization. JS numbers arrive as double; cast
+    //     to byte/int/uint downstream as needed.
+
+    [Serializable]
+    private class FireEventMsg {
+      public string type;
+      public int fireId;
+      public byte weaponKind;
+      public byte weaponLevel;
+      public int lockedTargetId;
+      public string ownerId;
+      public double originX, originY, originZ;
+      public double dirX, dirY, dirZ;
+      public int serverTick;
+      public double serverFireTimeMs;
+    }
+
+    [Serializable]
+    private class HitEventMsg {
+      public string type;
+      public int fireId;
+      public int enemyId;
+      public int damage;
+      public double x, y, z;
+      public int serverTick;
+      public string tag;
+      public byte weaponKind;
+    }
+
+    [Serializable]
+    private class EnemyDiedEventMsg {
+      public string type;
+      public int enemyId;
+      public double x, z;
+    }
+
+    [Serializable]
+    private class GemCollectedEventMsg {
+      public string type;
+      public int gemId;
+      public string playerId;
+      public int value;
+    }
+
+    [Serializable]
+    private class PlayerDamagedEventMsg {
+      public string type;
+      public string playerId;
+      public int damage;
+      public double x, y, z;
+      public int serverTick;
+    }
+
+    [Serializable]
+    private class PlayerDownedEventMsg {
+      public string type;
+      public string playerId;
+      public int serverTick;
+    }
+
+    [Serializable]
+    private class RunEndedEventMsg {
+      public string type;
+      public int serverTick;
+    }
+
+    [Serializable]
+    private class LevelUpOfferedEventMsg {
+      public string type;
+      public string playerId;
+      public int newLevel;
+      public int deadlineTick;
+      // choices intentionally omitted from MVP — Phase 7 overlay reads them.
+    }
+
+    [Serializable]
+    private class LevelUpResolvedEventMsg {
+      public string type;
+      public string playerId;
+      public int newLevel;
+      public bool autoPicked;
+    }
 
     // Static so a sibling CameraFollow can find us without inspector wiring.
     // Single-NetworkClient assumption; if that ever changes, swap for a
@@ -108,7 +195,59 @@ namespace MonkeyPunch.Net {
 
       cb.OnAdd(s => s.bloodPools, (string key, MonkeyPunch.Wire.BloodPool bp) => HandleBloodPoolAdd(bp));
       cb.OnRemove(s => s.bloodPools, (string key, MonkeyPunch.Wire.BloodPool bp) => HandleBloodPoolRemove(bp));
+
+      // Phase 4-MVP: subscribe to server-only combat events and dispatch
+      // to CombatVfx. The fire-handler is per-behavior (projectile only
+      // this commit); orbit/aura/boomerang/melee are Phase 4 follow-ups.
+      room.OnMessage("fire", (FireEventMsg ev) => {
+        if (CombatVfx.Instance != null) {
+          CombatVfx.Instance.OnFire(ev.fireId, ev.weaponKind, ev.weaponLevel,
+            ev.originX, ev.originY, ev.originZ,
+            ev.dirX, ev.dirY, ev.dirZ,
+            ev.serverFireTimeMs);
+        }
+      });
+      room.OnMessage("hit", (HitEventMsg ev) => {
+        if (CombatVfx.Instance != null) {
+          enemyObjects.TryGetValue((uint)ev.enemyId, out var enemyGo);
+          CombatVfx.Instance.OnHit(ev.fireId, (uint)ev.enemyId, ev.damage, ev.x, ev.y, ev.z, enemyGo);
+        }
+      });
+      room.OnMessage("enemy_died", (EnemyDiedEventMsg ev) => {
+        if (CombatVfx.Instance != null) {
+          enemyObjects.TryGetValue((uint)ev.enemyId, out var enemyGo);
+          CombatVfx.Instance.OnEnemyDied((uint)ev.enemyId, ev.x, ev.z, enemyGo);
+        }
+      });
+      // Remaining events: log only for now. Phase-4 follow-ups will
+      // render their specific VFX.
+      room.OnMessage("gem_collected", (GemCollectedEventMsg ev) => {
+        // Pop VFX is a follow-up; the gem GameObject already disappears
+        // when its schema entry leaves (HandleGemRemove).
+      });
+      room.OnMessage("player_damaged", (PlayerDamagedEventMsg ev) => {
+        // Red screen flash + damage number on the player — follow-up.
+      });
+      room.OnMessage("player_downed", (PlayerDownedEventMsg ev) => {
+        Debug.Log($"[NetworkClient] player_downed playerId={ev.playerId} tick={ev.serverTick}");
+      });
+      room.OnMessage("run_ended", (RunEndedEventMsg ev) => {
+        Debug.Log($"[NetworkClient] run_ended tick={ev.serverTick}");
+      });
+      room.OnMessage("level_up_offered", (LevelUpOfferedEventMsg ev) => {
+        Debug.Log($"[NetworkClient] level_up_offered to {ev.playerId} newLevel={ev.newLevel}");
+      });
+      room.OnMessage("level_up_resolved", (LevelUpResolvedEventMsg ev) => {
+        Debug.Log($"[NetworkClient] level_up_resolved {ev.playerId} newLevel={ev.newLevel} autoPicked={ev.autoPicked}");
+      });
     }
+
+    // Server time for the closed-form projectile sim. CombatVfx polls
+    // this each Update so two clients with stable, similar serverTime
+    // offsets place the same projectile at the same world position for
+    // the same fireId. Public so CombatVfx (different namespace) can
+    // call without a friend-assembly trick.
+    public double ServerNowMs() => serverTime.ServerNow();
 
     private IEnumerator PingLoop() {
       var wait = new WaitForSeconds(1f);
