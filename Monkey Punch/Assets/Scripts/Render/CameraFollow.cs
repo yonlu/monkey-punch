@@ -63,6 +63,14 @@ namespace MonkeyPunch.Render {
     private const double PITCH_MIN = -10.0 * DEG;
     private const double PITCH_MAX = 60.0 * DEG;
 
+    // Mouse-pos snapshot so we can compute screen-pixel deltas ourselves.
+    // Mouse.delta.ReadValue() on macOS / Retina reports sub-pixel values
+    // that no reasonable sensitivity scalar makes feel right; diffing
+    // Mouse.position is robust to those quirks.
+    private Vector2 lastMousePos;
+    private bool rightHeldLastFrame;
+    private bool didLogDeltaSample;
+
     void Awake() {
       if (Instance != null && Instance != this) {
         Debug.LogWarning("[CameraFollow] Multiple instances detected — using the latest.");
@@ -73,18 +81,51 @@ namespace MonkeyPunch.Render {
     void Update() {
       // Right-mouse-drag adjusts yaw/pitch. We don't use Cursor.lockState
       // (yet) — Phase 8 polish could add proper pointer-lock so the
-      // pointer doesn't leave the window during long drags. For now the
-      // user simply right-drags within the editor's Game view.
+      // pointer doesn't leave the window during long drags.
+      //
+      // Delta source: we diff Mouse.position frame-to-frame instead of
+      // calling Mouse.delta.ReadValue(). On macOS / Retina screens the
+      // Input System's `delta` channel can be sub-pixel (a slow
+      // accumulator that doesn't reflect true cursor travel), which
+      // makes any sensitivity scalar feel weak no matter how high.
+      // Diffing position gives honest screen-pixel deltas everywhere.
       var mouse = Mouse.current;
-      if (mouse == null || !mouse.rightButton.isPressed) return;
-      Vector2 d = mouse.delta.ReadValue();
+      if (mouse == null) {
+        rightHeldLastFrame = false;
+        return;
+      }
+      Vector2 currentPos = mouse.position.ReadValue();
+      bool held = mouse.rightButton.isPressed;
+      if (!held) {
+        rightHeldLastFrame = false;
+        lastMousePos = currentPos;
+        return;
+      }
+      // Edge case: right button just went down this frame. Skip the
+      // delta — lastMousePos still holds wherever the cursor was last
+      // frame (possibly far away if the user moved without holding
+      // right), so diffing here would produce a huge spurious yaw kick.
+      if (!rightHeldLastFrame) {
+        rightHeldLastFrame = true;
+        lastMousePos = currentPos;
+        return;
+      }
+
+      Vector2 d = currentPos - lastMousePos;
+      lastMousePos = currentPos;
+
+      // One-shot diagnostic on the first non-zero delta of a session —
+      // helps debug "no movement at all" reports without spamming the
+      // console.
+      if (!didLogDeltaSample && (Mathf.Abs(d.x) > 0.5f || Mathf.Abs(d.y) > 0.5f)) {
+        didLogDeltaSample = true;
+        Debug.Log($"[CameraFollow] First mouse delta sample: dx={d.x:F2} dy={d.y:F2} " +
+                  $"sensX={mouseSensitivityX:F3} sensY={mouseSensitivityY:F3}");
+      }
+
       Yaw -= d.x * mouseSensitivityX;
-      // Unity Input System reports delta.y POSITIVE on mouse-up (Unity
-      // screen Y is bottom-origin), whereas the browser TS handler used
-      // movementY POSITIVE on mouse-down. The TS sign of `pitch += dy`
-      // therefore inverts in Unity. Flip the sign so mouse-up = look-up
-      // (camera lowers / view tilts toward sky), which matches FPS
-      // muscle memory.
+      // Unity screen Y is bottom-origin: Mouse.position.y INCREASES as
+      // the cursor moves UP the screen. Subtract so mouse-up = look-up.
       Pitch -= d.y * mouseSensitivityY;
       if (Pitch < PITCH_MIN) Pitch = PITCH_MIN;
       if (Pitch > PITCH_MAX) Pitch = PITCH_MAX;
