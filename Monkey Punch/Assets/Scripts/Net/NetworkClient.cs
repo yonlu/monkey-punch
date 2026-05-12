@@ -6,6 +6,7 @@ using UnityEngine.InputSystem;
 using Colyseus;
 using MonkeyPunch.Wire;
 using MonkeyPunch.Combat;
+using MonkeyPunch.Render;
 
 namespace MonkeyPunch.Net {
   // Phase 2 passive spectator client. Joins the server, decodes RoomState,
@@ -138,6 +139,20 @@ namespace MonkeyPunch.Net {
       public bool leavesBloodPool;
       public int serverTick;
       public double serverFireTimeMs;
+    }
+
+    // Phase 6 (Unity migration plan): one-shot heightmap + props payload.
+    // Sent unicast immediately after onJoin. heights is row-major
+    // (X-outer, Z-inner) of length (gridSize+1)². props is the full
+    // generateProps(seed) output.
+    [Serializable]
+    private class TerrainDataMsg {
+      public string type;
+      public uint seed;
+      public int gridSize;
+      public double gridSpacing;
+      public double[] heights;
+      public TerrainStreamer.PropPayload[] props;
     }
 
     [Serializable]
@@ -302,6 +317,25 @@ namespace MonkeyPunch.Net {
       });
       room.OnMessage("level_up_resolved", (LevelUpResolvedEventMsg ev) => {
         Debug.Log($"[NetworkClient] level_up_resolved {ev.playerId} newLevel={ev.newLevel} autoPicked={ev.autoPicked}");
+      });
+
+      // Phase 6 (Unity migration plan): one-shot terrain + props payload.
+      // TerrainStreamer must already be on a sibling GameObject in the
+      // scene; we hand off the decoded heightmap + prop list and it
+      // rebuilds the world mesh. Multiple receipts (rejoin within
+      // grace) trigger a full rebuild — props/terrain are tear-down-
+      // and-replace, not diff.
+      room.OnMessage("terrain_data", (TerrainDataMsg ev) => {
+        if (TerrainStreamer.Instance == null) {
+          Debug.LogWarning("[NetworkClient] terrain_data received but TerrainStreamer.Instance is null. " +
+                           "Add a TerrainStreamer component to the scene.");
+          return;
+        }
+        if (ev.heights == null || ev.props == null) {
+          Debug.LogError("[NetworkClient] terrain_data payload missing heights or props.");
+          return;
+        }
+        TerrainStreamer.Instance.BuildFromPayload(ev.gridSize, ev.gridSpacing, ev.heights, ev.props, ev.seed);
       });
     }
 

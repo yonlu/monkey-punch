@@ -27,6 +27,10 @@ import {
   PLAYER_MAX_HP,
   PLAYER_NAME_MAX_LEN,
   initTerrain,
+  terrainHeight,
+  generateProps,
+  type Prop,
+  TERRAIN_SIZE,
   mulberry32,
   type Rng,
   type SpawnerState,
@@ -84,6 +88,49 @@ function parseGraceSeconds(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_RECONNECTION_GRACE_S;
 }
 
+// Phase 6 (Unity migration plan): heightmap sample resolution. 2m
+// spacing across TERRAIN_SIZE=200 → 100×100 cells → 101×101 = 10201
+// vertices. ~80KB encoded as msgpack doubles, comfortably under any
+// WebSocket fragment threshold and rebuilt instantly client-side.
+// Lower resolution than the browser client's 1m grid (PlaneGeometry
+// SEGMENTS=200) — the gate is "looks correct", not bit-identical
+// terrain visuals across runtimes. Bump if Phase 8 polish wants more
+// surface fidelity (server work is one constant change; payload size
+// scales with the square of GRID_SIZE+1).
+const TERRAIN_GRID_SIZE = 100;
+
+function buildTerrainPayload(seed: number): {
+  type: "terrain_data";
+  seed: number;
+  gridSize: number;
+  gridSpacing: number;
+  heights: number[];
+  props: Prop[];
+} {
+  const gridSize = TERRAIN_GRID_SIZE;
+  const spacing = TERRAIN_SIZE / gridSize;
+  const half = TERRAIN_SIZE / 2;
+  const vertCount = gridSize + 1;
+  const heights: number[] = new Array(vertCount * vertCount);
+  // X-outer / Z-inner to match shared/props.ts iteration order; client
+  // mesh builder must use the same ordering or row/column will swap.
+  for (let ix = 0; ix < vertCount; ix++) {
+    const x = -half + ix * spacing;
+    for (let iz = 0; iz < vertCount; iz++) {
+      const z = -half + iz * spacing;
+      heights[ix * vertCount + iz] = terrainHeight(x, z);
+    }
+  }
+  return {
+    type: "terrain_data",
+    seed,
+    gridSize,
+    gridSpacing: spacing,
+    heights,
+    props: generateProps(seed),
+  };
+}
+
 type JoinOptions = {
   name?: string;
   code?: string;
@@ -136,6 +183,21 @@ export class GameRoom extends Room<{ state: RoomState }> {
   private patchSampleCount = 0;
   private patchInstrumentationFailed = false;
 
+  // Phase 6 (Unity migration plan): cached heightmap + props payload,
+  // built once in onCreate after initTerrain so every joiner receives
+  // the same bytes. Seed is per-room and immutable, so a single build
+  // is canonical. Sent unicast on onJoin via client.send("terrain_data",
+  // ...). Browser client may ignore it (it still computes terrain
+  // locally from state.seed).
+  private terrainPayload!: {
+    type: "terrain_data";
+    seed: number;
+    gridSize: number;
+    gridSpacing: number;
+    heights: number[];
+    props: Prop[];
+  };
+
   override async onCreate(_options: JoinOptions): Promise<void> {
     const state = new RoomState();
     // Join-code collisions are tolerated. ~31^4 ≈ 1M codes; for friends-only
@@ -159,6 +221,12 @@ export class GameRoom extends Room<{ state: RoomState }> {
     // the seed is the same per-room. If we ever host multiple seeds in
     // the same process we'll need per-room noise instances.
     initTerrain(state.seed);
+    this.terrainPayload = buildTerrainPayload(state.seed);
+    console.log(
+      `[room ${code}] terrain payload: gridSize=${this.terrainPayload.gridSize} ` +
+        `spacing=${this.terrainPayload.gridSpacing}m heights=${this.terrainPayload.heights.length} ` +
+        `props=${this.terrainPayload.props.length}`,
+    );
     this.orbitHitCooldown = createOrbitHitCooldownStore();
     this.contactCooldown = createContactCooldownStore();
     this.bloodPoolHitCooldown = createBloodPoolHitCooldownStore();
@@ -387,6 +455,13 @@ export class GameRoom extends Room<{ state: RoomState }> {
     player.weapons.push(bolt);
 
     this.state.players.set(client.sessionId, player);
+
+    // Phase 6: send the cached heightmap + prop list unicast. One-shot per
+    // joiner; reconnects within the grace window get a second copy
+    // (cheap — no harm, client just rebuilds the same mesh). Browser
+    // client (which still derives terrain locally) ignores unknown
+    // message types.
+    client.send(this.terrainPayload.type, this.terrainPayload);
 
     // Listing metadata exposes the host name so the matchmaker's room list
     // shows "hosted by <name>" without exposing schema state. First joiner

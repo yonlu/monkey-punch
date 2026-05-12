@@ -260,6 +260,37 @@ export type MeleeSwipeEvent = {
   serverSwingTimeMs: number;  // server Date.now() at swing — drives client VFX timing
 };
 
+// Server→client one-shot, sent once per joiner immediately after onJoin.
+// Carries everything the client needs to render the world:
+//   - The deterministic heightmap, sampled on a regular grid centered at
+//     (0, 0). Origin is implicit at (-gridSize * gridSpacing / 2,
+//     -gridSize * gridSpacing / 2). Vertices: (gridSize + 1)². Layout
+//     is X-outer / Z-inner (matches packages/shared/src/props.ts so a
+//     single iteration order is canon across this file family).
+//   - The full prop list from generateProps(state.seed). Each prop's
+//     y is terrainHeight(x, z) computed at jittered position, so the
+//     client does NOT need to sample the heightmap to ground props.
+// Migration plan §Phase 6: streaming this from the server is the
+// recommended alternative to porting alea + simplex-noise bit-identical
+// to every client runtime (Unity, etc.). The browser client today still
+// computes terrain locally from state.seed and may ignore this message
+// until it's migrated.
+export type TerrainDataMessage = {
+  type: "terrain_data";
+  seed: number;
+  gridSize: number;           // N — grid has (N+1)² vertices
+  gridSpacing: number;        // world units between adjacent vertices
+  heights: number[];          // length (N+1)², row-major (X-outer, Z-inner)
+  props: Array<{
+    kind: number;             // 0=tree, 1=rock, 2=bush
+    x: number;
+    y: number;                // terrainHeight at jittered (x, z)
+    z: number;
+    rotation: number;         // radians around Y, [0, 2π)
+    scale: number;            // [0.8, 1.2)
+  }>;
+};
+
 export const MessageType = {
   Input: "input",
   Ping: "ping",
@@ -281,6 +312,7 @@ export const MessageType = {
   RunEnded: "run_ended",
   MeleeSwipe: "melee_swipe",  // M8 US-005
   BoomerangThrown: "boomerang_thrown",  // M8 US-011
+  TerrainData: "terrain_data",  // Phase 6 (Unity migration plan)
 } as const;
 
 export type MessageTypeName = (typeof MessageType)[keyof typeof MessageType];
