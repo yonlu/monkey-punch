@@ -14,7 +14,7 @@ import type {
   PongMessage,
   RoomState,
 } from "@mp/shared";
-import { MAP_RADIUS, WEAPON_KINDS, statsAt, isProjectileWeapon, initTerrain } from "@mp/shared";
+import { MAP_RADIUS, WEAPON_KINDS, statsAt, isProjectileWeapon, initTerrain, getItemMultiplier } from "@mp/shared";
 import { Ground } from "./Ground.js";
 import { PlayerCube } from "./PlayerCube.js";
 import { PropSwarm } from "./PropSwarm.js";
@@ -171,6 +171,12 @@ export function GameView({
           // jumpBufferedAt on top of authoritative server values. serverTick
           // anchors the predictor's tick counter so coyote/buffer windows
           // stay consistent with the server's view.
+          // Phase 8 polish: refresh the cached speed_mult BEFORE
+          // reconcile so the unacked-input replay re-applies at the
+          // current rate. Items only change on level-up resolution
+          // (rare per snapshot), so this is essentially a passthrough
+          // most ticks.
+          predictor.predictedSpeedMult = getItemMultiplier(player, "speed_mult");
           predictor.reconcile(
             {
               x: player.x,

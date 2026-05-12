@@ -585,7 +585,13 @@ namespace MonkeyPunch.Net {
         // Phase 5: reconcile the local player against the authoritative
         // snapshot. lastProcessedInput is the highest seq the server has
         // applied — anything > that is unacked and gets replayed.
+        // Phase 8 polish: refresh SpeedMult BEFORE Reconcile so the
+        // unacked-input replay walks at the up-to-date rate (Sleipnir
+        // pickup changes the effective speed; without this we'd see
+        // ~5-25% rubber-band on every snapshot for that one tick after
+        // the level-up resolved).
         if (isLocal && predictor != null && room?.State != null) {
+          predictor.SpeedMult = ComputeSpeedMult(p);
           predictor.Reconcile(p.x, p.z, (int)p.lastProcessedInput, (int)room.State.tick);
         }
       });
@@ -751,19 +757,24 @@ namespace MonkeyPunch.Net {
           // smoothing pattern) so a key press / release mid-step does
           // not pop the local cube. The offset decays continuously via
           // DecayRenderOffset above.
+          // Match the predictor's effective speed so extrap and step
+          // walk in lockstep (no visible "speed bump" the frame after
+          // the step). predictor.SpeedMult is refreshed on each
+          // reconcile.
+          double effectiveSpeed = PredictorConstants.PLAYER_SPEED * predictor.SpeedMult;
           if (!float.IsNaN(lastLiveDirX)) {
             double dDirX = live.x - lastLiveDirX;
             double dDirZ = live.y - lastLiveDirZ;
-            double absorbX = dDirX * PredictorConstants.PLAYER_SPEED * tClampedS;
-            double absorbZ = dDirZ * PredictorConstants.PLAYER_SPEED * tClampedS;
+            double absorbX = dDirX * effectiveSpeed * tClampedS;
+            double absorbZ = dDirZ * effectiveSpeed * tClampedS;
             predictor.RenderOffsetX -= absorbX;
             predictor.RenderOffsetZ -= absorbZ;
           }
           lastLiveDirX = live.x;
           lastLiveDirZ = live.y;
 
-          double extrapX = live.x * PredictorConstants.PLAYER_SPEED * tClampedS;
-          double extrapZ = live.y * PredictorConstants.PLAYER_SPEED * tClampedS;
+          double extrapX = live.x * effectiveSpeed * tClampedS;
+          double extrapZ = live.y * effectiveSpeed * tClampedS;
 
           // Y comes from the latest server snapshot (interp buffer's
           // newest sample). Walking is responsive; jumping inherits the
@@ -815,6 +826,30 @@ namespace MonkeyPunch.Net {
     // xpForLevel(level) = level*5 + level² — direct port of
     // packages/shared/src/constants.ts xpForLevel function.
     private static int XpForLevel(int level) => level * 5 + level * level;
+
+    // Phase 8 polish: speed_mult lookup for the predictor.
+    // Mirrors packages/shared/src/items.ts → ITEM_KINDS[3] (Sleipnir,
+    // the only speed_mult item as of M9). If a new speed_mult item is
+    // added to TS, extend this method with another branch. Drift risk
+    // is low because items.ts is rarely touched and the predictor
+    // simply under-corrects for any new speed item until the table is
+    // updated — server stays authoritative either way.
+    private static readonly double[] SleipnirValues = { 1.05, 1.10, 1.15, 1.20, 1.25 };
+    private const int SLEIPNIR_KIND = 3;
+    private static double ComputeSpeedMult(MonkeyPunch.Wire.Player p) {
+      if (p?.items == null) return 1.0;
+      double mult = 1.0;
+      for (int i = 0; i < p.items.Count; i++) {
+        var item = p.items[i];
+        if (item.kind == SLEIPNIR_KIND && item.level > 0) {
+          // values are 1-indexed in TS (itemValueAt clamps level-1 into
+          // [0, values.length)); replicate the same clamp here.
+          int idx = Math.Max(0, Math.Min(SleipnirValues.Length - 1, item.level - 1));
+          mult *= SleipnirValues[idx];
+        }
+      }
+      return mult;
+    }
 
     private void PushHudState() {
       if (GameUI.Instance == null) return;

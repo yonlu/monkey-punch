@@ -75,6 +75,14 @@ export const SMOOTHING_TAU_S = 0.1;
 export class LocalPredictor {
   predictedX = 0;
   predictedZ = 0;
+  // Cached `speed_mult` from the most recent reconcile. Multiplies
+  // PLAYER_SPEED in applyTick so Sleipnir (and any future speed_mult
+  // items) takes effect in prediction — without this, picking
+  // Sleipnir produces ~5–25% rubber-band per snapshot. Set externally
+  // via setSpeedMult before reconcile so the replay re-applies
+  // unacked inputs at the up-to-date rate. Default 1.0 (no items)
+  // keeps existing predictor tests bit-identical.
+  predictedSpeedMult = 1.0;
   // M7 US-011 — vertical predicted state. Mirrors Player.y/vy/grounded/
   // lastGroundedAt/jumpBufferedAt fields one-for-one. Initial values
   // match Player schema ctor (grounded=true, jumpBufferedAt=-1).
@@ -209,8 +217,8 @@ export class LocalPredictor {
    * inside the player loop), this function MUST change in lockstep.
    */
   private applyTick(dir: { x: number; z: number }, jump: boolean): void {
-    this.predictedX += dir.x * PLAYER_SPEED * SIM_DT_S;
-    this.predictedZ += dir.z * PLAYER_SPEED * SIM_DT_S;
+    this.predictedX += dir.x * PLAYER_SPEED * this.predictedSpeedMult * SIM_DT_S;
+    this.predictedZ += dir.z * PLAYER_SPEED * this.predictedSpeedMult * SIM_DT_S;
 
     const r2 = this.predictedX * this.predictedX + this.predictedZ * this.predictedZ;
     if (r2 > MAP_RADIUS * MAP_RADIUS) {

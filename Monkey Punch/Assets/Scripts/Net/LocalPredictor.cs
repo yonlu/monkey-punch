@@ -35,6 +35,16 @@ namespace MonkeyPunch.Net {
     public int Tick;
     public double LastReconErr;
 
+    // Cached speed_mult from the most recent reconcile. Multiplies
+    // PLAYER_SPEED in ApplyTick so Sleipnir (and any future
+    // speed_mult items) take effect in prediction — without this,
+    // picking Sleipnir produces ~5–25% rubber-band on every snapshot.
+    // Set externally via the SpeedMult property before Reconcile so
+    // the replay re-applies unacked inputs at the up-to-date rate.
+    // Default 1.0 (no items) preserves the bit-identical determinism
+    // gate (golden fixture uses zero items).
+    public double SpeedMult = 1.0;
+
     // Visual catch-up offset — added to (X, Z) at render time, decayed
     // exponentially in Update(). A reconcile that moves predicted X by
     // +Δ is compensated by an offset of -Δ so the cube stays put
@@ -123,16 +133,14 @@ namespace MonkeyPunch.Net {
     ///     p.x *= scale; p.z *= scale;
     ///   }
     ///
-    /// NOTE: speedMult from item effects is NOT applied here — Phase 5
-    /// MVP assumes default speed (no Sleipnir item). When item effects
-    /// are wired into the predictor, this becomes:
-    ///   X += dirX * PLAYER_SPEED * speedMult * SIM_DT_S;
-    /// and the predictor must cache speedMult from the latest snapshot.
-    /// Tracked as a Phase-5 follow-up.
+    /// Phase 8 polish: SpeedMult is now applied here. Sleipnir item
+    /// (kind=3) advances this from 1.0 to up-to-1.25× at level 5.
+    /// Set the SpeedMult field before Reconcile so the replay walks
+    /// unacked inputs at the up-to-date rate.
     /// </summary>
     public void ApplyTick(double dirX, double dirZ) {
-      X += dirX * PredictorConstants.PLAYER_SPEED * PredictorConstants.SIM_DT_S;
-      Z += dirZ * PredictorConstants.PLAYER_SPEED * PredictorConstants.SIM_DT_S;
+      X += dirX * PredictorConstants.PLAYER_SPEED * SpeedMult * PredictorConstants.SIM_DT_S;
+      Z += dirZ * PredictorConstants.PLAYER_SPEED * SpeedMult * PredictorConstants.SIM_DT_S;
 
       double r2 = X * X + Z * Z;
       double maxR2 = PredictorConstants.MAP_RADIUS * PredictorConstants.MAP_RADIUS;
@@ -156,6 +164,7 @@ namespace MonkeyPunch.Net {
       RenderOffsetX = 0;
       RenderOffsetZ = 0;
       LastReconErr = 0;
+      SpeedMult = 1.0;
     }
 
     /// <summary>

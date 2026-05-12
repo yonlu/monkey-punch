@@ -162,15 +162,23 @@ namespace MonkeyPunch.Render {
         }
         go.name = $"Prop[{i}]:kind{p.kind}";
         go.transform.SetParent(propsParent.transform, worldPositionStays: false);
-        // Each primitive's origin is at its center — lift Y by half the
-        // scaled mesh height so the base sits on the terrain. Cylinder /
-        // Sphere / Cube native heights are 2 / 1 / 1 respectively.
-        float baseHalfHeight = p.kind == 0 ? go.transform.localScale.y      // cylinder height = 2 * localScale.y
-                                : p.kind == 1 ? go.transform.localScale.y * 0.5f
-                                : go.transform.localScale.y * 0.5f;
-        go.transform.position = new Vector3((float)p.x, (float)p.y + baseHalfHeight, (float)p.z);
+        // Each primitive's origin is at its center — lift Y so the base
+        // sits on the terrain. Native primitive mesh extents (half-
+        // heights with localScale=1) are:
+        //   Cylinder: 1.0  (full mesh height = 2.0)
+        //   Sphere:   0.5  (full mesh height = 1.0)
+        //   Cube:     0.5  (full mesh height = 1.0)
+        // Apply both the per-kind localScale.y AND the per-prop p.scale
+        // to the half-height so non-unit scales don't sink (>1) or float
+        // (<1).
+        float meshHalfExtent = p.kind == 0 ? 1.0f
+                              : 0.5f;
+        float yLift = meshHalfExtent * go.transform.localScale.y * (float)p.scale;
+        go.transform.position = new Vector3((float)p.x, (float)p.y + yLift, (float)p.z);
         go.transform.rotation = Quaternion.Euler(0f, (float)(p.rotation * Mathf.Rad2Deg), 0f);
-        // Uniform scale on top of the per-kind base scale.
+        // Uniform scale on top of the per-kind base scale. Done AFTER
+        // position assignment because yLift was computed against the
+        // pre-multiply localScale.
         go.transform.localScale = go.transform.localScale * (float)p.scale;
         var rend = go.GetComponent<Renderer>();
         if (rend != null) {
