@@ -7,6 +7,7 @@ using Colyseus;
 using MonkeyPunch.Wire;
 using MonkeyPunch.Combat;
 using MonkeyPunch.Render;
+using MonkeyPunch.UI;
 
 namespace MonkeyPunch.Net {
   // Phase 2 passive spectator client. Joins the server, decodes RoomState,
@@ -107,13 +108,22 @@ namespace MonkeyPunch.Net {
       public int serverTick;
     }
 
+    // Phase 7 MVP: choices wire shape mirrors
+    // packages/shared/src/messages.ts LevelUpChoicePayload —
+    // { type: "weapon" | "item", index: number }.
+    [Serializable]
+    private class LevelUpChoicePayloadMsg {
+      public string type;     // "weapon" or "item"
+      public int index;       // index into WEAPON_KINDS or ITEM_KINDS
+    }
+
     [Serializable]
     private class LevelUpOfferedEventMsg {
       public string type;
       public string playerId;
       public int newLevel;
       public int deadlineTick;
-      // choices intentionally omitted from MVP — Phase 7 overlay reads them.
+      public LevelUpChoicePayloadMsg[] choices;
     }
 
     [Serializable]
@@ -313,10 +323,33 @@ namespace MonkeyPunch.Net {
         }
       });
       room.OnMessage("level_up_offered", (LevelUpOfferedEventMsg ev) => {
-        Debug.Log($"[NetworkClient] level_up_offered to {ev.playerId} newLevel={ev.newLevel}");
+        Debug.Log($"[NetworkClient] level_up_offered to {ev.playerId} newLevel={ev.newLevel} choices={(ev.choices?.Length ?? 0)}");
+        // Only show the overlay for the local player. Server emits one
+        // event per player who leveled up (typically just the local one
+        // in solo, may overlap in coop — we ignore remote level-ups in
+        // the UI; the underlying Player schema still updates via
+        // OnChange).
+        if (room?.SessionId == ev.playerId && GameUI.Instance != null && ev.choices != null) {
+          var choices = new GameUI.LevelUpChoiceDisplay[ev.choices.Length];
+          for (int i = 0; i < ev.choices.Length; i++) {
+            var c = ev.choices[i];
+            choices[i] = new GameUI.LevelUpChoiceDisplay {
+              Kind = c.type,
+              Index = c.index,
+              NewLevel = ev.newLevel,
+              Name = c.type == "weapon" ? Names.WeaponName(c.index) : Names.ItemName(c.index),
+            };
+          }
+          GameUI.Instance.ShowLevelUp(choices, SendLevelUpChoice);
+        }
       });
       room.OnMessage("level_up_resolved", (LevelUpResolvedEventMsg ev) => {
         Debug.Log($"[NetworkClient] level_up_resolved {ev.playerId} newLevel={ev.newLevel} autoPicked={ev.autoPicked}");
+        // Auto-pick (deadline expired) or another tab's pick — close
+        // the overlay in case it's still up.
+        if (room?.SessionId == ev.playerId && GameUI.Instance != null && GameUI.Instance.LevelUpOpen) {
+          GameUI.Instance.HideLevelUp();
+        }
       });
 
       // Phase 6 (Unity migration plan): one-shot terrain + props payload.
@@ -354,6 +387,22 @@ namespace MonkeyPunch.Net {
     public GameObject GetPlayerObject(string sessionId) {
       playerObjects.TryGetValue(sessionId, out var go);
       return go;
+    }
+
+    // Phase 7 MVP: send the player's pick to the server. Server validates
+    // choiceIndex against the pending offer and resolves with a
+    // level_up_resolved broadcast. Called from GameUI's "Pick" button.
+    private void SendLevelUpChoice(int choiceIndex) {
+      if (room == null) return;
+      try {
+        _ = room.Send("level_up_choice", new Dictionary<string, object> {
+          { "type", "level_up_choice" },
+          { "choiceIndex", choiceIndex },
+        });
+        Debug.Log($"[NetworkClient] level_up_choice sent idx={choiceIndex}");
+      } catch (Exception ex) {
+        Debug.LogWarning($"[NetworkClient] level_up_choice send failed: {ex.Message}");
+      }
     }
 
     private void DebugGrantWeapon(int weaponKind) {
@@ -661,6 +710,54 @@ namespace MonkeyPunch.Net {
       if (CombatVfx.Instance != null) {
         CombatVfx.Instance.UpdateOrbits(hasOrbit, LocalPlayerTransform);
       }
+
+      // Phase 7 MVP: push HUD state to GameUI once per frame. Cheap —
+      // schema reads are constant-time per field, items/weapons lists
+      // are bounded (≤6 each in M9).
+      PushHudState();
+    }
+
+    // xpForLevel(level) = level*5 + level² — direct port of
+    // packages/shared/src/constants.ts xpForLevel function.
+    private static int XpForLevel(int level) => level * 5 + level * level;
+
+    private void PushHudState() {
+      if (GameUI.Instance == null) return;
+      var s = new GameUI.HudState { Connected = false };
+      if (room?.State?.players != null && room.SessionId != null) {
+        var localPlayer = room.State.players[room.SessionId];
+        if (localPlayer != null) {
+          s.Connected = true;
+          s.Hp = localPlayer.hp;
+          s.MaxHp = localPlayer.maxHp;
+          s.Xp = localPlayer.xp;
+          s.Level = localPlayer.level;
+          s.XpForNextLevel = XpForLevel(localPlayer.level);
+          s.Kills = localPlayer.kills;
+          double elapsedTicks = Math.Max(0, (long)room.State.tick - (long)localPlayer.joinTick);
+          s.ElapsedSeconds = elapsedTicks / 20.0;
+
+          if (localPlayer.weapons != null) {
+            s.Weapons = new List<GameUI.HudWeaponEntry>(localPlayer.weapons.Count);
+            for (int i = 0; i < localPlayer.weapons.Count; i++) {
+              s.Weapons.Add(new GameUI.HudWeaponEntry {
+                Kind = (byte)localPlayer.weapons[i].kind,
+                Level = (byte)localPlayer.weapons[i].level,
+              });
+            }
+          }
+          if (localPlayer.items != null) {
+            s.Items = new List<GameUI.HudItemEntry>(localPlayer.items.Count);
+            for (int i = 0; i < localPlayer.items.Count; i++) {
+              s.Items.Add(new GameUI.HudItemEntry {
+                Kind = (byte)localPlayer.items[i].kind,
+                Level = (byte)localPlayer.items[i].level,
+              });
+            }
+          }
+        }
+      }
+      GameUI.Instance.SetHud(s);
     }
 
     async void OnDestroy() {

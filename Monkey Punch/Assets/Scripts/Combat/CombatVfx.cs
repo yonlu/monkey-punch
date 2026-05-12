@@ -3,6 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using MonkeyPunch.Net;
+using MonkeyPunch.UI;
+using UnityEngine.SceneManagement;
 
 namespace MonkeyPunch.Combat {
   // Phase 4-MVP visual response to server combat events. NetworkClient
@@ -342,29 +344,36 @@ namespace MonkeyPunch.Combat {
     }
 
     public void OnPlayerDowned(bool isLocal) {
-      if (isLocal) localPlayerDowned = true;
+      if (isLocal) {
+        localPlayerDowned = true;
+        // Show the modal immediately — the run isn't necessarily over
+        // (in co-op a teammate could still be standing) but the local
+        // player can't act either way until the next run starts.
+        if (GameUI.Instance != null) {
+          GameUI.Instance.ShowRunOver("DOWNED", ReloadScene);
+        }
+      }
     }
 
     public void OnRunEnded() {
       runEnded = true;
+      // Replaces the previous CombatVfx-owned IMGUI overlay. GameUI's
+      // ShowRunOver renders the modal with a Restart button; clicking it
+      // reloads the active scene, which re-runs NetworkClient.Start() and
+      // joins a fresh room.
+      if (GameUI.Instance != null) {
+        GameUI.Instance.ShowRunOver("RUN ENDED", ReloadScene);
+      }
     }
 
-    void OnGUI() {
-      if (runEnded) {
-        var s = new GUIStyle(GUI.skin.label) {
-          fontSize = 48, alignment = TextAnchor.MiddleCenter,
-          normal = { textColor = new Color(1f, 0.3f, 0.3f) }
-        };
-        GUI.Label(new Rect(0, Screen.height / 2 - 40, Screen.width, 80), "RUN ENDED", s);
-        return;
-      }
-      if (localPlayerDowned) {
-        var s = new GUIStyle(GUI.skin.label) {
-          fontSize = 48, alignment = TextAnchor.MiddleCenter,
-          normal = { textColor = new Color(1f, 0.5f, 0.2f) }
-        };
-        GUI.Label(new Rect(0, Screen.height / 2 - 40, Screen.width, 80), "DOWNED", s);
-      }
+    private static void ReloadScene() {
+      // Use scene NAME rather than buildIndex — buildIndex is -1 when
+      // the scene isn't listed in Build Settings (which it isn't until
+      // a real build is configured). Loading by name works in-editor
+      // and in built players alike provided the scene asset is
+      // discoverable.
+      var s = SceneManager.GetActiveScene();
+      SceneManager.LoadScene(s.name);
     }
 
     void Update() {
