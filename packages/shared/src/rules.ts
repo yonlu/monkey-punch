@@ -27,6 +27,7 @@ import {
   ENEMY_SPAWN_INTERVAL_S,
   ENEMY_SPAWN_RADIUS,
   ENEMY_SPEED,
+  GEM_FAN_RADIUS,
   GEM_PICKUP_RADIUS,
   GEM_VALUE,
   GRAVITY,
@@ -46,6 +47,7 @@ import {
 } from "./constants.js";
 import { terrainHeight } from "./terrain.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, isMeleeArcWeapon, isAuraWeapon, isBoomerangWeapon, type WeaponDef, type TargetingMode, type MeleeArcWeaponDef, type AuraWeaponDef, type BoomerangWeaponDef, type BoomerangLevel } from "./weapons.js";
+import { enemyDefAt } from "./enemies.js";
 import type { Rng } from "./rng.js";
 import type {
   FireEvent,
@@ -116,6 +118,68 @@ export function canJump(
 ): boolean {
   if (state.grounded) return true;
   return (tick - state.lastGroundedAt) * (1 / TICK_RATE) <= COYOTE_TIME;
+}
+
+/**
+ * M10: shared "an enemy died this frame" path. Replaces the
+ * six copy-pasted death-handling blocks across tickWeapons
+ * (orbit), runMeleeArcSwing, runAuraTick, tickProjectiles,
+ * tickBoomerangs, and tickBloodPools.
+ *
+ * Behavior (preserves pre-M10 semantics for slime exactly):
+ *   - Look up the kind's gemDropCount.
+ *   - Spawn 1 gem at (enemy.x, enemy.z) when gemDropCount === 1
+ *     (preserves the M3 spawn position for slimes — the existing
+ *     determinism test asserts this exact position).
+ *   - Spawn N gems in an evenly-spaced ring at GEM_FAN_RADIUS for
+ *     N > 1. Angles are `(i / N) * 2π` — deterministic, no rng.
+ *   - Delete the enemy from state.enemies, evict orbit-hit cooldown,
+ *     emit enemy_died.
+ *
+ * Caller responsibilities (intentionally NOT inside the helper):
+ *   - Crediting the kill to `player.kills += 1` (caller knows the killer)
+ *   - boomerang/projectile-specific bookkeeping (pierceRemaining, etc.)
+ */
+export function spawnGemFanAndEmitDeath(
+  state: RoomState,
+  enemy: Enemy,
+  ctx: { nextGemId: () => number; orbitHitCooldown: OrbitHitCooldownLike },
+  emit: Emit,
+): void {
+  const def = enemyDefAt(enemy.kind);
+  const deathX = enemy.x;
+  const deathZ = enemy.z;
+  const deathId = enemy.id;
+  const count = Math.max(1, def.gemDropCount | 0);
+
+  if (count === 1) {
+    const gem = new Gem();
+    gem.id = ctx.nextGemId();
+    gem.x = deathX;
+    gem.z = deathZ;
+    gem.value = GEM_VALUE;
+    state.gems.set(String(gem.id), gem);
+  } else {
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;   // deterministic — no rng
+      const gem = new Gem();
+      gem.id = ctx.nextGemId();
+      gem.x = deathX + Math.cos(angle) * GEM_FAN_RADIUS;
+      gem.z = deathZ + Math.sin(angle) * GEM_FAN_RADIUS;
+      gem.value = GEM_VALUE;
+      state.gems.set(String(gem.id), gem);
+    }
+  }
+
+  state.enemies.delete(String(deathId));
+  ctx.orbitHitCooldown.evictEnemy(deathId);
+
+  emit({
+    type: "enemy_died",
+    enemyId: deathId,
+    x: deathX,
+    z: deathZ,
+  });
 }
 
 /**
@@ -879,26 +943,8 @@ export function tickWeapons(
               });
 
               if (enemy.hp <= 0) {
-                const gem = new Gem();
-                gem.id = ctx.nextGemId();
-                gem.x = enemy.x;
-                gem.z = enemy.z;
-                gem.value = GEM_VALUE;
-                state.gems.set(String(gem.id), gem);
-
-                const deathX = enemy.x;
-                const deathZ = enemy.z;
-                const deathId = enemy.id;
-                state.enemies.delete(String(enemy.id));
                 player.kills += 1;
-                ctx.orbitHitCooldown.evictEnemy(deathId);
-
-                emit({
-                  type: "enemy_died",
-                  enemyId: deathId,
-                  x: deathX,
-                  z: deathZ,
-                });
+                spawnGemFanAndEmitDeath(state, enemy, ctx, emit);
               }
             }
           }
@@ -1081,26 +1127,8 @@ export function runMeleeArcSwing(
     });
 
     if (enemy.hp <= 0) {
-      const gem = new Gem();
-      gem.id = ctx.nextGemId();
-      gem.x = enemy.x;
-      gem.z = enemy.z;
-      gem.value = GEM_VALUE;
-      state.gems.set(String(gem.id), gem);
-
-      const deathX = enemy.x;
-      const deathZ = enemy.z;
-      const deathId = enemy.id;
       player.kills += 1;
-      state.enemies.delete(String(enemy.id));
-      ctx.orbitHitCooldown.evictEnemy(deathId);
-
-      emit({
-        type: "enemy_died",
-        enemyId: deathId,
-        x: deathX,
-        z: deathZ,
-      });
+      spawnGemFanAndEmitDeath(state, enemy, ctx, emit);
     }
   }
 
@@ -1203,26 +1231,8 @@ export function runAuraTick(
     });
 
     if (enemy.hp <= 0) {
-      const gem = new Gem();
-      gem.id = ctx.nextGemId();
-      gem.x = enemy.x;
-      gem.z = enemy.z;
-      gem.value = GEM_VALUE;
-      state.gems.set(String(gem.id), gem);
-
-      const deathX = enemy.x;
-      const deathZ = enemy.z;
-      const deathId = enemy.id;
       player.kills += 1;
-      state.enemies.delete(String(enemy.id));
-      ctx.orbitHitCooldown.evictEnemy(deathId);
-
-      emit({
-        type: "enemy_died",
-        enemyId: deathId,
-        x: deathX,
-        z: deathZ,
-      });
+      spawnGemFanAndEmitDeath(state, enemy, ctx, emit);
     }
   }
 }
@@ -1502,26 +1512,8 @@ export function tickBoomerangs(
       });
 
       if (enemy.hp <= 0) {
-        const gem = new Gem();
-        gem.id = ctx.nextGemId();
-        gem.x = enemy.x;
-        gem.z = enemy.z;
-        gem.value = GEM_VALUE;
-        state.gems.set(String(gem.id), gem);
-
-        const deathX = enemy.x;
-        const deathZ = enemy.z;
-        const deathId = enemy.id;
         if (owner) owner.kills += 1;
-        state.enemies.delete(String(enemy.id));
-        ctx.orbitHitCooldown.evictEnemy(deathId);
-
-        emit({
-          type: "enemy_died",
-          enemyId: deathId,
-          x: deathX,
-          z: deathZ,
-        });
+        spawnGemFanAndEmitDeath(state, enemy, ctx, emit);
       }
     });
 
@@ -1601,27 +1593,9 @@ export function tickBloodPools(
       });
 
       if (enemy.hp <= 0) {
-        const gem = new Gem();
-        gem.id = ctx.nextGemId();
-        gem.x = enemy.x;
-        gem.z = enemy.z;
-        gem.value = GEM_VALUE;
-        state.gems.set(String(gem.id), gem);
-
-        const deathX = enemy.x;
-        const deathZ = enemy.z;
-        const deathId = enemy.id;
         const owner = state.players.get(pool.ownerId);
         if (owner) owner.kills += 1;
-        state.enemies.delete(String(enemy.id));
-        ctx.orbitHitCooldown.evictEnemy(deathId);
-
-        emit({
-          type: "enemy_died",
-          enemyId: deathId,
-          x: deathX,
-          z: deathZ,
-        });
+        spawnGemFanAndEmitDeath(state, enemy, ctx, emit);
       }
     });
   });
@@ -1817,27 +1791,9 @@ export function tickProjectiles(
         });
 
         if (enemy.hp <= 0) {
-          const gem = new Gem();
-          gem.id = ctx.nextGemId();
-          gem.x = enemy.x;
-          gem.z = enemy.z;
-          gem.value = GEM_VALUE;
-          state.gems.set(String(gem.id), gem);
-
-          const deathX = enemy.x;
-          const deathZ = enemy.z;
-          const deathId = enemy.id;
           const owner = state.players.get(proj.ownerId);
           if (owner) owner.kills += 1;
-          state.enemies.delete(String(enemy.id));
-          ctx.orbitHitCooldown.evictEnemy(deathId);
-
-          emit({
-            type: "enemy_died",
-            enemyId: deathId,
-            x: deathX,
-            z: deathZ,
-          });
+          spawnGemFanAndEmitDeath(state, enemy, ctx, emit);
         }
       }
 
