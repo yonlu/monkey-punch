@@ -81,7 +81,14 @@ export const ENEMY_KINDS: readonly EnemyDef[] = [
  */
 export function enemyDefAt(kind: number): EnemyDef {
   const floored = Math.floor(kind);
-  const safe = Number.isFinite(floored) ? floored : 0;
+  let safe: number;
+  if (Number.isFinite(floored)) {
+    safe = floored;
+  } else if (kind > 0) {
+    safe = ENEMY_KINDS.length; // Infinity or NaN treated as max
+  } else {
+    safe = -1; // negative Infinity or anything else as min
+  }
   const idx = Math.max(0, Math.min(ENEMY_KINDS.length - 1, safe));
   return ENEMY_KINDS[idx]!;
 }
