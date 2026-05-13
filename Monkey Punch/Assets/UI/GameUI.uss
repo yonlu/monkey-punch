@@ -1,0 +1,268 @@
+/* ===== Tokens ===== */
+:root {
+  --mp-gold:        rgb(255, 216, 96);
+  --mp-dark:        rgba(40, 20, 10, 0.92);
+  --mp-brown:       rgb(138, 90, 42);
+  --mp-brown-deep:  rgb(58, 36, 16);
+  --mp-hp-red:      rgb(240, 64, 48);
+  --mp-hp-red-deep: rgb(192, 32, 24);
+  --mp-xp-blue:     rgb(95, 184, 255);
+  --mp-item-purple: rgb(216, 168, 255);
+  --mp-shadow:      rgba(0, 0, 0, 0.85);
+  --mp-bg-opaque:   rgba(0, 0, 0, 0.85);
+}
+
+/* ===== Root ===== */
+.hud-root {
+  position: absolute;
+  left: 0; right: 0; top: 0; bottom: 0;
+  -unity-font-definition: url("project://database/Assets/Fonts/PressStart2P-Regular.ttf");
+  color: rgb(255, 255, 255);
+  -unity-text-outline-color: var(--mp-shadow);
+  -unity-text-outline-width: 0;
+}
+.hidden { display: none; }
+
+.stat, .hud-time, .hud-level, .hp-text, .runover-title,
+.lvlup-prompt-text, .lvlup-timer, .lvlup-queue,
+.lvlup-card-name, .lvlup-card-tag, .lvlup-card-sub, .lvlup-card-key {
+  -unity-text-outline-color: var(--mp-shadow);
+  -unity-text-outline-width: 1.5px;
+}
+
+/* ===== Top row (top-left small stats) ===== */
+.hud-toprow {
+  position: absolute;
+  top: 12px; left: 12px;
+  flex-direction: row;
+}
+.stat {
+  font-size: 14px;
+  margin-right: 22px;
+  color: rgb(255, 255, 255);
+}
+
+/* ===== Top-center large time ===== */
+.hud-time {
+  position: absolute;
+  top: 12px; left: 50%; translate: -50% 0;
+  font-size: 28px;
+}
+
+/* ===== Top-right level ===== */
+.hud-level {
+  position: absolute;
+  top: 12px; right: 18px;
+  font-size: 24px;
+  letter-spacing: 1px;
+}
+
+/* ===== Left column ===== */
+.hud-leftcol {
+  position: absolute;
+  top: 52px; left: 12px;
+}
+.hud-hpbar {
+  width: 220px; height: 26px;
+  background-color: var(--mp-bg-opaque);
+  border-color: rgb(26, 8, 8);
+  border-width: 2px;
+  flex-shrink: 0;
+}
+.hud-hpbar > .fill.hp {
+  height: 100%;
+  background-color: var(--mp-hp-red);
+  width: 0%;
+}
+.hud-hpbar > Label {
+  position: absolute;
+  left: 0; right: 0; top: 0; bottom: 0;
+  -unity-text-align: middle-center;
+  font-size: 11px;
+}
+.hud-xpbar {
+  width: 220px; height: 10px;
+  margin-top: 4px;
+  background-color: var(--mp-bg-opaque);
+  border-color: rgb(26, 8, 8);
+  border-width: 2px;
+}
+.hud-xpbar > .fill.xp {
+  height: 100%;
+  background-color: var(--mp-xp-blue);
+  width: 0%;
+}
+
+/* ===== Inventory grid ===== */
+.hud-invgrid {
+  margin-top: 8px;
+  padding: 4px;
+  background-color: rgba(50, 30, 15, 0.65);
+  border-color: var(--mp-brown);
+  border-width: 2px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  width: 168px;
+}
+.hud-invgrid.items {
+  margin-top: 6px;
+}
+.hud-slot {
+  width: 36px; height: 36px;
+  margin: 1px 2px 1px 0;
+  background-color: rgba(20, 10, 5, 0.7);
+  border-color: var(--mp-brown-deep);
+  border-width: 1px;
+  align-items: center;
+  justify-content: center;
+}
+.hud-slot.empty {
+  background-color: rgba(20, 10, 5, 0.4);
+}
+.hud-slot > .glyph {
+  font-size: 18px;
+}
+.hud-slot > .lvl {
+  position: absolute;
+  bottom: -2px; left: 1px;
+  font-size: 9px;
+}
+
+/* ===== Level-up bar ===== */
+.lvlup-bar {
+  position: absolute;
+  bottom: 18px; left: 50%; translate: -50% 60px;
+  opacity: 0;
+  align-items: center;
+  transition-property: translate, opacity;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+.lvlup-bar.shown {
+  translate: -50% 0;
+  opacity: 1;
+}
+.lvlup-bar.downed {
+  opacity: 0.55;
+}
+.lvlup-prompt {
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.lvlup-prompt-text {
+  font-size: 13px;
+  color: var(--mp-gold);
+  letter-spacing: 2px;
+  margin-right: 12px;
+}
+.pulse {
+  transition-property: opacity;
+  transition-duration: 700ms;
+}
+.lvlup-timer {
+  font-size: 11px;
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 2px 6px;
+  margin-right: 10px;
+}
+.lvlup-queue {
+  font-size: 11px;
+  background-color: var(--mp-hp-red-deep);
+  padding: 2px 6px;
+  letter-spacing: 1px;
+}
+.lvlup-cards {
+  flex-direction: row;
+}
+.lvlup-card {
+  width: 140px;
+  margin: 0 4px;
+  padding: 8px 8px 10px;
+  background-color: var(--mp-dark);
+  border-color: var(--mp-brown);
+  border-width: 3px;
+  align-items: center;
+}
+.lvlup-card.item {
+  border-color: var(--mp-item-purple);
+}
+.lvlup-card-key {
+  position: absolute;
+  top: -10px; left: -10px;
+  width: 22px; height: 22px;
+  background-color: var(--mp-gold);
+  color: rgb(42, 26, 8);
+  border-color: rgb(0, 0, 0);
+  border-width: 2px;
+  -unity-text-align: middle-center;
+  font-size: 12px;
+}
+.lvlup-card-tag {
+  font-size: 8px;
+  letter-spacing: 1px;
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+.lvlup-card-glyph {
+  font-size: 22px;
+  margin: 2px 0 6px 0;
+}
+.lvlup-card-name {
+  font-size: 12px;
+  color: var(--mp-gold);
+  letter-spacing: 1px;
+}
+.lvlup-card.item .lvlup-card-name {
+  color: var(--mp-item-purple);
+}
+.lvlup-card-sub {
+  font-size: 8px;
+  margin-top: 6px;
+  -unity-text-align: middle-center;
+  white-space: normal;
+}
+.lvlup-card.disabled {
+  opacity: 0.4;
+}
+
+/* ===== Run-over modal ===== */
+.runover-modal {
+  position: absolute;
+  left: 0; right: 0; top: 0; bottom: 0;
+  align-items: center;
+  justify-content: center;
+  transition-property: opacity;
+  transition-duration: 200ms;
+  opacity: 0;
+}
+.runover-modal.shown {
+  opacity: 1;
+}
+.runover-dimmer {
+  position: absolute;
+  left: 0; right: 0; top: 0; bottom: 0;
+  background-color: rgba(0, 0, 0, 0.55);
+}
+.runover-panel {
+  background-color: var(--mp-dark);
+  border-color: var(--mp-brown);
+  border-width: 3px;
+  padding: 22px 36px;
+  align-items: center;
+}
+.runover-title {
+  font-size: 26px;
+  color: var(--mp-hp-red);
+  letter-spacing: 2px;
+  margin-bottom: 16px;
+}
+.runover-btn {
+  padding: 8px 24px;
+  background-color: var(--mp-gold);
+  color: rgb(42, 26, 8);
+  border-color: rgb(0, 0, 0);
+  border-width: 2px;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
