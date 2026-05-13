@@ -915,11 +915,16 @@ namespace MonkeyPunch.Net {
       if (room == null) return;
       var boxStyle = new GUIStyle(GUI.skin.box) { alignment = TextAnchor.UpperLeft };
       var labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 12 };
-      GUI.Box(new Rect(10, 10, 300, 170), GUIContent.none, boxStyle);
+      // Bottom-right corner — top-left is now occupied by Phase 8.4 HUD
+      // (HP bar + inventory grid).
+      const float DEBUG_W = 300f, DEBUG_H = 170f, DEBUG_MARGIN = 10f;
+      float debugX = Screen.width - DEBUG_W - DEBUG_MARGIN;
+      float debugY = Screen.height - DEBUG_H - DEBUG_MARGIN;
+      GUI.Box(new Rect(debugX, debugY, DEBUG_W, DEBUG_H), GUIContent.none, boxStyle);
       string predLine = predictor == null
         ? "Predict: (not initialized)"
         : $"Predict: x={predictor.X:F2} z={predictor.Z:F2} err={predictor.LastReconErr:F3} off=({predictor.RenderOffsetX:F2},{predictor.RenderOffsetZ:F2})";
-      GUI.Label(new Rect(20, 16, 280, 160),
+      GUI.Label(new Rect(debugX + 10, debugY + 6, DEBUG_W - 20, DEBUG_H - 10),
         $"Room:    {room.RoomId} (code: {room.State?.code})\n" +
         $"Session: {room.SessionId}\n" +
         $"Tick:    {lastTickSeen}\n" +
