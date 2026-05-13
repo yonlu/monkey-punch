@@ -186,6 +186,25 @@ namespace MonkeyPunch.Net {
       public double serverSwingTimeMs;
     }
 
+    [System.Serializable]
+    private class BossTelegraphEventMsg {
+      public int bossId;
+      public float originX;
+      public float originZ;
+      public float radius;
+      public double fireServerTimeMs;
+      public int serverTick;
+    }
+
+    [System.Serializable]
+    private class BossAoeHitEventMsg {
+      public int bossId;
+      public float originX;
+      public float originZ;
+      public float radius;
+      public int serverTick;
+    }
+
     // Static so a sibling CameraFollow can find us without inspector wiring.
     // Single-NetworkClient assumption; if that ever changes, swap for a
     // proper service locator.
@@ -339,6 +358,18 @@ namespace MonkeyPunch.Net {
             ev.originX, ev.originY, ev.originZ,
             ev.facingX, ev.facingZ,
             ev.arcAngle, ev.range);
+        }
+      });
+      room.OnMessage("boss_telegraph", (BossTelegraphEventMsg ev) => {
+        if (BossTelegraphVfx.Instance != null) {
+          BossTelegraphVfx.Instance.OnTelegraph(
+            (uint)ev.bossId, ev.originX, ev.originZ, ev.radius, ev.fireServerTimeMs);
+        }
+      });
+      room.OnMessage("boss_aoe_hit", (BossAoeHitEventMsg ev) => {
+        if (BossTelegraphVfx.Instance != null) {
+          BossTelegraphVfx.Instance.OnAoeHit(
+            (uint)ev.bossId, ev.originX, ev.originZ, ev.radius);
         }
       });
       room.OnMessage("player_downed", (PlayerDownedEventMsg ev) => {
