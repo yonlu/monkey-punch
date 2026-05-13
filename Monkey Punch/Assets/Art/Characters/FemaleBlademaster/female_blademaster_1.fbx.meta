@@ -3,7 +3,17 @@ guid: 9ab33c617d356a34bb9bb71f010f267e
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
-  externalObjects: {}
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: MAT_female_blademaster_1_face
+    second: {fileID: 2100000, guid: 5df6eefa43db78548b2240ce4ab550b7, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: MAT_female_blademaster_1_outfit
+    second: {fileID: 2100000, guid: 0f2824e5365aabe47b56eaa3b08b6056, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0

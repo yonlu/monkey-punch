@@ -3,7 +3,12 @@ guid: 24e3e3d71ddd98b49b4bc3fc95cb888f
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
-  externalObjects: {}
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: MAT_fantasy_blade_1
+    second: {fileID: 2100000, guid: 2809db4540c5c3944ab9f780823027aa, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0
