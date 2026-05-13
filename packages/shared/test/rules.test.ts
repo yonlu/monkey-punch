@@ -73,7 +73,7 @@ import {
   FLYING_ENEMY_ALTITUDE,
 } from "../src/constants.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "../src/weapons.js";
-import { ENEMY_KINDS } from "../src/enemies.js";
+import { ENEMY_KINDS, BOSS_KIND_INDEX } from "../src/enemies.js";
 import { mulberry32 } from "../src/rng.js";
 import type { EnemyDiedEvent } from "../src/messages.js";
 
@@ -384,6 +384,88 @@ describe("tickSpawner", () => {
 
     expect(state.enemies.size).toBe(1);
     expect(spawner.accumulator).toBeCloseTo(0);
+  });
+
+  it("M10: respects minSpawnTick — Bunny (kind=1, minSpawnTick=600) doesn't spawn at tick=599", () => {
+    const state = new RoomState();
+    state.tick = 599;
+    const p = new Player(); p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    const spawner: SpawnerState = { accumulator: ENEMY_SPAWN_INTERVAL_S, nextEnemyId: 1 };
+    const rng = mulberry32(123);
+    tickSpawner(state, spawner, 0, rng);
+    expect(state.enemies.size).toBe(1);
+    // Only kind=0 was unlocked at tick=599; spawn must be a slime.
+    const only = [...state.enemies.values()][0]!;
+    expect(only.kind).toBe(0);
+  });
+
+  it("M10: per-kind stats applied at spawn — Bunny has baseHp=10, maxHp=10", () => {
+    const state = new RoomState();
+    state.tick = 30 * 20;  // bunny unlock tick exactly
+    const p = new Player(); p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    const spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+    spawnDebugBurst(state, spawner, mulberry32(1), p, 1, 1);  // force kind=1
+    expect(state.enemies.size).toBe(1);
+    const e = [...state.enemies.values()][0]!;
+    expect(e.kind).toBe(1);
+    expect(e.hp).toBe(10);
+    expect(e.maxHp).toBe(10);
+  });
+
+  it("M10: flying enemy spawn Y is terrainHeight + FLYING_ENEMY_ALTITUDE", () => {
+    const state = new RoomState();
+    const p = new Player(); p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    const spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+    spawnDebugBurst(state, spawner, mulberry32(1), p, 1, 2);  // kind=2 = Ghost
+    const e = [...state.enemies.values()][0]!;
+    expect(e.kind).toBe(2);
+    expect(e.y).toBeCloseTo(terrainHeight(e.x, e.z) + FLYING_ENEMY_ALTITUDE, 6);
+  });
+
+  it("M10: weighted pick distribution over many spawns approximates kind weights", () => {
+    const state = new RoomState();
+    state.tick = 150 * 20;  // all non-boss kinds unlocked
+    const p = new Player(); p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    const spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+    const rng = mulberry32(7);
+
+    const counts = new Map<number, number>();
+    const TRIALS = 1200;
+    for (let i = 0; i < TRIALS; i++) {
+      spawner.accumulator = ENEMY_SPAWN_INTERVAL_S;
+      tickSpawner(state, spawner, 0, rng);
+      // Read the just-spawned enemy and remove it so MAX_ENEMIES doesn't cap.
+      const newest = [...state.enemies.values()].pop()!;
+      counts.set(newest.kind, (counts.get(newest.kind) ?? 0) + 1);
+      state.enemies.clear();
+    }
+    const totalW = 60 + 30 + 20 + 15;  // slime + bunny + ghost + skeleton
+    expect(counts.get(0)! / TRIALS).toBeCloseTo(60 / totalW, 1);
+    expect(counts.get(1)! / TRIALS).toBeCloseTo(30 / totalW, 1);
+    expect(counts.get(2)! / TRIALS).toBeCloseTo(20 / totalW, 1);
+    expect(counts.get(3)! / TRIALS).toBeCloseTo(15 / totalW, 1);
+    // No boss spawns from tickSpawner — boss is spawnWeight=0.
+    expect(counts.get(4) ?? 0).toBe(0);
+  });
+
+  it("M10: boss kind never spawned by tickSpawner (spawnWeight=0)", () => {
+    const state = new RoomState();
+    state.tick = 1_000_000;  // past every gate
+    const p = new Player(); p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    const spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+    const rng = mulberry32(1);
+    for (let i = 0; i < 200; i++) {
+      spawner.accumulator = ENEMY_SPAWN_INTERVAL_S;
+      tickSpawner(state, spawner, 0, rng);
+    }
+    for (const e of state.enemies.values()) {
+      expect(e.kind).not.toBe(BOSS_KIND_INDEX);
+    }
   });
 });
 
