@@ -72,7 +72,10 @@ import {
 const TICK_INTERVAL_MS = SIM_DT_S * 1000; // 50 ms — must equal shared SIM_DT_S
 const MAX_PLAYERS = 10;
 const DEFAULT_RECONNECTION_GRACE_S = 30;
-const ALLOW_DEBUG_MESSAGES = true;     // becomes runtime config later
+// Production builds reject all debug_* messages. Dev/test/unset (anything
+// that isn't literally "production") keeps them enabled. Matches the
+// parseGraceSeconds() env-driven pattern below.
+const ALLOW_DEBUG_MESSAGES = process.env.NODE_ENV !== "production";
 const SNAPSHOT_LOG_INTERVAL_MS = 5_000;
 // 100 ticks = 5s at 20Hz. Sweep is a safety net; tryHit/evictEnemy/
 // evictPlayer cover the common cases, so this is conservative.
@@ -320,6 +323,10 @@ export class GameRoom extends Room<{ state: RoomState }> {
     this.onMessage<LevelUpChoiceMessage>("level_up_choice", (client, message) => {
       const player = this.state.players.get(client.sessionId);
       if (!player || !player.pendingLevelUp) return;
+      // Reject picks that arrive after the auto-pick deadline. tickLevelUpDeadlines
+      // already enforces this server-side; mirror it on the inbound message path so
+      // a late client click can't sneak under the wire and pick before auto-pick fires.
+      if (this.state.tick >= player.levelUpDeadlineTick) return;
       const idx = Number(message?.choiceIndex);
       if (!Number.isInteger(idx) || idx < 0 || idx >= player.levelUpChoices.length) return;
       // M9 US-002: levelUpChoices entries are now {type:uint8, index:uint8}
@@ -365,6 +372,10 @@ export class GameRoom extends Room<{ state: RoomState }> {
       this.onMessage<DebugGrantWeaponMessage>("debug_grant_weapon", (client, message) => {
         const player = this.state.players.get(client.sessionId);
         if (!player) return;
+        // Don't bypass the level-up choice gate — the player must resolve the
+        // pending offer first. This is the server-side counterpart to the
+        // client-side digit-key suppression while the level-up bar is open.
+        if (player.pendingLevelUp) return;
         const kindRaw = Number(message?.weaponKind);
         if (!Number.isFinite(kindRaw) || kindRaw < 0 || kindRaw >= WEAPON_KINDS.length) return;
         const kind = Math.floor(kindRaw);
@@ -386,6 +397,10 @@ export class GameRoom extends Room<{ state: RoomState }> {
       this.onMessage<DebugGrantXpMessage>("debug_grant_xp", (client, message) => {
         const player = this.state.players.get(client.sessionId);
         if (!player) return;
+        // Granting xp while a choice is pending would push the player past the
+        // next threshold and stack another offer on top — same category of
+        // bypass as debug_grant_weapon. Resolve the current one first.
+        if (player.pendingLevelUp) return;
         const raw = Number(message?.amount);
         if (!Number.isFinite(raw) || raw <= 0) return;
         // Cap at 10000 per call to prevent runaway XP from a typo.
