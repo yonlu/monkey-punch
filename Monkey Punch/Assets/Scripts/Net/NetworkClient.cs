@@ -854,6 +854,7 @@ namespace MonkeyPunch.Net {
     private void PushHudState() {
       if (GameUI.Instance == null) return;
       var s = new GameUI.HudState { Connected = false };
+      bool localDowned = false;
       if (room?.State?.players != null && room.SessionId != null) {
         var localPlayer = room.State.players[room.SessionId];
         if (localPlayer != null) {
@@ -866,6 +867,7 @@ namespace MonkeyPunch.Net {
           s.Kills = localPlayer.kills;
           double elapsedTicks = Math.Max(0, (long)room.State.tick - (long)localPlayer.joinTick);
           s.ElapsedSeconds = elapsedTicks / 20.0;
+          localDowned = localPlayer.downed;
 
           if (localPlayer.weapons != null) {
             s.Weapons = new List<GameUI.HudWeaponEntry>(localPlayer.weapons.Count);
@@ -888,6 +890,7 @@ namespace MonkeyPunch.Net {
         }
       }
       GameUI.Instance.SetHud(s);
+      GameUI.Instance.SetDownedState(localDowned);
     }
 
     async void OnDestroy() {

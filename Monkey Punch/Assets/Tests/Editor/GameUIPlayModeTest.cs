@@ -100,6 +100,52 @@ namespace MonkeyPunch.Tests.Runtime {
       yield return new WaitForSeconds(0.25f);
       Assert.IsFalse(restartCalled); // HideRunOver does not invoke the callback
     }
+
+    [UnityTest]
+    public IEnumerator ShowLevelUp_WithThreeChoices_RendersThreeCards() {
+      var choices = new GameUI.LevelUpChoiceDisplay[] {
+        new GameUI.LevelUpChoiceDisplay { Kind = "weapon", Index = 0, Name = "BOLT",    NewLevel = 3 },
+        new GameUI.LevelUpChoiceDisplay { Kind = "item",   Index = 0, Name = "IFRIT",   NewLevel = 1 },
+        new GameUI.LevelUpChoiceDisplay { Kind = "weapon", Index = 6, Name = "KRONOS",  NewLevel = 1 },
+      };
+      int picked = -1;
+      gameUI.ShowLevelUp(choices, idx => picked = idx);
+      yield return null;
+
+      var root = gameUI.GetComponent<UIDocument>().rootVisualElement;
+      var bar = root.Q<VisualElement>("lvlup-bar");
+      var cards = root.Q<VisualElement>("lvlup-cards");
+      Assert.IsFalse(bar.ClassListContains("hidden"));
+      Assert.AreEqual(3, cards.childCount);
+      Assert.IsTrue(cards[1].ClassListContains("item"));
+      Assert.AreEqual("BOLT",   cards[0].Q<Label>("lvlup-card-name").text);
+      Assert.AreEqual("IFRIT",  cards[1].Q<Label>("lvlup-card-name").text);
+      Assert.AreEqual("KRONOS", cards[2].Q<Label>("lvlup-card-name").text);
+
+      gameUI.HideLevelUp();
+      yield return new WaitForSeconds(0.25f); // wait for fade-out (170ms + buffer)
+      Assert.IsTrue(bar.ClassListContains("hidden"));
+      Assert.AreEqual(-1, picked);
+    }
+
+    [UnityTest]
+    public IEnumerator SetDownedState_WhenTrue_AppliesDownedClass() {
+      var choices = new GameUI.LevelUpChoiceDisplay[] {
+        new GameUI.LevelUpChoiceDisplay { Kind = "weapon", Index = 0, Name = "BOLT", NewLevel = 2 },
+      };
+      gameUI.ShowLevelUp(choices, _ => {});
+      yield return null;
+
+      gameUI.SetDownedState(true);
+      yield return null;
+
+      var bar = gameUI.GetComponent<UIDocument>().rootVisualElement.Q<VisualElement>("lvlup-bar");
+      Assert.IsTrue(bar.ClassListContains("downed"));
+
+      gameUI.SetDownedState(false);
+      yield return null;
+      Assert.IsFalse(bar.ClassListContains("downed"));
+    }
   }
 }
 #endif

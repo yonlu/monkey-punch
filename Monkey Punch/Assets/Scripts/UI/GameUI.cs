@@ -194,7 +194,11 @@ namespace MonkeyPunch.UI {
       onLevelUpClicked = onClick;
       levelUpVisible = true;
       RefreshCursorState();
-      // Cards rendered in Task 10.
+      if (lvlupBar == null) return;
+
+      BuildLevelUpCards(choices);
+      lvlupBar.RemoveFromClassList("hidden");
+      lvlupBar.schedule.Execute(() => lvlupBar.AddToClassList("shown")).ExecuteLater(16);
     }
 
     public void HideLevelUp() {
@@ -202,7 +206,65 @@ namespace MonkeyPunch.UI {
       levelUpChoices = null;
       onLevelUpClicked = null;
       RefreshCursorState();
-      // Cards cleared in Task 10.
+      if (lvlupBar == null) return;
+      lvlupBar.RemoveFromClassList("shown");
+      lvlupBar.AddToClassList("hidden");
+    }
+
+    private void BuildLevelUpCards(LevelUpChoiceDisplay[] choices) {
+      if (lvlupCards == null) return;
+      lvlupCards.Clear();
+      if (choices == null) return;
+      for (int i = 0; i < choices.Length; i++) {
+        var c = choices[i];
+        var card = new VisualElement();
+        card.AddToClassList("lvlup-card");
+        if (c.Kind == "item") card.AddToClassList("item");
+
+        var keyBadge = new Label { text = (i + 1).ToString() };
+        keyBadge.AddToClassList("lvlup-card-key");
+        card.Add(keyBadge);
+
+        var tag = new Label { text = c.Kind == "item" ? "ITEM" : "WEAPON" };
+        tag.AddToClassList("lvlup-card-tag");
+        card.Add(tag);
+
+        var glyph = new Label {
+          text = c.Kind == "item"
+            ? Names.ItemGlyph(c.Index)
+            : Names.WeaponGlyph(c.Index),
+        };
+        glyph.AddToClassList("lvlup-card-glyph");
+        card.Add(glyph);
+
+        var name = new Label { name = "lvlup-card-name", text = c.Name ?? "?" };
+        name.AddToClassList("lvlup-card-name");
+        card.Add(name);
+
+        var sub = new Label { text = "LV " + c.NewLevel.ToString() };
+        sub.AddToClassList("lvlup-card-sub");
+        card.Add(sub);
+
+        lvlupCards.Add(card);
+      }
+
+      if (lvlupQueue != null) lvlupQueue.AddToClassList("hidden");
+    }
+
+    /// <summary>
+    /// Called by NetworkClient when Player.downed flips. Toggles the
+    /// .downed class on the level-up bar so cards grey out. Auto-pick
+    /// continues to fire from the server's tickLevelUpDeadlines.
+    /// </summary>
+    public void SetDownedState(bool downed) {
+      if (lvlupBar == null) return;
+      if (downed) {
+        lvlupBar.AddToClassList("downed");
+        if (lvlupPromptText != null) lvlupPromptText.text = "REVIVE TO PICK";
+      } else {
+        lvlupBar.RemoveFromClassList("downed");
+        if (lvlupPromptText != null) lvlupPromptText.text = "LEVEL UP — PRESS 1/2/3";
+      }
     }
 
     public void ShowRunOver(string reason, Action onRestart) {
