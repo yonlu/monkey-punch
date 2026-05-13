@@ -40,6 +40,13 @@ namespace MonkeyPunch.UI {
     [SerializeField] private InputActionAsset inputActions;
     private InputAction pick1, pick2, pick3;
 
+    [Header("Style")]
+    // The UXML `<Style src=...>` reference does not reliably attach the
+    // stylesheet at runtime in Unity 6 (panel.styleSheets.count came back
+    // 0 even though the .uss asset loaded fine). We attach manually in
+    // OnEnable. Assign GameUI.uss here in the Inspector.
+    [SerializeField] private StyleSheet hudStyleSheet;
+
     // ----- Modal state -----
 
     private bool levelUpVisible;
@@ -91,6 +98,11 @@ namespace MonkeyPunch.UI {
       if (root == null) {
         Debug.LogError("[GameUI] UXML root 'root' not found — check GameUI.uxml is assigned to the UIDocument.");
         return;
+      }
+      if (hudStyleSheet != null && !root.styleSheets.Contains(hudStyleSheet)) {
+        root.styleSheets.Add(hudStyleSheet);
+      } else if (hudStyleSheet == null) {
+        Debug.LogWarning("[GameUI] hudStyleSheet not assigned — assign Assets/UI/GameUI.uss on the GameUI component.");
       }
       statTime        = root.Q<Label>("stat-time");
       statKills       = root.Q<Label>("stat-kills");

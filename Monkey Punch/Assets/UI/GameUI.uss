@@ -1,5 +1,9 @@
-/* ===== Tokens ===== */
-:root {
+/* ===== Root + Tokens =====
+   `:root` is not a valid USS selector in Unity 6 — its presence makes
+   the whole stylesheet silently fail to apply. CSS custom properties
+   are defined directly on `.hud-root` instead; descendants inherit
+   them automatically. */
+.hud-root {
   --mp-gold:        rgb(255, 216, 96);
   --mp-dark:        rgba(40, 20, 10, 0.92);
   --mp-brown:       rgb(138, 90, 42);
@@ -10,10 +14,7 @@
   --mp-item-purple: rgb(216, 168, 255);
   --mp-shadow:      rgba(0, 0, 0, 0.85);
   --mp-bg-opaque:   rgba(0, 0, 0, 0.85);
-}
 
-/* ===== Root ===== */
-.hud-root {
   position: absolute;
   left: 0; right: 0; top: 0; bottom: 0;
   -unity-font-definition: url("project://database/Assets/Fonts/PressStart2P-Regular.ttf");
