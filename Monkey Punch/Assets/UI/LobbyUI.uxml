@@ -1,0 +1,43 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements"
+         xsi="http://www.w3.org/2001/XMLSchema-instance"
+         engine="UnityEngine.UIElements" editor="UnityEditor.UIElements"
+         noNamespaceSchemaLocation="../../UIElementsSchema/UIElements.xsd"
+         editor-extension-mode="False">
+  <Style src="project://database/Assets/UI/LobbyUI.uss"/>
+
+  <ui:VisualElement name="root" class="lobby-root">
+
+    <ui:Label name="title" class="lobby-title" text="MONKEY PUNCH"/>
+
+    <ui:VisualElement name="banner" class="lobby-banner hidden">
+      <ui:Label name="banner-text" class="banner-text" text=""/>
+    </ui:VisualElement>
+
+    <ui:VisualElement class="lobby-card">
+      <ui:Label class="field-label" text="DISPLAY NAME"/>
+      <ui:TextField name="name-input" max-length="16"/>
+      <ui:Button name="create-btn" class="primary-btn" text="CREATE NEW ROOM"/>
+    </ui:VisualElement>
+
+    <ui:VisualElement class="lobby-card">
+      <ui:VisualElement class="rooms-header">
+        <ui:Label name="rooms-title" class="section-title" text="AVAILABLE ROOMS (—)"/>
+        <ui:Button name="refresh-btn" class="icon-btn" text="↻"/>
+      </ui:VisualElement>
+      <ui:ScrollView name="rooms-scroll" class="rooms-scroll">
+        <ui:VisualElement name="rooms-list" class="rooms-list"/>
+        <ui:Label name="rooms-empty" class="rooms-empty hidden"
+                  text="No rooms yet — be the first to create one"/>
+      </ui:ScrollView>
+    </ui:VisualElement>
+
+    <ui:VisualElement class="lobby-card">
+      <ui:Label class="field-label" text="OR JOIN BY CODE"/>
+      <ui:VisualElement class="code-input-row">
+        <ui:TextField name="code-input" max-length="4"/>
+        <ui:Button name="join-code-btn" class="secondary-btn" text="JOIN"/>
+      </ui:VisualElement>
+    </ui:VisualElement>
+
+  </ui:VisualElement>
+</ui:UXML>

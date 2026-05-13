@@ -1,0 +1,198 @@
+/* Color tokens duplicated from GameUI.uss because USS has no @import.
+   If these drift, copy from GameUI.uss — single source of truth lives
+   there. */
+.lobby-root {
+  --mp-gold:        rgb(255, 216, 96);
+  --mp-dark:        rgba(40, 20, 10, 0.92);
+  --mp-brown:       rgb(138, 90, 42);
+  --mp-brown-deep:  rgb(58, 36, 16);
+  --mp-hp-red:      rgb(240, 64, 48);
+  --mp-shadow:      rgba(0, 0, 0, 0.85);
+
+  position: absolute;
+  left: 0; right: 0; top: 0; bottom: 0;
+
+  -unity-font-definition: url("project://database/Assets/Fonts/PressStart2P-Regular.ttf");
+  color: rgb(255, 255, 255);
+
+  align-items: center;
+  padding-top: 40px;
+  padding-bottom: 24px;
+  background-color: rgb(20, 12, 6);
+}
+.hidden { display: none; }
+
+/* ----- Title ----- */
+.lobby-title {
+  font-size: 36px;
+  color: var(--mp-gold);
+  -unity-text-outline-color: var(--mp-shadow);
+  -unity-text-outline-width: 2px;
+  letter-spacing: 4px;
+  margin-bottom: 18px;
+}
+
+/* ----- Banner (errors AND context messages) ----- */
+.lobby-banner {
+  width: 600px;
+  max-width: 90%;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background-color: var(--mp-dark);
+  border-width: 2px;
+  border-color: var(--mp-brown);
+}
+.lobby-banner.error {
+  border-color: var(--mp-hp-red);
+}
+.banner-text {
+  font-size: 12px;
+  white-space: normal;
+}
+
+/* ----- Cards ----- */
+.lobby-card {
+  width: 600px;
+  max-width: 90%;
+  padding: 14px;
+  margin-bottom: 12px;
+  background-color: var(--mp-dark);
+  border-width: 2px;
+  border-color: var(--mp-brown);
+}
+
+.field-label {
+  font-size: 10px;
+  color: var(--mp-gold);
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+}
+
+.section-title {
+  font-size: 12px;
+  color: var(--mp-gold);
+  letter-spacing: 1px;
+}
+
+/* ----- Inputs ----- */
+TextField {
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+TextField > * > .unity-text-element {
+  color: rgb(255, 255, 255);
+}
+
+/* ----- Buttons ----- */
+.primary-btn {
+  height: 36px;
+  font-size: 13px;
+  background-color: rgb(60, 100, 50);
+  border-color: rgb(120, 180, 100);
+  border-width: 2px;
+  color: rgb(255, 255, 255);
+  letter-spacing: 1px;
+}
+.primary-btn:hover { background-color: rgb(80, 130, 60); }
+.primary-btn:active { background-color: rgb(50, 85, 40); }
+.primary-btn:disabled {
+  background-color: rgb(60, 50, 40);
+  border-color: rgb(90, 70, 50);
+  color: rgb(160, 150, 140);
+}
+
+.secondary-btn {
+  height: 30px;
+  padding: 0 14px;
+  font-size: 12px;
+  background-color: var(--mp-brown-deep);
+  border-color: var(--mp-brown);
+  border-width: 2px;
+  color: rgb(255, 255, 255);
+  letter-spacing: 1px;
+}
+.secondary-btn:hover { background-color: var(--mp-brown); }
+.secondary-btn:disabled { color: rgb(140, 130, 120); }
+
+.icon-btn {
+  width: 32px;
+  height: 24px;
+  padding: 0;
+  font-size: 14px;
+  background-color: var(--mp-brown-deep);
+  border-color: var(--mp-brown);
+  border-width: 2px;
+  color: rgb(255, 255, 255);
+}
+.icon-btn:hover { background-color: var(--mp-brown); }
+
+/* ----- Rooms section ----- */
+.rooms-header {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.rooms-scroll {
+  max-height: 240px;
+}
+.rooms-empty {
+  font-size: 11px;
+  color: rgb(180, 165, 150);
+  -unity-font-style: italic;
+  padding: 14px;
+  -unity-text-align: middle-center;
+}
+
+/* ----- Room row ----- */
+.room-row {
+  flex-direction: row;
+  align-items: center;
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  background-color: rgb(28, 18, 10);
+  border-width: 1px;
+  border-color: var(--mp-brown);
+  border-radius: 0;
+}
+.room-row:hover {
+  background-color: rgb(40, 28, 16);
+}
+.room-row:active {
+  background-color: rgb(24, 14, 8);
+}
+.room-row-full {
+  opacity: 0.45;
+}
+.room-host {
+  flex-grow: 1;
+  font-size: 12px;
+}
+.room-code {
+  width: 70px;
+  font-size: 12px;
+  color: var(--mp-gold);
+  letter-spacing: 1px;
+}
+.room-players {
+  width: 60px;
+  font-size: 12px;
+  -unity-text-align: middle-right;
+}
+.room-full-badge {
+  width: 50px;
+  font-size: 10px;
+  color: var(--mp-hp-red);
+  -unity-text-align: middle-right;
+}
+
+/* ----- Code-input row ----- */
+.code-input-row {
+  flex-direction: row;
+  align-items: center;
+}
+.code-input-row > TextField {
+  width: 100px;
+  margin-right: 8px;
+  margin-bottom: 0;
+}
