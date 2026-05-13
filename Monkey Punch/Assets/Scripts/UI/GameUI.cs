@@ -208,7 +208,7 @@ namespace MonkeyPunch.UI {
       RefreshCursorState();
       if (lvlupBar == null) return;
       lvlupBar.RemoveFromClassList("shown");
-      lvlupBar.AddToClassList("hidden");
+      lvlupBar.schedule.Execute(() => lvlupBar.AddToClassList("hidden")).ExecuteLater(170);
     }
 
     private void BuildLevelUpCards(LevelUpChoiceDisplay[] choices) {
