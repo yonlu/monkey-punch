@@ -227,6 +227,12 @@ namespace MonkeyPunch.UI {
       }
     }
 
+    // Tracks pending ExecuteLater schedules so a fast Show→Hide→Show
+     // sequence (multiple level-ups in quick succession) doesn't have an
+     // older Hide's deferred `.hidden` add clobber a newer Show.
+    private IVisualElementScheduledItem pendingShowSchedule;
+    private IVisualElementScheduledItem pendingHideSchedule;
+
     public void ShowLevelUp(LevelUpChoiceDisplay[] choices, Action<int> onClick) {
       levelUpChoices = choices;
       onLevelUpClicked = onClick;
@@ -235,9 +241,14 @@ namespace MonkeyPunch.UI {
       EnableLevelUpActions();
       if (lvlupBar == null) return;
 
+      // Cancel any pending hide so it doesn't re-hide the bar mid-flight.
+      pendingHideSchedule?.Pause();
+      pendingHideSchedule = null;
+
       BuildLevelUpCards(choices);
       lvlupBar.RemoveFromClassList("hidden");
-      lvlupBar.schedule.Execute(() => lvlupBar.AddToClassList("shown")).ExecuteLater(16);
+      pendingShowSchedule?.Pause();
+      pendingShowSchedule = lvlupBar.schedule.Execute(() => lvlupBar.AddToClassList("shown")).ExecuteLater(16);
     }
 
     public void HideLevelUp() {
@@ -247,8 +258,14 @@ namespace MonkeyPunch.UI {
       RefreshCursorState();
       DisableLevelUpActions();
       if (lvlupBar == null) return;
+
+      // Cancel any pending show so it doesn't re-show the bar after we hide.
+      pendingShowSchedule?.Pause();
+      pendingShowSchedule = null;
+
       lvlupBar.RemoveFromClassList("shown");
-      lvlupBar.schedule.Execute(() => lvlupBar.AddToClassList("hidden")).ExecuteLater(170);
+      pendingHideSchedule?.Pause();
+      pendingHideSchedule = lvlupBar.schedule.Execute(() => lvlupBar.AddToClassList("hidden")).ExecuteLater(170);
     }
 
     private void BuildLevelUpCards(LevelUpChoiceDisplay[] choices) {
@@ -327,10 +344,16 @@ namespace MonkeyPunch.UI {
       int wholeSeconds = Mathf.CeilToInt((float)Mathf.Max(0f, (float)secondsRemaining));
       lvlupTimer.text = "AUTO " + wholeSeconds.ToString() + "s";
 
+      // queueCount is the number of *additional pending offers beyond the
+      // one currently shown* — not the number of choice cards in the
+      // current offer. The server doesn't expose that figure today, so
+      // NetworkClient passes 0 and the badge stays hidden. Each new offer
+      // arrives as its own level_up_offered event and is shown in
+      // sequence with a fresh deadline.
       if (lvlupQueue != null) {
-        if (queueCount > 1) {
+        if (queueCount > 0) {
           lvlupQueue.RemoveFromClassList("hidden");
-          lvlupQueue.text = "+" + (queueCount - 1).ToString() + " MORE";
+          lvlupQueue.text = "+" + queueCount.ToString() + " MORE";
         } else {
           lvlupQueue.AddToClassList("hidden");
         }

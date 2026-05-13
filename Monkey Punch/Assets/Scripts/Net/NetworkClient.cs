@@ -891,16 +891,23 @@ namespace MonkeyPunch.Net {
       }
       GameUI.Instance.SetHud(s);
       GameUI.Instance.SetDownedState(localDowned);
-      // Per-frame level-up timer + queue rendering. Only meaningful while
-      // the bar is on screen; guard avoids wasted work each frame.
+      // Per-frame level-up timer rendering. Only meaningful while the
+      // bar is on screen.
+      //
+      // queueCount note: lp.levelUpChoices.Count is the number of
+      // *choice cards in the current offer* (≈3), not the number of
+      // additional offers waiting. The server doesn't currently expose
+      // a pending-offer count, so we pass 0 — each subsequent level-up
+      // arrives as its own level_up_offered event in sequence. The
+      // SetLevelUpTimer signature still accepts queueCount so we can
+      // wire a real pending-offer count later without changing the API.
       if (GameUI.Instance.LevelUpOpen && room?.State != null &&
           room.State.players != null && room.SessionId != null) {
         var lp = room.State.players[room.SessionId];
         if (lp != null) {
           double secondsRemaining = System.Math.Max(0,
             (long)lp.levelUpDeadlineTick - (long)room.State.tick) * PredictorConstants.SIM_DT_S;
-          int queueCount = lp.levelUpChoices?.Count ?? 0;
-          GameUI.Instance.SetLevelUpTimer(secondsRemaining, queueCount);
+          GameUI.Instance.SetLevelUpTimer(secondsRemaining, queueCount: 0);
         }
       }
     }
