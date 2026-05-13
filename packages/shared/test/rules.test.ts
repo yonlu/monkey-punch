@@ -70,6 +70,7 @@ import {
   xpForLevel,
   MAP_RADIUS,
   ENEMY_DESPAWN_RADIUS,
+  FLYING_ENEMY_ALTITUDE,
 } from "../src/constants.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "../src/weapons.js";
 import { ENEMY_KINDS } from "../src/enemies.js";
@@ -208,6 +209,62 @@ describe("tickEnemies", () => {
     expect(Number.isFinite(e.z)).toBe(true);
     expect(e.x).toBe(0);
     expect(e.z).toBe(0);
+  });
+
+  it("M10: applies per-kind speedMultiplier (Bunny moves 1.5× as fast as Slime)", () => {
+    const state = new RoomState();
+    const p = new Player(); p.x = 10; p.z = 0;
+    state.players.set("p1", p);
+
+    const slime = new Enemy(); slime.id = 1; slime.kind = 0; slime.x = 0; slime.z = 0; slime.maxHp = 30; slime.hp = 30;
+    const bunny = new Enemy(); bunny.id = 2; bunny.kind = 1; bunny.x = 0; bunny.z = 1; bunny.maxHp = 10; bunny.hp = 10;
+    state.enemies.set("1", slime);
+    state.enemies.set("2", bunny);
+
+    const dt = SIM_DT_S;
+    tickEnemies(state, dt);
+
+    // Slime moves ENEMY_SPEED * dt * 1.0 = 0.1 units toward the player (along +x).
+    expect(slime.x).toBeCloseTo(ENEMY_SPEED * dt * 1.0, 6);
+    // Bunny moves 1.5× as fast — but its target direction is at (10, -1) from (0, 1),
+    // so its X component is slightly less than (ENEMY_SPEED * dt * 1.5). The ratio
+    // |bunny step| / |slime step| should be exactly 1.5.
+    const slimeStep = Math.hypot(slime.x, slime.z);
+    const bunnyStep = Math.hypot(bunny.x, bunny.z - 1);
+    expect(bunnyStep / slimeStep).toBeCloseTo(1.5, 4);
+  });
+
+  it("M10: flying enemy Y is pinned to terrainHeight + FLYING_ENEMY_ALTITUDE every tick", () => {
+    const state = new RoomState();
+    const p = new Player(); p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    const ghost = new Enemy(); ghost.id = 3; ghost.kind = 2; ghost.x = 5; ghost.z = 5; ghost.maxHp = 20; ghost.hp = 20;
+    state.enemies.set("3", ghost);
+
+    tickEnemies(state, SIM_DT_S);
+    // Whatever terrainHeight(x, z) returns, the ghost's y is that + FLYING_ENEMY_ALTITUDE.
+    const expectedY = terrainHeight(ghost.x, ghost.z) + FLYING_ENEMY_ALTITUDE;
+    expect(ghost.y).toBeCloseTo(expectedY, 6);
+  });
+
+  it("M10: enemy with abilityFireAt > 0 does NOT move (windup freeze)", () => {
+    const state = new RoomState();
+    state.tick = 100;
+    const p = new Player(); p.x = 10; p.z = 0;
+    state.players.set("p1", p);
+    const boss = new Enemy();
+    boss.id = 4; boss.kind = 4; boss.x = 0; boss.z = 0;
+    boss.maxHp = 2000; boss.hp = 2000;
+    boss.abilityFireAt = 120;  // windup; > 0
+    state.enemies.set("4", boss);
+
+    const startX = boss.x;
+    const startZ = boss.z;
+    tickEnemies(state, SIM_DT_S);
+    expect(boss.x).toBe(startX);
+    expect(boss.z).toBe(startZ);
+    // Y-snap still happens — boss is not flying, so it lands on terrain.
+    expect(boss.y).toBeCloseTo(terrainHeight(boss.x, boss.z) + ENEMY_GROUND_OFFSET, 6);
   });
 });
 
