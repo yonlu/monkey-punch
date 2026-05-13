@@ -64,10 +64,10 @@ binding — violations are bugs.
     instance, not on RoomState — server-only counters do not pollute the
     schema.
 11. **Tick order.** Each server tick runs in this fixed order:
-    `tickPlayers → tickStatusEffects → tickEnemies → tickContactDamage
-    → tickRunEndCheck → tickWeapons → tickProjectiles → tickBoomerangs
-    → tickBloodPools → tickGems → tickXp → tickLevelUpDeadlines
-    → tickSpawner`.
+    `tickPlayers → tickStatusEffects → tickEnemies → tickBossAbilities
+    → tickContactDamage → tickRunEndCheck → tickWeapons → tickProjectiles
+    → tickBoomerangs → tickBloodPools → tickGems → tickXp
+    → tickLevelUpDeadlines → tickSpawner → tickBossSpawner`.
     Players first so weapons see fresh positions; status effects before
     enemies so movement uses fresh slow state (an enemy whose slow
     expires this tick is moved at full speed); contact damage after
@@ -87,6 +87,13 @@ binding — violations are bugs.
     spawner both consume the room rng — reordering forks the seed;
     tickStatusEffects, tickBoomerangs, and tickBloodPools do NOT
     consume rng, so their insertion leaves the schedule intact).
+    M10: tickBossAbilities slots between tickEnemies and tickContactDamage
+    so the AoE strikes post-movement player positions; it does NOT
+    consume rng (telegraph timing is deterministic from off-schema
+    cooldown bookkeeping; AoE is a radius check). tickBossSpawner is
+    appended after tickSpawner — its rng consumption (boss spawn player
+    + angle picks) appends to the schedule rather than reordering
+    existing consumers.
     This order is load-bearing for fairness AND for cross-client
     determinism — do not reorder.
     Universal invariant (M6 onward): every tick function early-outs at
@@ -94,8 +101,9 @@ binding — violations are bugs.
     state is one branch in each function, not a per-system gate.
 12. **Combat events are server→client only and time-based, not state.**
     `fire`, `hit`, `enemy_died`, `gem_collected`, `level_up_offered`,
-    `level_up_resolved`, `player_damaged`, `player_downed`, `run_ended`
-    are broadcast events, not schema entries.
+    `level_up_resolved`, `player_damaged`, `player_downed`, `run_ended`,
+    `boss_telegraph`, `boss_aoe_hit` are broadcast events, not schema
+    entries.
     Projectile-behavior weapons are simulated client-side as a closed-form
     function of the `fire` event payload. Orbit-behavior weapons are
     simulated client-side as a closed-form function of `(state.tick,
@@ -104,6 +112,18 @@ binding — violations are bugs.
     `WeaponBehavior` kind; adding a new behavior kind means one new arm
     in `tickWeapons` and one new client renderer. Never name-based
     branching in tick or render code.
+13. **Enemy variety is data, not branches.** Per-kind enemy stats (HP,
+    speed multiplier, contact damage, radius, gem drop count, spawn
+    weight, time-gated unlocks, flying flag) live in the `ENEMY_KINDS`
+    table in `packages/shared/src/enemies.ts`. Per-kind dispatch goes
+    through `enemyDefAt(kind)`, never through name-based branching in
+    tick or render code. Adding a new enemy is a row in the table.
+    Adding a new mechanical capability (a second status-effect kind, a
+    new movement mode, a boss with a different ability shape) requires
+    the corresponding field shape AND the read site — same discipline
+    as `WEAPON_KINDS`. The Unity client's `enemyPrefabs[]` array is
+    indexed by `Enemy.kind` so the rendering layer matches the data
+    table's order.
 
 ## Things NOT to do
 
