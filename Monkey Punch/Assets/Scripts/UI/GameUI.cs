@@ -426,9 +426,19 @@ namespace MonkeyPunch.UI {
     private void PickIndex(int idx) {
       if (!levelUpVisible || levelUpChoices == null) return;
       if (idx < 0 || idx >= levelUpChoices.Length) return;
-      var cb = onLevelUpClicked;
-      HideLevelUp();
-      cb?.Invoke(idx);
+      // Do NOT HideLevelUp here. Teardown is deferred to NetworkClient's
+      // level_up_resolved handler. Reason: InputAction callbacks fire in
+      // InputSystem.Update (before script Update), and the digit-key debug
+      // grants in NetworkClient.Update poll Keyboard.current directly,
+      // gated by GameUI.LevelUpOpen. If we cleared levelUpVisible here,
+      // that gate would already be false by the time NetworkClient.Update
+      // ran on the same frame — letting wasPressedThisFrame fire a
+      // DebugGrantWeapon for the same key the user just used to pick a
+      // card. Keeping levelUpVisible == true until the server confirms
+      // closes the race. See spec
+      // docs/superpowers/specs/2026-05-13-levelup-digit-double-grant-fix-design.md.
+      DisableLevelUpActions();
+      onLevelUpClicked?.Invoke(idx);
     }
 
     // ----- Pure helper (public for testability) -----
