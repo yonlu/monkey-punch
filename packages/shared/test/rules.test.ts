@@ -76,7 +76,8 @@ import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "../src/weapons.js";
 import { ENEMY_KINDS, BOSS_KIND_INDEX, enemyDefAt } from "../src/enemies.js";
 import { mulberry32 } from "../src/rng.js";
 import type { EnemyDiedEvent, BossTelegraphEvent } from "../src/messages.js";
-import { tickBossAbilities } from "../src/rules.js";
+import { tickBossAbilities, tickBossSpawner, type BossSpawnerState } from "../src/rules.js";
+import { BOSS_INTERVAL_TICKS } from "../src/constants.js";
 
 function addPlayer(state: RoomState, id: string, dirX: number, dirZ: number): Player {
   const p = new Player();
@@ -4974,5 +4975,92 @@ describe("tickBossAbilities", () => {
     tickBossAbilities(state, 0, new Map([[1, -1]]), 0, (e) => events.push(e));
     expect(events).toHaveLength(0);
     expect(boss.abilityFireAt).toBe(-1);
+  });
+});
+
+describe("tickBossSpawner", () => {
+  function makeBossSpawnerState(nextBossAt: number, aliveBossId: number = -1): BossSpawnerState {
+    return { nextBossAt, aliveBossId };
+  }
+  function makeRoom(): { state: RoomState; spawner: SpawnerState } {
+    const state = new RoomState();
+    const p = new Player(); p.sessionId = "p1"; p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    return { state, spawner: { accumulator: 0, nextEnemyId: 1 } };
+  }
+
+  it("does NOT spawn before nextBossAt", () => {
+    const { state, spawner } = makeRoom();
+    const bossSpawner = makeBossSpawnerState(100);
+    state.tick = 99;
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(1), spawner, new Map());
+    expect(state.enemies.size).toBe(0);
+    expect(bossSpawner.aliveBossId).toBe(-1);
+  });
+
+  it("spawns exactly one boss at nextBossAt with correct stats", () => {
+    const { state, spawner } = makeRoom();
+    const bossSpawner = makeBossSpawnerState(100);
+    state.tick = 100;
+    const cooldowns = new Map<number, number>();
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(1), spawner, cooldowns);
+    expect(state.enemies.size).toBe(1);
+    const boss = [...state.enemies.values()][0]!;
+    expect(boss.kind).toBe(BOSS_KIND_INDEX);
+    const def = enemyDefAt(BOSS_KIND_INDEX);
+    expect(boss.hp).toBe(def.baseHp);
+    expect(boss.maxHp).toBe(def.baseHp);
+    expect(boss.abilityFireAt).toBe(-1);
+    expect(bossSpawner.aliveBossId).toBe(boss.id);
+    // Cooldown initialized — first ability after one cooldown from spawn.
+    expect(cooldowns.get(boss.id)).toBe(state.tick + def.bossAbilityCooldownTicks);
+  });
+
+  it("second boss does NOT spawn while first is alive", () => {
+    const { state, spawner } = makeRoom();
+    const bossSpawner = makeBossSpawnerState(100);
+    state.tick = 100;
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(1), spawner, new Map());
+    expect(state.enemies.size).toBe(1);
+
+    state.tick = 100 + BOSS_INTERVAL_TICKS * 5;
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(2), spawner, new Map());
+    expect(state.enemies.size).toBe(1);
+  });
+
+  it("death cleanup: resets aliveBossId and schedules next spawn one interval later", () => {
+    const { state, spawner } = makeRoom();
+    const bossSpawner = makeBossSpawnerState(100);
+    state.tick = 100;
+    const cooldowns = new Map<number, number>();
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(1), spawner, cooldowns);
+    const bossId = bossSpawner.aliveBossId;
+    expect(bossId).not.toBe(-1);
+
+    state.enemies.delete(String(bossId));
+    state.tick = 150;
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(99), spawner, cooldowns);
+    expect(bossSpawner.aliveBossId).toBe(-1);
+    expect(bossSpawner.nextBossAt).toBe(state.tick + BOSS_INTERVAL_TICKS);
+    expect(cooldowns.has(bossId)).toBe(false);
+  });
+
+  it("no spawn when all players are downed", () => {
+    const { state, spawner } = makeRoom();
+    state.players.get("p1")!.downed = true;
+    const bossSpawner = makeBossSpawnerState(100);
+    state.tick = 100;
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(1), spawner, new Map());
+    expect(state.enemies.size).toBe(0);
+    expect(bossSpawner.aliveBossId).toBe(-1);
+  });
+
+  it("early-outs on state.runEnded", () => {
+    const { state, spawner } = makeRoom();
+    state.runEnded = true;
+    const bossSpawner = makeBossSpawnerState(0);
+    state.tick = 0;
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(1), spawner, new Map());
+    expect(state.enemies.size).toBe(0);
   });
 });

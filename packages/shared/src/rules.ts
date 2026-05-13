@@ -45,10 +45,11 @@ import {
   TERMINAL_FALL_SPEED,
   TICK_RATE,
   xpForLevel,
+  BOSS_INTERVAL_TICKS,
 } from "./constants.js";
 import { terrainHeight } from "./terrain.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, isMeleeArcWeapon, isAuraWeapon, isBoomerangWeapon, type WeaponDef, type TargetingMode, type MeleeArcWeaponDef, type AuraWeaponDef, type BoomerangWeaponDef, type BoomerangLevel } from "./weapons.js";
-import { ENEMY_KINDS, enemyDefAt } from "./enemies.js";
+import { ENEMY_KINDS, enemyDefAt, BOSS_KIND_INDEX } from "./enemies.js";
 import type { Rng } from "./rng.js";
 import type {
   FireEvent,
@@ -2312,4 +2313,99 @@ export function tickBossAbilities(
     enemy.abilityFireAt = -1;
     bossCooldowns.set(enemy.id, currentTick + def.bossAbilityCooldownTicks);
   });
+}
+
+/**
+ * M10: server-only boss-spawn state. Lives on GameRoom, NOT on
+ * RoomState (server-only counters don't pollute the schema). Spec §AD3.
+ *
+ *   nextBossAt   — tick at which to attempt the next boss spawn.
+ *                  Initialized to BOSS_INTERVAL_TICKS so the first
+ *                  boss spawns at T=BOSS_INTERVAL seconds, not T=0.
+ *   aliveBossId  — id of the currently-alive boss, or -1 if none.
+ *                  Enforces the 1-alive-at-a-time invariant.
+ */
+export type BossSpawnerState = {
+  nextBossAt: number;
+  aliveBossId: number;
+};
+
+/**
+ * M10: paired boss spawn / death cleanup. Runs LAST in the tick order
+ * (after tickSpawner) so its rng consumption appends to the schedule
+ * rather than reordering existing consumers (spec §AD7).
+ *
+ * Death cleanup uses the post-condition check (spec §AD4): if the
+ * recorded alive boss is no longer in state.enemies, it died last tick.
+ * Reset aliveBossId and schedule the next spawn at currentTick +
+ * BOSS_INTERVAL_TICKS. Also evict the dead boss's bossCooldowns entry.
+ *
+ * Spawn uses the same rng-driven player + angle pattern as tickSpawner.
+ *   - 1 rng() for live-player pick
+ *   - 1 rng() for angle (single attempt; no map-radius retry — bosses
+ *     can spawn anywhere within the map without the retry loop, and
+ *     a once-per-3-minutes event tolerates a slot skip in the rare
+ *     edge case).
+ *
+ * Shares `spawner.nextEnemyId++` so boss ids are unique within the
+ * Enemy.id space.
+ */
+export function tickBossSpawner(
+  state: RoomState,
+  bossSpawner: BossSpawnerState,
+  currentTick: number,
+  rng: Rng,
+  spawner: SpawnerState,
+  bossCooldowns: Map<number, number>,
+): void {
+  if (state.runEnded) return;
+  if (state.players.size === 0) return;
+
+  // --- Cleanup: did our recorded alive boss die last tick? ---
+  if (
+    bossSpawner.aliveBossId !== -1
+    && !state.enemies.has(String(bossSpawner.aliveBossId))
+  ) {
+    bossCooldowns.delete(bossSpawner.aliveBossId);
+    bossSpawner.aliveBossId = -1;
+    bossSpawner.nextBossAt = currentTick + BOSS_INTERVAL_TICKS;
+  }
+
+  // --- Spawn gate ---
+  if (bossSpawner.aliveBossId !== -1) return;
+  if (currentTick < bossSpawner.nextBossAt) return;
+
+  // Count + pick a random non-downed player.
+  let liveCount = 0;
+  state.players.forEach((p) => { if (!p.downed) liveCount += 1; });
+  if (liveCount === 0) return;
+
+  const liveIdx = Math.floor(rng() * liveCount);
+  let i = 0;
+  let target: Player | undefined;
+  state.players.forEach((p) => {
+    if (p.downed) return;
+    if (i === liveIdx) target = p;
+    i++;
+  });
+  if (!target) return;
+
+  const angle = rng() * Math.PI * 2;
+  const def = enemyDefAt(BOSS_KIND_INDEX);
+  const enemy = new Enemy();
+  enemy.id = spawner.nextEnemyId++;
+  enemy.kind = BOSS_KIND_INDEX;
+  enemy.x = target.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
+  enemy.z = target.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
+  enemy.y = terrainHeight(enemy.x, enemy.z)
+          + (def.flying ? FLYING_ENEMY_ALTITUDE : ENEMY_GROUND_OFFSET);
+  enemy.hp = def.baseHp;
+  enemy.maxHp = def.baseHp;
+  enemy.abilityFireAt = -1;
+  state.enemies.set(String(enemy.id), enemy);
+
+  bossSpawner.aliveBossId = enemy.id;
+  // Initialize cooldown so the first ability triggers AFTER one
+  // cooldown period (not immediately on spawn).
+  bossCooldowns.set(enemy.id, currentTick + def.bossAbilityCooldownTicks);
 }
