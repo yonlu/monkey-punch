@@ -281,6 +281,14 @@ namespace MonkeyPunch.UI {
         name.AddToClassList("lvlup-card-name");
         card.Add(name);
 
+        var desc = new Label {
+          text = c.Kind == "item"
+            ? Names.ItemDescription(c.Index)
+            : Names.WeaponDescription(c.Index),
+        };
+        desc.AddToClassList("lvlup-card-desc");
+        card.Add(desc);
+
         var sub = new Label { text = "LV " + c.NewLevel.ToString() };
         sub.AddToClassList("lvlup-card-sub");
         card.Add(sub);

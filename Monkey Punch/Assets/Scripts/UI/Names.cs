@@ -51,17 +51,47 @@ namespace MonkeyPunch.UI {
       }
     }
 
+    // Indices match the Weapons[] array above — re-verify if that order
+    // changes. Earlier mapping had drifted from the array.
     public static string WeaponGlyph(int kind) {
       switch (kind) {
         case 0: return "⚡";  // Bolt
-        case 1: return "🏹";  // Gakkung Bow
-        case 2: return "🔱";  // Ahlspiess
-        case 3: return "🌀";  // Orbit
-        case 4: return "⚔";   // Damascus
-        case 5: return "🛡";  // Claymore
-        case 6: return "✨";  // Kronos
-        case 7: return "🪓";  // Bloody Axe
+        case 1: return "🌀";  // Orbit
+        case 2: return "🏹";  // Gakkung Bow
+        case 3: return "⚔";   // Damascus
+        case 4: return "🛡";  // Claymore
+        case 5: return "🔱";  // Ahlspiess
+        case 6: return "🪓";  // Bloody Axe
+        case 7: return "✨";  // Kronos
         default: return "?";
+      }
+    }
+
+    // Short, kind-keyed effect description shown on level-up cards.
+    // One line each — UI Toolkit wraps if needed.
+    public static string ItemDescription(int kind) {
+      switch (kind) {
+        case 0: return "More weapon damage";
+        case 1: return "Faster weapon cooldown";
+        case 2: return "More max HP";
+        case 3: return "Faster movement";
+        case 4: return "Larger pickup radius";
+        case 5: return "More XP from gems";
+        default: return "";
+      }
+    }
+
+    public static string WeaponDescription(int kind) {
+      switch (kind) {
+        case 0: return "Auto-firing projectile";
+        case 1: return "Spinning orb shield";
+        case 2: return "Long-range arrow";
+        case 3: return "Melee swing — crits";
+        case 4: return "Wide melee arc";
+        case 5: return "Piercing spear";
+        case 6: return "Boomerang + DoT trail";
+        case 7: return "Damage aura";
+        default: return "";
       }
     }
   }
