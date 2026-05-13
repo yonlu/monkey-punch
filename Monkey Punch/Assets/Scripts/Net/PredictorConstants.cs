@@ -25,5 +25,14 @@ namespace MonkeyPunch.Net {
     public const double TERMINAL_FALL_SPEED = 30.0;
     public const double COYOTE_TIME = 0.1;
     public const double JUMP_BUFFER = 0.1;
+
+    // M10: enemy-kind index for the bespoke boss. Mirrors
+    // ENEMY_KINDS[4].isBoss === true in packages/shared/src/enemies.ts.
+    // The Unity client cannot import the TS table directly, so the
+    // boss kind is duplicated here as the single C#-side source of
+    // truth. If the boss-kind index ever moves in the shared table,
+    // this constant must change too. M11+ may replace this with an
+    // isBoss lookup table when there are multiple boss kinds.
+    public const int BOSS_KIND_INDEX = 4;
   }
 }
