@@ -85,9 +85,10 @@ export function enemyDefAt(kind: number): EnemyDef {
   if (Number.isFinite(floored)) {
     safe = floored;
   } else if (kind > 0) {
-    safe = ENEMY_KINDS.length; // Infinity or NaN treated as max
+    safe = ENEMY_KINDS.length; // +Infinity treated as max
   } else {
-    safe = -1; // negative Infinity or anything else as min
+    safe = -1; // -Infinity treated as min; NaN falls here too because
+               // `NaN > 0` is false in JS — net effect: NaN → first row.
   }
   const idx = Math.max(0, Math.min(ENEMY_KINDS.length - 1, safe));
   return ENEMY_KINDS[idx]!;
