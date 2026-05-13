@@ -48,7 +48,7 @@ import {
 } from "./constants.js";
 import { terrainHeight } from "./terrain.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, isMeleeArcWeapon, isAuraWeapon, isBoomerangWeapon, type WeaponDef, type TargetingMode, type MeleeArcWeaponDef, type AuraWeaponDef, type BoomerangWeaponDef, type BoomerangLevel } from "./weapons.js";
-import { enemyDefAt } from "./enemies.js";
+import { ENEMY_KINDS, enemyDefAt } from "./enemies.js";
 import type { Rng } from "./rng.js";
 import type {
   FireEvent,
@@ -418,6 +418,37 @@ export type SpawnerState = {
 };
 
 /**
+ * M10: weighted-random kind pick over the currently-unlocked, non-boss
+ * rows of ENEMY_KINDS. Single rng() call per pick. Deterministic
+ * single-pass filter + accumulate — the loop runs ENEMY_KINDS.length
+ * iterations regardless of which kind is picked, so spawn behavior is
+ * order-independent across server/client.
+ *
+ * If totalWeight === 0 (e.g., earliest tick with no kinds unlocked
+ * yet), falls back to kind 0 (slime), which is always spawnable at
+ * tick=0 since its minSpawnTick is 0 and spawnWeight is positive.
+ */
+function pickEnemyKind(currentTick: number, rng: Rng): number {
+  let totalWeight = 0;
+  for (let i = 0; i < ENEMY_KINDS.length; i++) {
+    const def = ENEMY_KINDS[i]!;
+    if (def.isBoss) continue;
+    if (currentTick < def.minSpawnTick) continue;
+    totalWeight += def.spawnWeight;
+  }
+  if (totalWeight <= 0) return 0;
+  let r = rng() * totalWeight;
+  for (let i = 0; i < ENEMY_KINDS.length; i++) {
+    const def = ENEMY_KINDS[i]!;
+    if (def.isBoss) continue;
+    if (currentTick < def.minSpawnTick) continue;
+    r -= def.spawnWeight;
+    if (r <= 0) return i;
+  }
+  return 0;
+}
+
+/**
  * Advance the spawn timer; emit enemies when the interval elapses.
  * No-op (and does NOT advance the accumulator) when the room is empty —
  * this avoids "join into a swarm" when a player joins a long-empty room.
@@ -455,7 +486,13 @@ export function tickSpawner(
       return;
     }
 
-    // Pick a random non-downed player.
+    // M10: kind pick — 1 rng() call. Must happen BEFORE the player + angle
+    // picks; placed outside the angle retry loop so each spawn attempt
+    // picks one kind regardless of how many angle retries it takes.
+    const kind = pickEnemyKind(state.tick, rng);
+    const def = enemyDefAt(kind);
+
+    // Pick a random non-downed player. (unchanged)
     const liveIdx = Math.floor(rng() * liveCount);
     let i = 0;
     let target: Player | undefined;
@@ -479,11 +516,13 @@ export function tickSpawner(
       if (x * x + z * z > map2) continue;
       const enemy = new Enemy();
       enemy.id = spawner.nextEnemyId++;
-      enemy.kind = 0;
+      enemy.kind = kind;
       enemy.x = x;
       enemy.z = z;
-      enemy.y = terrainHeight(x, z) + ENEMY_GROUND_OFFSET;
-      enemy.hp = ENEMY_HP;
+      enemy.y = terrainHeight(x, z)
+              + (def.flying ? FLYING_ENEMY_ALTITUDE : ENEMY_GROUND_OFFSET);
+      enemy.hp = def.baseHp;
+      enemy.maxHp = def.baseHp;
       state.enemies.set(String(enemy.id), enemy);
       placed = true;
     }
@@ -508,6 +547,7 @@ export function spawnDebugBurst(
 ): void {
   const remaining = MAX_ENEMIES - state.enemies.size;
   const n = Math.max(0, Math.min(count, remaining));
+  const def = enemyDefAt(kind);
 
   for (let i = 0; i < n; i++) {
     const angle = rng() * Math.PI * 2;
@@ -516,8 +556,10 @@ export function spawnDebugBurst(
     enemy.kind = kind;
     enemy.x = centerPlayer.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
     enemy.z = centerPlayer.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
-    enemy.y = terrainHeight(enemy.x, enemy.z) + ENEMY_GROUND_OFFSET;
-    enemy.hp = ENEMY_HP;
+    enemy.y = terrainHeight(enemy.x, enemy.z)
+            + (def.flying ? FLYING_ENEMY_ALTITUDE : ENEMY_GROUND_OFFSET);
+    enemy.hp = def.baseHp;
+    enemy.maxHp = def.baseHp;
     state.enemies.set(String(enemy.id), enemy);
   }
 }
