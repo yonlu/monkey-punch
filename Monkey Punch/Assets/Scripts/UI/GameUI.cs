@@ -318,6 +318,10 @@ namespace MonkeyPunch.UI {
     }
 
     public void ShowRunOver(string reason, Action onRestart) {
+      // Hide the level-up bar first so 1/2/3 inputs are disabled and the
+      // bar doesn't linger underneath the run-over modal. Server will
+      // also reject any stale level_up_choice via the runEnded guard.
+      if (levelUpVisible) HideLevelUp();
       runOverReason = reason;
       onRestartClicked = onRestart;
       runOverVisible = true;
