@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using UnityEngine;
 using MonkeyPunch.Net;
 using MonkeyPunch.UI;
-using UnityEngine.SceneManagement;
 
 namespace MonkeyPunch.Combat {
   // Phase 4-MVP visual response to server combat events. NetworkClient
@@ -350,30 +349,20 @@ namespace MonkeyPunch.Combat {
         // (in co-op a teammate could still be standing) but the local
         // player can't act either way until the next run starts.
         if (GameUI.Instance != null) {
-          GameUI.Instance.ShowRunOver("DOWNED", ReloadScene);
+          GameUI.Instance.ShowRunOver("DOWNED", () =>
+            MonkeyPunch.Net.Bootstrap.I?.LeaveAndReturnToLobby("You were downed"));
         }
       }
     }
 
     public void OnRunEnded() {
       runEnded = true;
-      // Replaces the previous CombatVfx-owned IMGUI overlay. GameUI's
-      // ShowRunOver renders the modal with a Restart button; clicking it
-      // reloads the active scene, which re-runs NetworkClient.Start() and
-      // joins a fresh room.
+      // The run-over modal now returns the player to the Lobby scene
+      // (via Bootstrap), where they can re-create or join a fresh room.
       if (GameUI.Instance != null) {
-        GameUI.Instance.ShowRunOver("RUN ENDED", ReloadScene);
+        GameUI.Instance.ShowRunOver("RUN ENDED", () =>
+          MonkeyPunch.Net.Bootstrap.I?.LeaveAndReturnToLobby("Run ended"));
       }
-    }
-
-    private static void ReloadScene() {
-      // Use scene NAME rather than buildIndex — buildIndex is -1 when
-      // the scene isn't listed in Build Settings (which it isn't until
-      // a real build is configured). Loading by name works in-editor
-      // and in built players alike provided the scene asset is
-      // discoverable.
-      var s = SceneManager.GetActiveScene();
-      SceneManager.LoadScene(s.name);
     }
 
     void Update() {

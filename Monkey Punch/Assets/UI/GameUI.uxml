@@ -50,7 +50,7 @@
       <ui:VisualElement name="runover-dimmer" class="runover-dimmer"/>
       <ui:VisualElement name="runover-panel" class="runover-panel">
         <ui:Label  name="runover-title" class="runover-title" text="DEFEAT"/>
-        <ui:Button name="runover-restart" class="runover-btn" text="RESTART"/>
+        <ui:Button name="runover-restart" class="runover-btn" text="BACK TO LOBBY"/>
       </ui:VisualElement>
     </ui:VisualElement>
 
