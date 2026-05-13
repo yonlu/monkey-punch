@@ -194,7 +194,6 @@ namespace MonkeyPunch.Net {
     // OnPlayerAdd callback fires. CameraFollow polls this each LateUpdate.
     public Transform LocalPlayerTransform { get; private set; }
 
-    private Client client;
     private Room<RoomState> room;
     private readonly ServerTime serverTime = new ServerTime();
 
