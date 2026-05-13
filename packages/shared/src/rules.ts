@@ -62,6 +62,8 @@ import type {
   RunEndedEvent,
   MeleeSwipeEvent,
   BoomerangThrownEvent,
+  BossTelegraphEvent,
+  BossAoeHitEvent,
   LevelUpChoicePayload,
 } from "./messages.js";
 
@@ -679,7 +681,9 @@ export type CombatEvent =
   | PlayerDownedEvent
   | RunEndedEvent
   | MeleeSwipeEvent       // M8 US-005
-  | BoomerangThrownEvent; // M8 US-011
+  | BoomerangThrownEvent  // M8 US-011
+  | BossTelegraphEvent    // M10
+  | BossAoeHitEvent;      // M10
 export type Emit = (event: CombatEvent) => void;
 
 /**
@@ -2193,4 +2197,119 @@ export function tickRunEndCheck(state: RoomState, emit: Emit): void {
   state.runEnded = true;
   state.runEndedTick = state.tick;
   emit({ type: "run_ended", serverTick: state.tick });
+}
+
+/**
+ * M10: boss telegraphed-ability state machine. Idle → windup → fire,
+ * one ability per boss per cooldown cycle. Consumes NO rng — telegraph
+ * timing is deterministic from the off-schema cooldown map; AoE is a
+ * radius check.
+ *
+ *   - `currentTick` — state.tick, used for cooldown gating and the
+ *     fireAt countdown.
+ *   - `bossCooldowns` — off-schema Map<bossId, nextReadyTick>. Caller
+ *     initializes entries on boss spawn (set to currentTick +
+ *     cooldownTicks so the FIRST ability triggers one cooldown after
+ *     spawn, not immediately). Caller deletes entries on boss death
+ *     cleanup (in tickBossSpawner). This function only reads and
+ *     mutates existing entries.
+ *   - `nowMs` — server Date.now() at tick start. Embedded into
+ *     boss_telegraph.fireServerTimeMs so clients can sync the ring
+ *     fill across the network via ServerTime offset.
+ *   - `emit` — broadcast hook for boss_telegraph, boss_aoe_hit,
+ *     player_damaged, player_downed.
+ *
+ * Per CLAUDE.md rule 11, this runs between tickEnemies and
+ * tickContactDamage so the AoE strikes post-movement player positions
+ * and the boss's frozen-windup state is established before contact
+ * damage runs.
+ */
+export function tickBossAbilities(
+  state: RoomState,
+  currentTick: number,
+  bossCooldowns: Map<number, number>,
+  nowMs: number,
+  emit: Emit,
+): void {
+  if (state.runEnded) return;
+
+  state.enemies.forEach((enemy: Enemy) => {
+    const def = enemyDefAt(enemy.kind);
+    if (!def.isBoss) return;
+
+    if (enemy.abilityFireAt === -1) {
+      // Idle. Check cooldown — if ready, enter windup.
+      const nextReadyTick = bossCooldowns.get(enemy.id);
+      if (nextReadyTick === undefined) {
+        // No cooldown entry — caller (tickBossSpawner) should have
+        // initialized one on spawn. Defensive: initialize to one
+        // cooldown from now so we don't immediately fire.
+        bossCooldowns.set(enemy.id, currentTick + def.bossAbilityCooldownTicks);
+        return;
+      }
+      if (currentTick < nextReadyTick) return;
+
+      // Enter windup. abilityFireAt = currentTick + windupTicks.
+      enemy.abilityFireAt = currentTick + def.bossAbilityWindupTicks;
+      const windupMs = (def.bossAbilityWindupTicks / TICK_RATE) * 1000;
+      emit({
+        type: "boss_telegraph",
+        bossId: enemy.id,
+        originX: enemy.x,
+        originZ: enemy.z,
+        radius: def.bossAbilityRadius,
+        fireServerTimeMs: nowMs + windupMs,
+        serverTick: currentTick,
+      });
+      return;
+    }
+
+    // abilityFireAt > 0 — winding up. If it's not fire-tick yet, wait.
+    if (currentTick !== enemy.abilityFireAt) return;
+
+    // Fire! Apply AoE damage to every non-downed player in radius (2D XZ).
+    const radiusSq = def.bossAbilityRadius * def.bossAbilityRadius;
+    state.players.forEach((player: Player) => {
+      if (player.downed) return;
+      const dx = player.x - enemy.x;
+      const dz = player.z - enemy.z;
+      if (dx * dx + dz * dz > radiusSq) return;
+
+      const damage = Math.min(player.hp, def.bossAbilityDamage);
+      player.hp -= damage;
+      emit({
+        type: "player_damaged",
+        playerId: player.sessionId,
+        damage,
+        x: player.x,
+        y: player.y,
+        z: player.z,
+        serverTick: currentTick,
+      });
+
+      if (player.hp <= 0 && !player.downed) {
+        player.downed = true;
+        player.inputDir.x = 0;
+        player.inputDir.z = 0;
+        emit({
+          type: "player_downed",
+          playerId: player.sessionId,
+          serverTick: currentTick,
+        });
+      }
+    });
+
+    emit({
+      type: "boss_aoe_hit",
+      bossId: enemy.id,
+      originX: enemy.x,
+      originZ: enemy.z,
+      radius: def.bossAbilityRadius,
+      serverTick: currentTick,
+    });
+
+    // Reset for next cycle.
+    enemy.abilityFireAt = -1;
+    bossCooldowns.set(enemy.id, currentTick + def.bossAbilityCooldownTicks);
+  });
 }

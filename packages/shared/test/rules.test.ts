@@ -73,9 +73,10 @@ import {
   FLYING_ENEMY_ALTITUDE,
 } from "../src/constants.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "../src/weapons.js";
-import { ENEMY_KINDS, BOSS_KIND_INDEX } from "../src/enemies.js";
+import { ENEMY_KINDS, BOSS_KIND_INDEX, enemyDefAt } from "../src/enemies.js";
 import { mulberry32 } from "../src/rng.js";
-import type { EnemyDiedEvent } from "../src/messages.js";
+import type { EnemyDiedEvent, BossTelegraphEvent } from "../src/messages.js";
+import { tickBossAbilities } from "../src/rules.js";
 
 function addPlayer(state: RoomState, id: string, dirX: number, dirZ: number): Player {
   const p = new Player();
@@ -4878,5 +4879,100 @@ describe("spawnGemFanAndEmitDeath", () => {
       if (e.type === "enemy_died") dies++;
     });
     expect(dies).toBe(1);
+  });
+});
+
+describe("tickBossAbilities", () => {
+  it("idle → windup: emits boss_telegraph and sets abilityFireAt", () => {
+    const state = new RoomState();
+    state.tick = 100;
+    const boss = new Enemy();
+    boss.id = 1; boss.kind = BOSS_KIND_INDEX; boss.x = 5; boss.z = 7;
+    boss.maxHp = 2000; boss.hp = 2000; boss.abilityFireAt = -1;
+    state.enemies.set("1", boss);
+
+    // Cooldown elapsed: nextReadyTick (in cooldown map) was set to a tick <= now.
+    const bossCooldowns = new Map<number, number>();
+    bossCooldowns.set(1, 100);  // ready exactly this tick
+
+    const events: any[] = [];
+    tickBossAbilities(state, state.tick, bossCooldowns, /*nowMs*/0, (e) => events.push(e));
+
+    const def = enemyDefAt(BOSS_KIND_INDEX);
+    expect(boss.abilityFireAt).toBe(state.tick + def.bossAbilityWindupTicks);
+    const tele = events.find(e => e.type === "boss_telegraph") as BossTelegraphEvent | undefined;
+    expect(tele).toBeDefined();
+    expect(tele!.bossId).toBe(1);
+    expect(tele!.radius).toBe(def.bossAbilityRadius);
+    expect(tele!.originX).toBe(5);
+    expect(tele!.originZ).toBe(7);
+  });
+
+  it("currentTick === abilityFireAt: fires — damages players in radius, emits boss_aoe_hit + player_damaged, resets state", () => {
+    const state = new RoomState();
+    state.tick = 120;
+    const boss = new Enemy();
+    boss.id = 1; boss.kind = BOSS_KIND_INDEX; boss.x = 0; boss.z = 0;
+    boss.maxHp = 2000; boss.hp = 2000; boss.abilityFireAt = 120;  // fire NOW
+    state.enemies.set("1", boss);
+
+    const inside = new Player(); inside.sessionId = "in"; inside.x = 2; inside.z = 0; inside.hp = 100; inside.maxHp = 100;
+    const outside = new Player(); outside.sessionId = "out"; outside.x = 10; outside.z = 0; outside.hp = 100; outside.maxHp = 100;
+    state.players.set("in", inside);
+    state.players.set("out", outside);
+
+    const bossCooldowns = new Map<number, number>();
+    bossCooldowns.set(1, 0);
+
+    const events: any[] = [];
+    tickBossAbilities(state, state.tick, bossCooldowns, /*nowMs*/0, (e) => events.push(e));
+
+    const def = enemyDefAt(BOSS_KIND_INDEX);
+    expect(inside.hp).toBe(100 - def.bossAbilityDamage);
+    expect(outside.hp).toBe(100);
+    expect(events.filter(e => e.type === "boss_aoe_hit")).toHaveLength(1);
+    const dmg = events.filter(e => e.type === "player_damaged");
+    expect(dmg).toHaveLength(1);
+    expect(dmg[0].playerId).toBe("in");
+    expect(boss.abilityFireAt).toBe(-1);
+    expect(bossCooldowns.get(1)).toBe(state.tick + def.bossAbilityCooldownTicks);
+  });
+
+  it("non-boss enemies are ignored even if abilityFireAt > 0 spuriously", () => {
+    const state = new RoomState();
+    state.tick = 50;
+    const slime = new Enemy();
+    slime.id = 9; slime.kind = 0; slime.abilityFireAt = 999; slime.x = 0; slime.z = 0;
+    slime.maxHp = 30; slime.hp = 30;
+    state.enemies.set("9", slime);
+    const events: any[] = [];
+    tickBossAbilities(state, state.tick, new Map(), 0, (e) => events.push(e));
+    expect(events).toHaveLength(0);
+    expect(slime.abilityFireAt).toBe(999);
+  });
+
+  it("windup phase: still pending, no emit, abilityFireAt unchanged", () => {
+    const state = new RoomState();
+    state.tick = 105;
+    const boss = new Enemy();
+    boss.id = 1; boss.kind = BOSS_KIND_INDEX; boss.abilityFireAt = 120;  // 15 ticks until fire
+    boss.maxHp = 2000; boss.hp = 2000;
+    state.enemies.set("1", boss);
+    const events: any[] = [];
+    tickBossAbilities(state, state.tick, new Map([[1, 100]]), 0, (e) => events.push(e));
+    expect(events).toHaveLength(0);
+    expect(boss.abilityFireAt).toBe(120);
+  });
+
+  it("early-outs on state.runEnded", () => {
+    const state = new RoomState();
+    state.runEnded = true;
+    const boss = new Enemy();
+    boss.id = 1; boss.kind = BOSS_KIND_INDEX; boss.abilityFireAt = -1;
+    state.enemies.set("1", boss);
+    const events: any[] = [];
+    tickBossAbilities(state, 0, new Map([[1, -1]]), 0, (e) => events.push(e));
+    expect(events).toHaveLength(0);
+    expect(boss.abilityFireAt).toBe(-1);
   });
 });
