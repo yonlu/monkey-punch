@@ -56,13 +56,26 @@ Before any Stage 1 prompt:
 
 ---
 
-## Style anchor (paste into every Stage 1 prompt)
+## Style anchor — PSX/N64-era aesthetic
+
+Target look: **late-90s 3D era — original PlayStation / Nintendo 64 game
+art**, but stylized rather than ugly. The aesthetic is mostly enforced
+at *rendering time* (low texture res, point filtering, flat shading,
+optional vertex snap shader) — concept art alone can't fully produce
+it. But Stage 1 directives bias the look toward chunky, faceted
+geometry that Meshy will then interpret in 3D.
+
+This anchor is **inlined directly into every prompt below** — no
+placeholder to substitute, paste each prompt as-is.
 
 ```
-stylized low-poly anime JRPG character art, cel-shaded with subtle
-gradient, clean readable silhouette, flat base color textures, soft
-pastel + vivid accent palette, 3/4 front view, full body, white
-background, concept turnaround sheet style
+late-1990s PlayStation 1 / Nintendo 64 era 3D game art aesthetic,
+low-poly faceted geometry with visible polygon edges, chunky
+square-ish silhouettes, limited color palette (16-32 colors),
+low-resolution pixelated baked textures, no smooth shading, flat
+or per-face lighting, vintage stylized anime JRPG sensibility,
+3/4 front view, full body, neutral standing pose, white background,
+concept turnaround sheet style
 ```
 
 For Midjourney, append:
@@ -70,21 +83,31 @@ For Midjourney, append:
 --style raw --ar 1:1 --v 7 --sref <your-uploaded-blademaster-image>
 ```
 
+> **Note on the Blademaster `--sref`:** her current import is *not* PSX/N64 —
+> she's modern stylized anime. The `--sref` still helps Midjourney match
+> her *creature design language* (cute, anime-flavored), and the explicit
+> PSX wording in the prompt pulls the rendering style toward retro. After
+> the Blademaster retrofit (see end of doc), the `--sref` will match
+> end-to-end. Until then, expect the concept art to be "more chunky-retro
+> than the Blademaster" — that's the target end state anyway.
+
 ### Negative directives (Stage 1)
 
-These belong in a "negative prompt" field if your tool has one
-(Leonardo, SD); for MJ/ChatGPT, fold them inline ("not realistic,
-not photorealistic..."):
+For MJ/ChatGPT, fold inline. For Leonardo/SD, paste into the
+negative-prompt field:
 
 ```
-no photorealism, no anime closeup, no portrait crop, no detailed
-PBR roughness, no scene background, no other characters, no text,
-no watermark, no perspective distortion, no extreme low angle
+no photorealism, no high-poly modern 3D, no smooth normals, no
+subsurface scattering, no anime closeup, no portrait crop, no
+detailed PBR roughness, no scene background, no other characters,
+no text, no watermark, no perspective distortion, no extreme low
+angle, no Pixar / DreamWorks rendering style, no Unreal Engine
+look, no Octane render, no 8K textures
 ```
 
 ---
 
-## Enemy roster (8 starters + variants)
+## Enemy roster (9 starters + variants)
 
 Each entry has:
 - **Stage 1**: complete prompt for image generation
@@ -101,14 +124,20 @@ A small round gelatinous slime creature, glossy translucent surface
 with a single highlight on top, two simple bead eyes, no mouth, no
 limbs, slightly squashed sphere shape, cheerful cute expression,
 single dominant color (translucent rose pink) with a darker pink
-inner core visible through the gel, [STYLE ANCHOR]
+inner core visible through the gel, late-1990s PlayStation / N64 era game art aesthetic, low-poly
+faceted geometry, limited color palette, low-resolution baked
+textures, no smooth shading, stylized anime JRPG sensibility, 3/4
+front view, full body, neutral pose, white background, concept
+turnaround sheet style
 ```
 
 **Stage 2 (Meshy):**
 ```
-Stylized low-poly slime creature, rounded squashed sphere body,
-single highlight on top suggesting wet gloss, two bead eyes,
-PBR-ready, clean topology, game-optimized for real-time rendering
+Late-1990s PSX/N64-era low-poly slime creature, rounded squashed
+sphere body with visibly faceted geometry, single highlight on top
+suggesting wet gloss, two bead eyes, no limbs, ~500-1000 triangle
+target, faceted flat shading (no smooth normals), low-resolution
+baked texture atlas at 128x128, retro game-ready
 ```
 
 **Variants:** swap "translucent rose pink" → `deep cobalt blue` /
@@ -127,14 +156,20 @@ A tiny round forest rabbit creature with oversized head and tiny
 body, large innocent dark eyes, short stubby legs, fluffy round tail,
 sitting upright in alert pose, exaggerated chibi proportions,
 soft pastel cream coloring with pink ear interiors, no fierce
-features, looks innocent rather than threatening, [STYLE ANCHOR]
+features, looks innocent rather than threatening, late-1990s PlayStation / N64 era game art aesthetic, low-poly
+faceted geometry, limited color palette, low-resolution baked
+textures, no smooth shading, stylized anime JRPG sensibility, 3/4
+front view, full body, neutral pose, white background, concept
+turnaround sheet style
 ```
 
 **Stage 2 (Meshy):**
 ```
-Stylized chibi rabbit creature, oversized round head, small upright
-body, fluffy tail, stubby legs, neutral standing pose facing forward,
-clean low-poly topology, game-ready PBR maps
+Late-1990s PSX/N64-era low-poly chibi rabbit creature, oversized
+round head, small upright body, fluffy tail, stubby legs, neutral
+standing pose facing forward, visibly faceted geometry, ~700-1200
+triangle target, flat shading (no smooth normals), low-resolution
+baked texture atlas at 128x128, retro game-ready
 ```
 
 **Variants:** `pastel cream + pink` / `light gray + blue` / `pale brown + amber`.
@@ -151,15 +186,20 @@ A small upright mushroom creature with a wide rounded cap and a
 short fat stem, the cap is rich red with simple white circular spots,
 two tiny dot eyes embedded in the stem, no arms, two stubby legs
 visible beneath the cap edge, no mouth, neutral standing pose,
-silhouette resembles an umbrella with feet, [STYLE ANCHOR]
+silhouette resembles an umbrella with feet, late-1990s PlayStation / N64 era game art aesthetic, low-poly
+faceted geometry, limited color palette, low-resolution baked
+textures, no smooth shading, stylized anime JRPG sensibility, 3/4
+front view, full body, neutral pose, white background, concept
+turnaround sheet style
 ```
 
 **Stage 2 (Meshy):**
 ```
-Stylized cartoon mushroom monster, large round red cap with white
-spots, short stem body, two stubby legs, two simple eye dots on
-stem, standing upright pose, clean low-poly geometry, full PBR
-material set
+Late-1990s PSX/N64-era low-poly mushroom monster, large round red
+cap with white spots, short stem body, two stubby legs, two simple
+eye dots on stem, standing upright pose, visibly faceted geometry,
+~800-1500 triangle target, flat shading (no smooth normals),
+low-resolution baked texture atlas at 128x128, retro game-ready
 ```
 
 **Variants:** `rich red cap with white spots` / `dark violet cap with
@@ -178,14 +218,20 @@ covered in stylized silk wrapping patterns that suggest layered
 threads, two closed half-moon eye slits near the top suggesting it
 is sleeping or dormant, no limbs, no mouth, sitting on its rounded
 base, monochrome golden silk coloring with subtle highlights,
-[STYLE ANCHOR]
+late-1990s PlayStation / N64 era game art aesthetic, low-poly
+faceted geometry, limited color palette, low-resolution baked
+textures, no smooth shading, stylized anime JRPG sensibility, 3/4
+front view, full body, neutral pose, white background, concept
+turnaround sheet style
 ```
 
 **Stage 2 (Meshy):**
 ```
-Stylized cocoon monster, egg-shaped body with silk wrap texture,
-two closed eye slits, no limbs, dormant standing pose, low-poly
-clean topology, PBR-ready
+Late-1990s PSX/N64-era low-poly cocoon monster, egg-shaped body
+with silk wrap pattern baked into the texture, two closed eye
+slits, no limbs, dormant standing pose, visibly faceted geometry,
+~500-900 triangle target, flat shading (no smooth normals),
+low-resolution baked texture atlas at 128x128, retro game-ready
 ```
 
 **Variants:** `golden silk` / `pale jade silk` / `dusty rose silk`.
@@ -203,15 +249,21 @@ forming the body, no visible feet, the cloth tapers to a wispy
 tail at the bottom, two hollow round eye holes near the top, soft
 translucent edges suggesting incorporeality, pale lavender-white
 coloring, gentle drifting pose with the cloth slightly swept to
-one side, [STYLE ANCHOR]
+one side, late-1990s PlayStation / N64 era game art aesthetic, low-poly
+faceted geometry, limited color palette, low-resolution baked
+textures, no smooth shading, stylized anime JRPG sensibility, 3/4
+front view, full body, neutral pose, white background, concept
+turnaround sheet style
 ```
 
 **Stage 2 (Meshy):**
 ```
-Stylized floating ghost creature, flowing cloth body shape, two
-hollow eye sockets, no limbs visible, wispy tapering bottom,
-hovering pose, clean low-poly geometry, soft translucent feel
-preserved in baseColor, PBR-compatible
+Late-1990s PSX/N64-era low-poly ghost creature, flowing cloth body
+shape, two hollow eye sockets, no limbs visible, wispy tapering
+bottom, hovering pose, visibly faceted geometry, ~600-1200 triangle
+target, flat shading (no smooth normals), low-resolution baked
+texture atlas at 128x128 (soft translucent feel baked into the
+baseColor as alpha or color variation), retro game-ready
 ```
 
 **Variants:** `pale lavender-white` / `dusty teal` / `faint sulphur yellow`.
@@ -230,14 +282,21 @@ two short curved horns on the head, six small legs in walking
 stance (three per side), oversized head relative to body, simple
 mandibles, low-detail wing case visible as a single seam down the
 back, dark crimson coloring with brass-tone horns, viewed in 3/4
-front perspective showing the head clearly, [STYLE ANCHOR]
+front perspective showing the head clearly, late-1990s PlayStation / N64 era game art aesthetic, low-poly
+faceted geometry, limited color palette, low-resolution baked
+textures, no smooth shading, stylized anime JRPG sensibility, 3/4
+front view, full body, neutral pose, white background, concept
+turnaround sheet style
 ```
 
 **Stage 2 (Meshy):**
 ```
-Stylized low-poly armored beetle, dome carapace, two horns, six
-legs in walking stance, oversized head, clean game topology, full
-PBR maps preserving glossy carapace highlight
+Late-1990s PSX/N64-era low-poly armored beetle, dome carapace, two
+horns, six legs in walking stance, oversized head, visibly faceted
+geometry (the carapace dome is a clear polygonal hemisphere), ~1000-1500
+triangle target, flat shading (no smooth normals), low-resolution
+baked texture atlas at 128x128 (glossy carapace highlight painted
+into the baseColor), retro game-ready
 ```
 
 **Variants:** `dark crimson + brass` / `obsidian black + silver` /
@@ -255,14 +314,20 @@ A round fluffy baby bird creature with an oversized round head,
 tiny vestigial wings tucked at the sides, two shiny black bead eyes,
 a small triangular orange beak, short stick legs, standing upright
 with a curious tilted-head pose, pale lemon yellow plumage, looks
-innocent and harmless, exaggerated chibi proportions, [STYLE ANCHOR]
+innocent and harmless, exaggerated chibi proportions, late-1990s PlayStation / N64 era game art aesthetic, low-poly
+faceted geometry, limited color palette, low-resolution baked
+textures, no smooth shading, stylized anime JRPG sensibility, 3/4
+front view, full body, neutral pose, white background, concept
+turnaround sheet style
 ```
 
 **Stage 2 (Meshy):**
 ```
-Stylized chibi chick creature, round fluffy body with oversized
-head, small triangular beak, tiny tucked wings, short legs, curious
-upright standing pose, clean low-poly, PBR-ready
+Late-1990s PSX/N64-era low-poly chibi chick creature, round fluffy
+body with oversized head, small triangular beak, tiny tucked wings,
+short legs, curious upright standing pose, visibly faceted geometry,
+~500-900 triangle target, flat shading (no smooth normals),
+low-resolution baked texture atlas at 128x128, retro game-ready
 ```
 
 **Variants:** `pale lemon` / `pale mint` / `pale peach`.
@@ -279,20 +344,78 @@ A small cartoon bat creature with oversized round wings spread wide,
 the wings have stylized membrane fold lines, big shining round eyes,
 two tiny visible fangs in a small open mouth, fuzzy round body, two
 small clawed feet tucked beneath, hovering pose with arms-out
-wingspan, deep purple body with magenta wing membranes, [STYLE ANCHOR]
+wingspan, deep purple body with magenta wing membranes, late-1990s PlayStation / N64 era game art aesthetic, low-poly
+faceted geometry, limited color palette, low-resolution baked
+textures, no smooth shading, stylized anime JRPG sensibility, 3/4
+front view, full body, neutral pose, white background, concept
+turnaround sheet style
 ```
 
 **Stage 2 (Meshy):**
 ```
-Stylized cartoon bat monster, round body with oversized spread
-wings, big shining eyes, two small fangs, hovering pose with full
-wingspan, clean low-poly mesh, PBR materials
+Late-1990s PSX/N64-era low-poly bat monster, round body with
+oversized spread wings, big shining eyes, two small fangs, hovering
+pose with full wingspan, visibly faceted geometry (wings are flat
+polygonal sheets), ~700-1200 triangle target, flat shading (no
+smooth normals), low-resolution baked texture atlas at 128x128,
+retro game-ready
 ```
 
 **Variants:** `deep purple + magenta wings` / `midnight blue + cyan
 wings` / `charcoal + crimson wings`.
 
 **Role:** flying — fast, erratic horizontal movement, 2 HP.
+
+---
+
+### 9. Skeleton Warrior (mid-tier, humanoid melee)
+
+**Stage 1:**
+```
+A tall slender humanoid skeleton warrior with bone-white skeletal
+body, hollow black eye sockets emitting a faint inner glow, exposed
+ribcage and visible spine, wearing tattered cloth wraps around the
+hips and shoulders and a single rusted iron pauldron on the right
+shoulder, holding a simple curved short sword in the right hand,
+standing in a neutral combat-ready pose with feet slightly apart,
+classic undead silhouette, bone-white and rusty brown palette with
+a faint amber eye glow, no excessive gore or horror, more cartoon-
+spooky than realistic, late-1990s PlayStation / N64 era game art
+aesthetic, low-poly faceted geometry, limited color palette,
+low-resolution baked textures, no smooth shading, stylized anime
+JRPG sensibility, 3/4 front view, full body, neutral pose, white
+background, concept turnaround sheet style
+```
+
+**Stage 2 (Meshy):**
+```
+Late-1990s PSX/N64-era low-poly humanoid skeleton warrior,
+bone-white skeletal body with hollow eye sockets, simplified
+ribcage as a faceted cage shape, exposed spine, tattered cloth
+wraps at hips and shoulders, single rusted iron pauldron on right
+shoulder, short curved sword held in right hand, combat-ready
+standing pose with feet slightly apart, visibly faceted geometry
+(limbs are angular tubes, joints are clear polygonal hinges),
+~1500-2500 triangle target, flat shading (no smooth normals),
+low-resolution baked texture atlas at 128x128, retro game-ready
+```
+
+**Variants:**
+- Weapon: `curved short sword` / `straight bone club` / `rusty cleaver`
+  / `simple wooden spear`
+- Eye glow: `faint amber` / `pale cyan` / `blood red` / `acid green`
+- Armor accent: `rusted iron pauldron` / `mossy bronze pauldron` /
+  `dark verdigris pauldron`
+
+Combine modifiers for elite/named variants (e.g. "bone club + blood
+red eyes + dark verdigris pauldron" reads as a stronger skeleton).
+
+**Role:** mid-tier humanoid — 6 HP, normal speed, holds a weapon
+(visual flair only — damage still resolves via current server-side
+contact-damage system). Drops 2 gems on death. **Design intent:** the
+skeleton is the visual foil to the Blademaster — both humanoid, but
+one living-warrior and one undead-soldier. They should feel in
+silhouette dialogue with each other.
 
 ---
 
@@ -313,26 +436,69 @@ larger and more dangerous than the trash mob version
 
 ---
 
-## After Stage 2 — Unity import workflow
+## After Stage 2 — Unity import workflow (PSX-tuned)
 
-Identical to the M9 Blademaster pipeline (commit `541ae90`):
+Same scaffolding as the M9 Blademaster pipeline (commit `541ae90`),
+but with PSX-specific tightening at the texture and shading layers.
 
 1. **Save the GLB** to `Monkey Punch/Assets/Art/Enemies/<creature>/<creature>.glb`.
-2. **Unity imports** — set Animation Type to **None** (these are
-   static meshes, no rig). Generate Normals: Calculate. Generate
-   Lightmap UVs: off (URP doesn't lightmap dynamic enemies).
-3. **Extract materials** to `Assets/Art/Enemies/<creature>/Materials/`
-   following the M9 pattern.
-4. **Verify URP shader** — Meshy's PBR maps slot into URP/Lit's
-   `_BaseMap`, `_MetallicGlossMap`, `_BumpMap`. Re-link if any are missing.
-5. **Smart Remesh target** (in Meshy before export): **3000-5000 tris**
-   for trash mobs, **5000-8000** for mid-tier, **10000-15000** for
-   elites.
-6. **Create the prefab** under `Assets/Prefabs/Enemies/<creature>.prefab`.
+
+2. **FBX/GLB import settings:**
+   - **Animation Type:** None (static meshes; no rig — the existing
+     server-driven enemy transform handles motion).
+   - **Generate Normals:** **Calculate** with **Smoothing Angle = 0**
+     (forces flat / faceted shading on every face — this is the single
+     biggest PSX-look lever at the mesh level).
+   - **Generate Lightmap UVs:** off.
+   - **Read/Write Enabled:** off.
+
+3. **Texture import settings** (per imported PNG/JPG — this is
+   where PSX/N64 lives at the rendering layer):
+   - **Filter Mode:** **Point (no filter)** — eliminates the bilinear
+     blur that modern textures use; gives the chunky pixel look.
+   - **Max Size:** **128** — caps the resolution to PSX-era atlas size.
+     Even if Meshy exports at 1024×1024, Unity will downscale on
+     import. This trumps Meshy's output resolution.
+   - **Compression:** None or Low (point-filtered textures don't hide
+     compression artifacts as well as filtered ones).
+   - **Generate Mip Maps:** off (no mip maps was a PSX/N64 trait).
+   - **sRGB:** on (these are color textures, not data maps).
+
+4. **Extract materials** to `Assets/Art/Enemies/<creature>/Materials/`
+   following the M9 pattern (commit `541ae90`).
+
+5. **URP shader selection** — TWO choices:
+   - **Quick path (good enough):** assign URP/Lit and let the flat-
+     shaded normals + point-filtered textures carry the look.
+   - **Full PSX path (best look, one-time setup):** install or write
+     a custom URP shader that adds:
+     - **Vertex snapping** (snap vertex screen positions to integer
+       grid to produce the classic PSX wobble),
+     - **Affine UV interpolation** (disable perspective-correct UVs
+       per polygon for the texture warp wobble),
+     - **No specular / posterized lighting** (flat or 2-band lighting).
+     There's an open-source `URPPSXShader` GitHub repo that's a clean
+     starting point; this is its own follow-up task documented in
+     the Blademaster retrofit milestone (see below).
+
+6. **Smart Remesh target** (in Meshy *before* export, to keep poly
+   counts honest):
+   - **Trash mobs** (slime, bunny, chick): **500–1200 triangles**
+   - **Mid-tier** (mushroom, cocoon, beetle, ghost, bat, skeleton):
+     **1000–2500 triangles**
+   - **Elites:** **2000–4000 triangles**
+
+   These are an order of magnitude lower than modern game targets —
+   that's the point. PSX-era characters were typically 500–1500 tris;
+   N64 mid-tier was 1000–3000 tris. The Smart Remesh slider gives you
+   fine control.
+
+7. **Create the prefab** under `Assets/Prefabs/Enemies/<creature>.prefab`.
    Single child GameObject with the static MeshRenderer; no animator,
    no script (the existing `NetworkClient.HandleEnemyAdd` code drives
    the transform).
-7. **Wire into NetworkClient** — extend `HandleEnemyAdd` to instantiate
+
+8. **Wire into NetworkClient** — extend `HandleEnemyAdd` to instantiate
    the right prefab based on `Enemy.kind` (currently a placeholder; this
    is its own future milestone).
 
@@ -346,10 +512,10 @@ Assuming Midjourney Standard ($30/mo) + Meshy Pro ($30/mo):
   images/month at standard rate).
 - **Per 3D model:** depends on Meshy credit consumption; figure
   ~$1–2 in credits for a textured + remeshed model.
-- **For all 8 enemies × 3 color variants × 3 concept rerolls:**
-  - Concept art: ~72 images = ~$2.16
-  - 3D models: 8 meshes × ~$1.50 = ~$12 (color variants share the mesh)
-  - Total: **~$14 in usage cost**, well under the monthly subscription.
+- **For all 9 enemies × 3 color variants × 3 concept rerolls:**
+  - Concept art: ~81 images = ~$2.43
+  - 3D models: 9 meshes × ~$1.50 = ~$13.50 (color variants share the mesh)
+  - Total: **~$16 in usage cost**, well under the monthly subscription.
 
 Cheaper if you only generate one variant per creature initially and
 expand later, or if you use the free tier of either tool (with the
@@ -373,3 +539,33 @@ After generating:
   same scale near the Blademaster. Anything that doesn't visually
   agree with her gets re-generated, not "fixed" in Blender. The pipeline
   is cheap; cleanup is expensive.
+
+---
+
+## Follow-up milestone: Blademaster retrofit to PSX/N64
+
+The Blademaster is **not currently PSX/N64**. She has smooth normals,
+modern PBR maps, ~512-1024 px textures, and bilinear filtering. To
+make the whole game cohesively retro, she'll need a separate retrofit
+pass:
+
+- **Re-import textures** with Point filter + Max Size 128 + no mipmaps
+  (same settings as the enemy textures above).
+- **Re-import FBX** with `Generate Normals: Calculate` + `Smoothing
+  Angle = 0` — gives her flat-shaded faceted look matching the
+  enemies.
+- **(Optional) Swap shader** — from URP/Lit to a PSX shader (vertex
+  snap + affine UVs + posterized lighting). One shader serves both
+  player and enemies — write once, apply via the `Materials/`
+  folder's `MAT_*.mat` files.
+- **(Optional) Mesh decimation** in Blender if the silhouette still
+  reads too smooth — target ~3000 tris for the full character body.
+
+This is its own milestone — call it M10 "Retro Shader Pass" — and is
+worth scheduling *after* generating 2-3 enemies, so the visual gap
+between her current state and the enemies makes the retrofit
+priorities clear (do textures + flat normals first; ship the
+vertex-snap shader later if the cheaper changes already feel right).
+
+Until then: enemies will look "more chunky-retro than the Blademaster."
+That visual gap is expected and informs the retrofit scope.
