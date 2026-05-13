@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UIElements;
 
 namespace MonkeyPunch.UI {
@@ -32,6 +33,12 @@ namespace MonkeyPunch.UI {
       public string Name;
       public int    NewLevel;
     }
+
+    // ----- Input -----
+
+    [Header("Input")]
+    [SerializeField] private InputActionAsset inputActions;
+    private InputAction pick1, pick2, pick3;
 
     // ----- Modal state -----
 
@@ -106,9 +113,28 @@ namespace MonkeyPunch.UI {
       if (runoverRestart != null) {
         runoverRestart.clicked += OnRestartButtonClicked;
       }
+
+      if (inputActions != null) {
+        var map = inputActions.FindActionMap("LevelUp", throwIfNotFound: false);
+        if (map != null) {
+          pick1 = map.FindAction("Pick1");
+          pick2 = map.FindAction("Pick2");
+          pick3 = map.FindAction("Pick3");
+          if (pick1 != null) pick1.performed += OnPick1;
+          if (pick2 != null) pick2.performed += OnPick2;
+          if (pick3 != null) pick3.performed += OnPick3;
+        } else {
+          Debug.LogWarning("[GameUI] Input action map 'LevelUp' not found.");
+        }
+      }
     }
 
     void OnDisable() {
+      if (pick1 != null) pick1.performed -= OnPick1;
+      if (pick2 != null) pick2.performed -= OnPick2;
+      if (pick3 != null) pick3.performed -= OnPick3;
+      DisableLevelUpActions();
+
       if (runoverRestart != null) {
         runoverRestart.clicked -= OnRestartButtonClicked;
       }
@@ -194,6 +220,7 @@ namespace MonkeyPunch.UI {
       onLevelUpClicked = onClick;
       levelUpVisible = true;
       RefreshCursorState();
+      EnableLevelUpActions();
       if (lvlupBar == null) return;
 
       BuildLevelUpCards(choices);
@@ -206,6 +233,7 @@ namespace MonkeyPunch.UI {
       levelUpChoices = null;
       onLevelUpClicked = null;
       RefreshCursorState();
+      DisableLevelUpActions();
       if (lvlupBar == null) return;
       lvlupBar.RemoveFromClassList("shown");
       lvlupBar.schedule.Execute(() => lvlupBar.AddToClassList("hidden")).ExecuteLater(170);
@@ -308,6 +336,32 @@ namespace MonkeyPunch.UI {
         UnityEngine.Cursor.lockState = CursorLockMode.Locked;
         UnityEngine.Cursor.visible = false;
       }
+    }
+
+    // ----- Input helpers -----
+
+    private void EnableLevelUpActions() {
+      pick1?.Enable();
+      pick2?.Enable();
+      pick3?.Enable();
+    }
+
+    private void DisableLevelUpActions() {
+      pick1?.Disable();
+      pick2?.Disable();
+      pick3?.Disable();
+    }
+
+    private void OnPick1(InputAction.CallbackContext _) => PickIndex(0);
+    private void OnPick2(InputAction.CallbackContext _) => PickIndex(1);
+    private void OnPick3(InputAction.CallbackContext _) => PickIndex(2);
+
+    private void PickIndex(int idx) {
+      if (!levelUpVisible || levelUpChoices == null) return;
+      if (idx < 0 || idx >= levelUpChoices.Length) return;
+      var cb = onLevelUpClicked;
+      HideLevelUp();
+      cb?.Invoke(idx);
     }
 
     // ----- Pure helper (public for testability) -----

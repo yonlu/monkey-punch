@@ -593,9 +593,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: edd398161b8ea4429910dee1b9a847cc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MonkeyPunch.UI.GameUI
-  cardWidth: 220
-  cardHeight: 180
-  cardGap: 16
+  inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
 --- !u!4 &2088930860
 Transform:
   m_ObjectHideFlags: 0
