@@ -441,18 +441,22 @@ namespace MonkeyPunch.UI {
     private void ShowPauseMenu() {
       pauseVisible = true;
       pauseMenuEl?.RemoveFromClassList("hidden");
+      RefreshCursorState();
     }
     private void HidePauseMenu() {
       pauseVisible = false;
       pauseMenuEl?.AddToClassList("hidden");
+      RefreshCursorState();
     }
     private void ShowLeaveConfirm() {
       leaveConfirmVisible = true;
       leaveConfirmEl?.RemoveFromClassList("hidden");
+      RefreshCursorState();
     }
     private void HideLeaveConfirm() {
       leaveConfirmVisible = false;
       leaveConfirmEl?.AddToClassList("hidden");
+      RefreshCursorState();
     }
     private void OnConfirmLeave() {
       HideLeaveConfirm();
@@ -460,10 +464,12 @@ namespace MonkeyPunch.UI {
       MonkeyPunch.Net.Bootstrap.I?.LeaveAndReturnToLobby("Left room");
     }
 
-    // ----- Cursor management (narrowed from levelUpVisible || runOverVisible) -----
+    // ----- Cursor management -----
+    // Level-up bar deliberately excluded — it uses keyboard input (1/2/3 picker).
+    // Run-over, pause, and leave-confirm modals all require mouse clicks.
 
     private void RefreshCursorState() {
-      if (runOverVisible) {
+      if (runOverVisible || pauseVisible || leaveConfirmVisible) {
         UnityEngine.Cursor.lockState = CursorLockMode.None;
         UnityEngine.Cursor.visible = true;
       } else {
