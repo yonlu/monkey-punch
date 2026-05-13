@@ -451,6 +451,21 @@ namespace MonkeyPunch.Net {
       return go;
     }
 
+    /// <summary>
+    /// M10: returns the first enemy in state with kind == BOSS_KIND_INDEX,
+    /// or null if no boss is alive. Used by GameUI to drive the boss HP
+    /// bar without exposing the whole room.
+    /// </summary>
+    public Enemy FindAliveBoss() {
+      if (room == null || room.State == null || room.State.enemies == null) return null;
+      foreach (var kv in room.State.enemies) {
+        if (kv.Value.kind == PredictorConstants.BOSS_KIND_INDEX) {
+          return kv.Value;
+        }
+      }
+      return null;
+    }
+
     // Phase 7 MVP: send the player's pick to the server. Server validates
     // choiceIndex against the pending offer and resolves with a
     // level_up_resolved broadcast. Called from GameUI's "Pick" button.
