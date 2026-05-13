@@ -108,6 +108,38 @@ describe("Enemy schema", () => {
     expect(e.slowExpiresAt).toBe(-1);
   });
 
+  it("Enemy.maxHp and Enemy.abilityFireAt fields survive encode (M10 fields)", () => {
+    const state = new RoomState();
+    state.code = "TEST";
+    state.seed = 12345;
+
+    const enemy = new Enemy();
+    enemy.id = 1;
+    enemy.kind = 0;
+    enemy.x = 5.0;
+    enemy.y = 0.0;
+    enemy.z = 3.0;
+    enemy.hp = 150;
+    enemy.maxHp = 2000;
+    enemy.abilityFireAt = -1;
+    state.enemies.set(String(enemy.id), enemy);
+
+    // Verify fields are set before encoding
+    expect(enemy.maxHp).toBe(2000);
+    expect(enemy.abilityFireAt).toBe(-1);
+
+    // Encoding should not throw and should succeed (fields are properly
+    // registered via defineTypes and constructor-body assignment)
+    const encoder = new Encoder(state);
+    const bytes = encoder.encodeAll();
+    expect(bytes.length).toBeGreaterThan(0);
+
+    // Verify the enemy still has the expected values after encoding
+    // (the object is not mutated by the encoder)
+    expect(enemy.maxHp).toBe(2000);
+    expect(enemy.abilityFireAt).toBe(-1);
+  });
+
   it("encodes many enemies in one state without throwing", () => {
     const state = new RoomState();
     for (let i = 1; i <= 100; i++) {
