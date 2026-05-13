@@ -4,29 +4,36 @@ using UnityEngine.InputSystem;
 using MonkeyPunch.Net;
 
 namespace MonkeyPunch.Render {
-  // Phase 8 polish: orbit camera with right-mouse-drag yaw/pitch.
-  // Conventions mirror packages/client/src/camera.ts so the Unity
-  // client and the TS client feel the same to play:
+  // Megabonk-style continuous mouselook orbit camera.
   //
   //   - At yaw=0 the camera sits directly behind the player at +Z and
-  //     looks toward -Z.
-  //   - Mouse-right (positive mouseDelta.x) DECREASES yaw — the camera
-  //     "looks more right" relative to the world ground. This matches
-  //     the TS handler: `_yaw -= movementX * sensX`.
-  //   - Yaw increasing rotates the camera position CCW as viewed from
-  //     above (camera moves through +X).
-  //   - Mouse-down (positive mouseDelta.y) INCREASES pitch (camera rises
-  //     higher relative to the player). Clamped to [MIN, MAX].
+  //     looks toward -Z. Because that orientation is a 180° Y-rotation
+  //     from the default identity camera, the camera's local right axis
+  //     points along world -X.
+  //   - Mouse-right (positive mouseDelta.x) INCREASES yaw — the camera
+  //     position orbits to world +X (which is to the player's rear-left
+  //     given the camera's local-right=-X frame), and the view direction
+  //     rotates right to keep the player centered. Distant scenery
+  //     visually slides left on screen. This is the FPS / Megabonk
+  //     convention; the inverse sign would feel like "dragging the
+  //     world" with the mouse.
+  //   - Yaw increasing rotates the camera position clockwise as viewed
+  //     from above: at yaw=+π/2 the camera sits at (DIST, _, 0).
+  //   - Mouse-down (positive mouseDelta.y) DECREASES pitch (camera
+  //     lowers, view tilts down toward the ground). Mouse-up raises
+  //     the camera and tilts the view up. Clamped to [MIN, MAX].
   //   - Offset from player at yaw/pitch:
   //       offsetX = DIST * sin(yaw) * cos(pitch)
   //       offsetY = DIST * sin(pitch) + LOOK_HEIGHT
   //       offsetZ = DIST * cos(yaw) * cos(pitch)
   //
   // The static `Yaw` property is read by NetworkClient.ComputeWorldDir
-  // to transform camera-space WASD into world-space movement (TS:
-  // input.ts transformToWorld). NetworkClient and CameraFollow live in
-  // different assemblies / namespaces but the static reference avoids
-  // an Inspector-wired Singleton GameObject for a single-camera scene.
+  // to transform camera-space WASD into world-space movement. The
+  // transform is symmetric in yaw sign, so flipping the mouse→yaw sign
+  // here did not require any change there. NetworkClient and
+  // CameraFollow live in different assemblies / namespaces but the
+  // static reference avoids an Inspector-wired Singleton GameObject
+  // for a single-camera scene.
   [RequireComponent(typeof(Camera))]
   public class CameraFollow : MonoBehaviour {
     public static CameraFollow Instance { get; private set; }
@@ -48,9 +55,9 @@ namespace MonkeyPunch.Render {
 
     [Header("Mouse Control (Megabonk-style continuous mouselook)")]
     [Tooltip("Radians per Mouse.delta count (horizontal). In Cursor.lockState=Locked, Unity reads raw HID deltas — magnitude differs from screen pixels, so this is tuned independently from any windowed-cursor approach.")]
-    [SerializeField] private float mouseSensitivityX = 0.005f;
+    [SerializeField] private float mouseSensitivityX = 0.00085f;
     [Tooltip("Radians per Mouse.delta count (vertical).")]
-    [SerializeField] private float mouseSensitivityY = 0.004f;
+    [SerializeField] private float mouseSensitivityY = 0.00065f;
 
     private const double DEG = Math.PI / 180.0;
     private const double DEFAULT_PITCH = 35.0 * DEG;
@@ -99,7 +106,7 @@ namespace MonkeyPunch.Render {
                   $"sensX={mouseSensitivityX:F3} sensY={mouseSensitivityY:F3}");
       }
 
-      Yaw -= d.x * mouseSensitivityX;
+      Yaw += d.x * mouseSensitivityX;
       // Unity Mouse.delta.y is POSITIVE when the mouse moves up the
       // screen. We want mouse-up = look-up (camera lowers / view tilts
       // toward sky) so subtract.
