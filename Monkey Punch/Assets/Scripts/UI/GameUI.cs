@@ -124,7 +124,28 @@ namespace MonkeyPunch.UI {
         return;
       }
       root.RemoveFromClassList("hidden");
-      // Element bindings wired in Task 7.
+
+      // Top-row stats
+      string elapsed = FormatTime(hud.ElapsedSeconds);
+      statTime.text  = "⏱ " + elapsed;
+      statKills.text = "💀 " + hud.Kills.ToString();
+
+      // Top-center large time
+      hudTime.text = elapsed;
+
+      // Top-right level
+      hudLevel.text = "LV " + hud.Level.ToString();
+
+      // HP bar
+      float hpFrac = hud.MaxHp > 0 ? Mathf.Clamp01((float)hud.Hp / hud.MaxHp) : 0f;
+      hpFill.style.width = new StyleLength(new Length(hpFrac * 100f, LengthUnit.Percent));
+      hpText.text = hud.Hp.ToString() + " / " + hud.MaxHp.ToString();
+
+      // XP bar
+      float xpFrac = hud.XpForNextLevel > 0 ? Mathf.Clamp01((float)hud.Xp / hud.XpForNextLevel) : 0f;
+      xpFill.style.width = new StyleLength(new Length(xpFrac * 100f, LengthUnit.Percent));
+
+      // Inventory grids — Task 8 owns this. Leave empty for now.
     }
 
     public void ShowLevelUp(LevelUpChoiceDisplay[] choices, Action<int> onClick) {
