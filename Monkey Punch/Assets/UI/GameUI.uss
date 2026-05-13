@@ -290,3 +290,11 @@
   padding: 4px 8px;
   letter-spacing: 1px;
 }
+
+/* ===== Pause / leave-confirm modals =====
+   Reuses .runover-modal positioning + .runover-dimmer/.runover-panel
+   visuals. No overrides needed today; .pause-modal exists as a hook
+   for future per-modal tweaks. */
+.pause-modal {
+  /* intentionally empty */
+}

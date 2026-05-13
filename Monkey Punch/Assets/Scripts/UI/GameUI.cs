@@ -58,7 +58,17 @@ namespace MonkeyPunch.UI {
     private string runOverReason;
     private Action onRestartClicked;
 
-    public bool AnyModalOpen => levelUpVisible || runOverVisible;
+    private VisualElement pauseMenuEl;
+    private VisualElement leaveConfirmEl;
+    private Button pauseResume;
+    private Button pauseLeave;
+    private Button leaveCancel;
+    private Button leaveConfirmBtn;
+    private bool pauseVisible;
+    private bool leaveConfirmVisible;
+
+    public bool AnyModalOpen =>
+      levelUpVisible || runOverVisible || pauseVisible || leaveConfirmVisible;
 
     // ----- UI Toolkit element refs (cached at OnEnable) -----
 
@@ -123,10 +133,21 @@ namespace MonkeyPunch.UI {
       runoverModal    = root.Q<VisualElement>("runover");
       runoverTitle    = root.Q<Label>("runover-title");
       runoverRestart  = root.Q<Button>("runover-restart");
+      pauseMenuEl     = root.Q<VisualElement>("pausemenu");
+      leaveConfirmEl  = root.Q<VisualElement>("leave-confirm");
+      pauseResume     = root.Q<Button>("pause-resume");
+      pauseLeave      = root.Q<Button>("pause-leave");
+      leaveCancel     = root.Q<Button>("leave-cancel");
+      leaveConfirmBtn = root.Q<Button>("leave-confirm-btn");
 
       if (runoverRestart != null) {
         runoverRestart.clicked += OnRestartButtonClicked;
       }
+
+      if (pauseResume     != null) pauseResume.clicked     += HidePauseMenu;
+      if (pauseLeave      != null) pauseLeave.clicked      += ShowLeaveConfirm;
+      if (leaveCancel     != null) leaveCancel.clicked     += HideLeaveConfirm;
+      if (leaveConfirmBtn != null) leaveConfirmBtn.clicked += OnConfirmLeave;
 
       if (inputActions != null) {
         var map = inputActions.FindActionMap("LevelUp", throwIfNotFound: false);
@@ -151,6 +172,23 @@ namespace MonkeyPunch.UI {
 
       if (runoverRestart != null) {
         runoverRestart.clicked -= OnRestartButtonClicked;
+      }
+
+      if (pauseResume     != null) pauseResume.clicked     -= HidePauseMenu;
+      if (pauseLeave      != null) pauseLeave.clicked      -= ShowLeaveConfirm;
+      if (leaveCancel     != null) leaveCancel.clicked     -= HideLeaveConfirm;
+      if (leaveConfirmBtn != null) leaveConfirmBtn.clicked -= OnConfirmLeave;
+    }
+
+    void Update() {
+      var kb = Keyboard.current;
+      if (kb == null) return;
+      if (kb.escapeKey.wasPressedThisFrame) {
+        // Esc precedence: level-up bar and run-over modal block pause.
+        if (levelUpVisible || runOverVisible) return;
+        if (leaveConfirmVisible) { HideLeaveConfirm(); return; }
+        if (pauseVisible) { HidePauseMenu(); return; }
+        ShowPauseMenu();
       }
     }
 
@@ -398,6 +436,28 @@ namespace MonkeyPunch.UI {
       var cb = onRestartClicked;
       HideRunOver();
       cb?.Invoke();
+    }
+
+    private void ShowPauseMenu() {
+      pauseVisible = true;
+      pauseMenuEl?.RemoveFromClassList("hidden");
+    }
+    private void HidePauseMenu() {
+      pauseVisible = false;
+      pauseMenuEl?.AddToClassList("hidden");
+    }
+    private void ShowLeaveConfirm() {
+      leaveConfirmVisible = true;
+      leaveConfirmEl?.RemoveFromClassList("hidden");
+    }
+    private void HideLeaveConfirm() {
+      leaveConfirmVisible = false;
+      leaveConfirmEl?.AddToClassList("hidden");
+    }
+    private void OnConfirmLeave() {
+      HideLeaveConfirm();
+      HidePauseMenu();
+      MonkeyPunch.Net.Bootstrap.I?.LeaveAndReturnToLobby("Left room");
     }
 
     // ----- Cursor management (narrowed from levelUpVisible || runOverVisible) -----

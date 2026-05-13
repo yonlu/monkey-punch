@@ -54,5 +54,25 @@
       </ui:VisualElement>
     </ui:VisualElement>
 
+    <!-- Pause menu (Esc-toggled) -->
+    <ui:VisualElement name="pausemenu" class="runover-modal pause-modal hidden">
+      <ui:VisualElement class="runover-dimmer"/>
+      <ui:VisualElement class="runover-panel">
+        <ui:Label class="runover-title" text="PAUSED"/>
+        <ui:Button name="pause-resume" class="runover-btn" text="RESUME"/>
+        <ui:Button name="pause-leave"  class="runover-btn" text="LEAVE ROOM"/>
+      </ui:VisualElement>
+    </ui:VisualElement>
+
+    <!-- Leave confirmation (only opened from the pause menu) -->
+    <ui:VisualElement name="leave-confirm" class="runover-modal pause-modal hidden">
+      <ui:VisualElement class="runover-dimmer"/>
+      <ui:VisualElement class="runover-panel">
+        <ui:Label class="runover-title" text="LEAVE ROOM?"/>
+        <ui:Button name="leave-cancel"      class="runover-btn" text="CANCEL"/>
+        <ui:Button name="leave-confirm-btn" class="runover-btn" text="LEAVE"/>
+      </ui:VisualElement>
+    </ui:VisualElement>
+
   </ui:VisualElement>
 </ui:UXML>
