@@ -32,6 +32,7 @@ import {
   applySlow,
   tickStatusEffects,
   getItemMultiplier,
+  spawnGemFanAndEmitDeath,
   type SpawnerState,
   type Projectile,
   type Boomerang,
@@ -63,6 +64,7 @@ import {
   ENEMY_RADIUS,
   GEM_VALUE,
   GEM_PICKUP_RADIUS,
+  GEM_FAN_RADIUS,
   TARGETING_MAX_RANGE,
   LEVEL_UP_DEADLINE_TICKS,
   xpForLevel,
@@ -70,7 +72,9 @@ import {
   ENEMY_DESPAWN_RADIUS,
 } from "../src/constants.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "../src/weapons.js";
+import { ENEMY_KINDS } from "../src/enemies.js";
 import { mulberry32 } from "../src/rng.js";
+import type { EnemyDiedEvent } from "../src/messages.js";
 
 function addPlayer(state: RoomState, id: string, dirX: number, dirZ: number): Player {
   const p = new Player();
@@ -4642,5 +4646,73 @@ describe("describeItemEffect — M9 US-006 iteration (item descriptions in level
     expect(describeItemEffect(magnifier, 5)).toBe("+125% gem magnet range");
     expect(describeItemEffect(bunny, 1)).toBe("+10% XP gain");
     expect(describeItemEffect(bunny, 5)).toBe("+50% XP gain");
+  });
+});
+
+describe("spawnGemFanAndEmitDeath", () => {
+  // Minimal stub ctx — only the two methods the helper reads.
+  function makeCtx() {
+    let next = 1;
+    return {
+      nextGemId: () => next++,
+      orbitHitCooldown: { evictEnemy: () => {}, tryHit: () => true },
+    };
+  }
+
+  function makeEnemyAt(kind: number, x: number, z: number): Enemy {
+    const e = new Enemy();
+    e.id = 42;
+    e.kind = kind;
+    e.x = x;
+    e.z = z;
+    e.hp = 0;
+    e.maxHp = ENEMY_KINDS[kind]!.baseHp;
+    return e;
+  }
+
+  it("gemDropCount === 1: spawns exactly one gem at the death position", () => {
+    const state = new RoomState();
+    state.enemies.set("42", makeEnemyAt(0, 7, 11));  // slime, gemDropCount=1
+    const ctx = makeCtx();
+    const events: EnemyDiedEvent[] = [];
+    spawnGemFanAndEmitDeath(state, state.enemies.get("42")!, ctx, (e) => {
+      if (e.type === "enemy_died") events.push(e);
+    });
+    expect(state.gems.size).toBe(1);
+    const onlyGem = [...state.gems.values()][0]!;
+    expect(onlyGem.x).toBe(7);
+    expect(onlyGem.z).toBe(11);
+    expect(onlyGem.value).toBe(GEM_VALUE);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ enemyId: 42, x: 7, z: 11 });
+    expect(state.enemies.has("42")).toBe(false);
+  });
+
+  it("gemDropCount > 1: spawns N gems in an evenly-spaced ring at GEM_FAN_RADIUS", () => {
+    const state = new RoomState();
+    // kind=4 is the boss; gemDropCount=15.
+    state.enemies.set("42", makeEnemyAt(4, 0, 0));
+    const ctx = makeCtx();
+    spawnGemFanAndEmitDeath(state, state.enemies.get("42")!, ctx, () => {});
+    expect(state.gems.size).toBe(15);
+    // Every gem is at distance GEM_FAN_RADIUS from origin.
+    for (const g of state.gems.values()) {
+      const r = Math.sqrt(g.x * g.x + g.z * g.z);
+      expect(r).toBeCloseTo(GEM_FAN_RADIUS, 6);
+    }
+    // Angles are deterministic — the i=0 gem must be at (+R, 0).
+    const gemsSorted = [...state.gems.values()].sort((a, b) => a.id - b.id);
+    expect(gemsSorted[0]!.x).toBeCloseTo(GEM_FAN_RADIUS, 6);
+    expect(gemsSorted[0]!.z).toBeCloseTo(0, 6);
+  });
+
+  it("emits enemy_died exactly once regardless of fan size", () => {
+    const state = new RoomState();
+    state.enemies.set("42", makeEnemyAt(4, 0, 0));  // boss: 15 gems
+    let dies = 0;
+    spawnGemFanAndEmitDeath(state, state.enemies.get("42")!, makeCtx(), (e) => {
+      if (e.type === "enemy_died") dies++;
+    });
+    expect(dies).toBe(1);
   });
 });
