@@ -33,6 +33,12 @@ public Enemy() { }
 
 	[Type(7, "int32")]
 	public int slowExpiresAt = default(int);
+
+	[Type(8, "uint16")]
+	public ushort maxHp = default(ushort);
+
+	[Type(9, "int32")]
+	public int abilityFireAt = default(int);
 }
 
 }
