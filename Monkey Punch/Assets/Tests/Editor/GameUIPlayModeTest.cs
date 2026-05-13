@@ -84,6 +84,22 @@ namespace MonkeyPunch.Tests.Runtime {
       Assert.IsTrue(grid[2].ClassListContains("empty"));
       Assert.IsTrue(grid[7].ClassListContains("empty"));
     }
+
+    [UnityTest]
+    public IEnumerator ShowRunOver_RemovesHiddenClassAndSetsTitle() {
+      bool restartCalled = false;
+      gameUI.ShowRunOver("DEFEAT", () => restartCalled = true);
+      yield return new WaitForSeconds(0.05f); // wait for schedule.Execute (16ms) to trigger
+
+      var root = gameUI.GetComponent<UIDocument>().rootVisualElement;
+      var modal = root.Q<VisualElement>("runover");
+      Assert.IsFalse(modal.ClassListContains("hidden"));
+      Assert.AreEqual("DEFEAT", root.Q<Label>("runover-title").text);
+
+      gameUI.HideRunOver();
+      yield return new WaitForSeconds(0.25f);
+      Assert.IsFalse(restartCalled); // HideRunOver does not invoke the callback
+    }
   }
 }
 #endif

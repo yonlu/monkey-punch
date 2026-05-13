@@ -210,7 +210,12 @@ namespace MonkeyPunch.UI {
       onRestartClicked = onRestart;
       runOverVisible = true;
       RefreshCursorState();
-      // UXML class toggled in Task 9.
+      if (runoverModal != null) {
+        if (runoverTitle != null) runoverTitle.text = string.IsNullOrEmpty(reason) ? "RUN ENDED" : reason;
+        runoverModal.RemoveFromClassList("hidden");
+        // Trigger opacity transition on next frame by adding .shown after layout pass.
+        runoverModal.schedule.Execute(() => runoverModal.AddToClassList("shown")).ExecuteLater(16);
+      }
     }
 
     public void HideRunOver() {
@@ -218,6 +223,11 @@ namespace MonkeyPunch.UI {
       runOverReason = null;
       onRestartClicked = null;
       RefreshCursorState();
+      if (runoverModal != null) {
+        runoverModal.RemoveFromClassList("shown");
+        // After fade-out, add hidden to collapse layout.
+        runoverModal.schedule.Execute(() => runoverModal.AddToClassList("hidden")).ExecuteLater(220);
+      }
     }
 
     private void OnRestartButtonClicked() {
