@@ -35,6 +35,8 @@ namespace MonkeyPunch.Net {
 
     [Header("Render")]
     [SerializeField] private float interpDelayMs = 100f;
+    [Tooltip("Prefab instantiated for each player (local + remote). Drag PlayerCharacter.prefab here.")]
+    [SerializeField] private GameObject playerPrefab;
 
     [Serializable]
     private class PongMessage { public string type; public double t; public double serverNow; }
@@ -221,16 +223,16 @@ namespace MonkeyPunch.Net {
     private float lastLiveDirZ = float.NaN;
     private const double EXTRAP_CLAMP_MS = 50.0; // one predictor step
 
-    // Visual half-heights. The server reports player.y / enemy.y as the
-    // entity's BASE position (feet on terrain) — PLAYER_GROUND_OFFSET and
-    // ENEMY_GROUND_OFFSET are both 0 in shared/constants.ts. Unity's
-    // PrimitiveType.Cube has its origin at the CENTER, so positioning a
-    // GameObject at p.y directly would sink half the cube below the
-    // terrain mesh. Add these to the rendered Y to lift the cube's base
-    // onto the terrain. Update if the player or enemy mesh scale changes.
-    //   PLAYER cube: localScale 1×1×1 → half-height 0.5
-    //   ENEMY  cube: localScale uniform 0.9 (see HandleEnemyAdd) → 0.45
-    private const float PLAYER_VISUAL_HALF_HEIGHT = 0.5f;
+    // Visual half-height for enemies. The server reports enemy.y as the
+    // entity's BASE position (feet on terrain) — ENEMY_GROUND_OFFSET is 0
+    // in shared/constants.ts. Unity's PrimitiveType.Cube has its origin
+    // at the CENTER, so positioning an enemy at e.y directly would sink
+    // half the cube below the terrain mesh. Add this to the rendered Y
+    // to lift the cube's base onto the terrain. Update if the enemy
+    // mesh scale changes.
+    //
+    // (PlayerCharacter prefab is feet-pivoted by FBX convention; no
+    // player-side offset is needed.)
     private const float ENEMY_VISUAL_HALF_HEIGHT = 0.45f;
 
     private readonly Dictionary<string, SnapshotBuffer> playerBuffers = new Dictionary<string, SnapshotBuffer>();
@@ -568,15 +570,14 @@ namespace MonkeyPunch.Net {
       playerBuffers[sessionId] = buf;
 
       bool isLocal = room != null && sessionId == room.SessionId;
-      var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-      go.name = $"Player:{sessionId}:{p.name}{(isLocal ? " [LOCAL]" : "")}";
-      go.transform.position = new Vector3(p.x, p.y + PLAYER_VISUAL_HALF_HEIGHT, p.z);
-      var rend = go.GetComponent<Renderer>();
-      if (rend != null) {
-        rend.material.color = isLocal
-          ? new Color(0.3f, 1.0f, 0.3f)   // green = local (you)
-          : new Color(0.3f, 0.5f, 1.0f);  // blue = remote
+      if (playerPrefab == null) {
+        Debug.LogError("[NetworkClient] playerPrefab is not assigned in the Inspector. " +
+                       "Assign Assets/Prefabs/Characters/PlayerCharacter.prefab.");
+        return;
       }
+      var go = Instantiate(playerPrefab);
+      go.name = $"Player:{sessionId}:{p.name}{(isLocal ? " [LOCAL]" : "")}";
+      go.transform.position = new Vector3(p.x, p.y, p.z);
       playerObjects[sessionId] = go;
       if (isLocal) {
         LocalPlayerTransform = go.transform;
@@ -803,13 +804,12 @@ namespace MonkeyPunch.Net {
           }
           kv.Value.transform.position = new Vector3(
             (float)(predictor.X + predictor.RenderOffsetX + extrapX),
-            renderY + PLAYER_VISUAL_HALF_HEIGHT,
+            renderY,
             (float)(predictor.Z + predictor.RenderOffsetZ + extrapZ)
           );
           continue;
         }
         if (playerBuffers.TryGetValue(kv.Key, out var buf) && buf.Sample(renderTime, out var pos)) {
-          pos.y += PLAYER_VISUAL_HALF_HEIGHT;
           kv.Value.transform.position = pos;
         }
       }
