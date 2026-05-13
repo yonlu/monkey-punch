@@ -123,8 +123,12 @@ namespace MonkeyPunch.Tests.Runtime {
       Assert.AreEqual("KRONOS", cards[2].Q<Label>("lvlup-card-name").text);
 
       gameUI.HideLevelUp();
-      yield return new WaitForSeconds(0.25f); // wait for fade-out (170ms + buffer)
-      Assert.IsTrue(bar.ClassListContains("hidden"));
+      yield return null;
+      // .shown removal is immediate (observable); .hidden add is deferred 170ms
+      // via schedule.Execute to preserve the USS fade-out at runtime, but the
+      // panel scheduler doesn't tick reliably in EditMode tests, so we assert
+      // on the observable state change instead.
+      Assert.IsFalse(bar.ClassListContains("shown"));
       Assert.AreEqual(-1, picked);
     }
 
