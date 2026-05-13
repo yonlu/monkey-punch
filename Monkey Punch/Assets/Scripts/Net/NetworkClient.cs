@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.SceneManagement;
 using Colyseus;
 using MonkeyPunch.Wire;
 using MonkeyPunch.Combat;
@@ -28,10 +29,9 @@ namespace MonkeyPunch.Net {
   // toward the cap or (b) frame time measurably degrades. See TODO
   // in HandleEnemyAdd.
   public class NetworkClient : MonoBehaviour {
-    [Header("Connection")]
-    [SerializeField] private string serverUrl = "ws://localhost:2567";
-    [SerializeField] private string roomName = "game";
-    [SerializeField] private string playerName = "UnitySpectator";
+    // Connection metadata now lives on Bootstrap (DDOL singleton). The
+    // lobby fills Bootstrap.I.Room before LoadScene("Game") and we adopt
+    // it here in Start.
 
     [Header("Render")]
     [SerializeField] private float interpDelayMs = 100f;
@@ -246,19 +246,15 @@ namespace MonkeyPunch.Net {
     private float pingMs;
     private int lastTickSeen;
 
-    async void Start() {
-      Debug.Log($"[NetworkClient] Connecting to {serverUrl} as {playerName}");
-      client = new Client(serverUrl);
-
-      var options = new Dictionary<string, object> { { "name", playerName } };
-      try {
-        room = await client.JoinOrCreate<RoomState>(roomName, options);
-      } catch (Exception ex) {
-        Debug.LogError($"[NetworkClient] JoinOrCreate failed: {ex.Message}\n{ex}");
+    void Start() {
+      if (Bootstrap.I == null || Bootstrap.I.Room == null) {
+        Debug.LogError("[NetworkClient] Entered Game scene without a connected Room. " +
+                       "Game must be loaded from Lobby. Returning to Lobby.");
+        SceneManager.LoadScene("Lobby");
         return;
       }
-
-      Debug.Log($"[NetworkClient] Joined room id={room.RoomId} session={room.SessionId}");
+      room = Bootstrap.I.Room;
+      Debug.Log($"[NetworkClient] Adopted room id={room.RoomId} session={room.SessionId}");
 
       room.OnLeave += code => Debug.Log($"[NetworkClient] Left, close code={code}");
 
@@ -943,10 +939,10 @@ namespace MonkeyPunch.Net {
       }
     }
 
-    async void OnDestroy() {
-      if (room != null) {
-        try { await room.Leave(); } catch { /* shutdown */ }
-      }
+    void OnDestroy() {
+      // Room is shared with Bootstrap (DDOL); leaving here would break
+      // the back-to-lobby flow. Centralized leave lives in
+      // Bootstrap.LeaveAndReturnToLobby.
     }
 
     void OnGUI() {
