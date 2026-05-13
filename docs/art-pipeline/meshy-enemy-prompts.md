@@ -107,6 +107,60 @@ look, no Octane render, no 8K textures
 
 ---
 
+## Animation source — decide before exporting
+
+Every enemy is animated in-game, but **how** the animation is
+authored is a per-creature decision made at Meshy export time:
+
+### Path A — Static mesh + procedural Unity animation
+
+- **In Meshy:** skip the auto-rig step. Export as **GLB**.
+- **In Unity:** a small MonoBehaviour wiggles `transform` every frame
+  (squash, bob, float, drift). No Animator, no Animator Controller,
+  no rig.
+- **Why it works:** blob / amorphous / wing-less creatures have nothing
+  to articulate. A slime "animated" via squash-and-stretch code looks
+  identical to (and is cheaper than) one with a baked rig.
+- **Examples in this roster:** slime, cocoon, ghost, chick.
+
+### Path B — Rigged FBX + Meshy bundled animations
+
+- **In Meshy:** enable auto-rig at export. Pick clips from Meshy's
+  motion library (`idle`, `walk`, `attack`, `flying`, etc.). Export
+  as **FBX**.
+- **In Unity:** Animator + simple controller (single state or 1D
+  BlendTree, matching the M9 Blademaster pattern).
+- **Why it's needed:** anything with legs (mushroom, beetle, skeleton)
+  or wings (bat) needs articulation that procedural transform tweaks
+  can't fake convincingly.
+- **Examples in this roster:** mushroom, bunny, beetle, bat, skeleton.
+
+### Quick reference
+
+| Creature | Path | Why |
+|---|---|---|
+| Slime | A (procedural) | No limbs; squash/stretch is the look |
+| Bunny | A (procedural) | Hop-bob reads better than walk cycle on a chibi body |
+| Mushroom | B (rigged) | Stubby legs need to step |
+| Cocoon | A (procedural) | Dormant wobble in place; no limbs |
+| Ghost | A (procedural) | Float-bob + rotation drift; no body to rig |
+| Beetle | B (rigged) | Six legs walking is signature |
+| Chick | A (procedural) | Wings too vestigial to rig; idle hop |
+| Bat | B (rigged) | Wing flap is essential, procedural can't fake it |
+| Skeleton | B (rigged) | Humanoid walk + attack with weapon — needs full rig |
+
+### Cost implication
+
+Path B (rigged FBX) consumes more Meshy credits per asset — typically
+~50% more than a static GLB, plus per-animation credits. Path A
+externalizes the animation work to your Unity codebase, which is free
+but takes engineer time. For a 9-enemy roster, Paths A + B split
+roughly 50/50 here, so total Meshy cost lands ~25% higher than the
+all-static estimate (~$20 vs ~$16). Still well inside one month's
+Meshy Pro subscription.
+
+---
+
 ## Enemy roster (9 starters + variants)
 
 Each entry has:
@@ -146,6 +200,9 @@ the mesh.
 
 **Role:** trash mob — 1 HP, dies in one hit, spawns in groups of 5-8.
 
+**Animation:** Path A (procedural). Skip Meshy's rig step. Unity
+MonoBehaviour squashes + bobs the transform on a sine wave.
+
 ---
 
 ### 2. Hopping Bunny (trash mob, fast)
@@ -175,6 +232,9 @@ baked texture atlas at 128x128, retro game-ready
 **Variants:** `pastel cream + pink` / `light gray + blue` / `pale brown + amber`.
 
 **Role:** trash mob — 1 HP, 1.5× movement speed.
+
+**Animation:** Path A (procedural). Unity MonoBehaviour drives a
+hop-bob (vertical sine + slight forward lean on the upstroke).
 
 ---
 
@@ -207,6 +267,10 @@ yellow spots` / `forest green cap with cream spots`.
 
 **Role:** mid-tier — 3 HP, normal speed, drops gem on death.
 
+**Animation:** Path B (rigged). Enable Meshy auto-rig at export.
+Bundled clips: `idle`, `walk`. Export as FBX. Unity Animator with
+the M9 BlendTree pattern (idle@0 → walk@0.5 on `Speed`).
+
 ---
 
 ### 4. Cocoon Larva (mid-tier, slow)
@@ -237,6 +301,11 @@ low-resolution baked texture atlas at 128x128, retro game-ready
 **Variants:** `golden silk` / `pale jade silk` / `dusty rose silk`.
 
 **Role:** mid-tier — 4 HP, 0.7× movement speed, denser swarms.
+
+**Animation:** Path A (procedural). Unity MonoBehaviour applies a
+tiny rotational wobble (the cocoon trembles in place) + a slow
+breathing-scale pulse. No locomotion clip needed — server-driven
+position handles forward motion.
 
 ---
 
@@ -271,6 +340,10 @@ baseColor as alpha or color variation), retro game-ready
 **Role:** flying — ignores ground collision, can pass terrain. 2 HP,
 slower than bunnies but unblocked.
 
+**Animation:** Path A (procedural). Unity MonoBehaviour bobs the
+ghost vertically + drifts a slow Y-rotation so it feels haunted, not
+mechanical. No rig in Meshy — there's no body to articulate.
+
 ---
 
 ### 6. Armored Beetle (mid-tier, ground)
@@ -304,6 +377,11 @@ into the baseColor), retro game-ready
 
 **Role:** mid-tier — 5 HP, normal speed, slight knockback resistance.
 
+**Animation:** Path B (rigged). Enable Meshy auto-rig. Bundled clip:
+`walking` (six-legged). Export as FBX. Unity Animator: single state
+playing the walk clip on loop — server position handles movement,
+the clip handles articulation.
+
 ---
 
 ### 7. Fluffy Chick (trash mob, weakest)
@@ -333,6 +411,10 @@ low-resolution baked texture atlas at 128x128, retro game-ready
 **Variants:** `pale lemon` / `pale mint` / `pale peach`.
 
 **Role:** trash mob — 1 HP, fastest enemy, spawns in clusters.
+
+**Animation:** Path A (procedural). Unity MonoBehaviour bobs the
+chick on a fast sine wave (suggests rapid little hops). Wings stay
+static against the body.
 
 ---
 
@@ -365,6 +447,11 @@ retro game-ready
 wings` / `charcoal + crimson wings`.
 
 **Role:** flying — fast, erratic horizontal movement, 2 HP.
+
+**Animation:** Path B (rigged). Enable Meshy auto-rig. Bundled clip:
+`flying` (wing flap). Export as FBX. Unity Animator: single state
+playing the flap clip on loop. Wing flap is essential — procedural
+won't fake it convincingly.
 
 ---
 
@@ -417,6 +504,12 @@ skeleton is the visual foil to the Blademaster — both humanoid, but
 one living-warrior and one undead-soldier. They should feel in
 silhouette dialogue with each other.
 
+**Animation:** Path B (rigged). Enable Meshy auto-rig. Bundled clips:
+`idle`, `walk`, optionally `attack`. Export as FBX. Unity Animator:
+1D BlendTree on `Speed` (same pattern as the Blademaster, M9 commit
+`c29ea92`). If you include `attack`, fire it on contact via the
+existing server `hit` event.
+
 ---
 
 ## Elite / mini-boss variant (any creature)
@@ -441,16 +534,30 @@ larger and more dangerous than the trash mob version
 Same scaffolding as the M9 Blademaster pipeline (commit `541ae90`),
 but with PSX-specific tightening at the texture and shading layers.
 
-1. **Save the GLB** to `Monkey Punch/Assets/Art/Enemies/<creature>/<creature>.glb`.
+1. **Save the file** to `Monkey Punch/Assets/Art/Enemies/<creature>/`.
+   - **Path A (procedural):** save as `<creature>.glb`.
+   - **Path B (rigged):** save as `<creature>.fbx`.
 
-2. **FBX/GLB import settings:**
-   - **Animation Type:** None (static meshes; no rig — the existing
-     server-driven enemy transform handles motion).
-   - **Generate Normals:** **Calculate** with **Smoothing Angle = 0**
-     (forces flat / faceted shading on every face — this is the single
-     biggest PSX-look lever at the mesh level).
-   - **Generate Lightmap UVs:** off.
-   - **Read/Write Enabled:** off.
+2. **Import settings:**
+   - **Path A (GLB, no rig):**
+     - **Animation Type:** None.
+     - **Generate Normals:** **Calculate** with **Smoothing Angle = 0**
+       (faceted flat shading — the single biggest PSX-look lever at
+       the mesh level).
+     - **Generate Lightmap UVs:** off.
+     - **Read/Write Enabled:** off.
+   - **Path B (FBX, rigged):**
+     - **Animation Type:** **Generic** (Humanoid only if the rig's
+       bones map to Unity's standard humanoid skeleton — most Meshy
+       auto-rigs produce non-standard bone names. Same fallback story
+       as the M9 Blademaster).
+     - **Avatar Definition:** Create From This Model.
+     - **Import Animation:** ✓ on; enable **Loop Time** on locomotion
+       clips (`walk`, `flying`, etc.).
+     - **Generate Normals:** **Calculate** with **Smoothing Angle = 0**.
+     - **Generate Lightmap UVs:** off.
+     - **Optimize Game Objects:** off (lets you parent VFX to bones
+       if needed later).
 
 3. **Texture import settings** (per imported PNG/JPG — this is
    where PSX/N64 lives at the rendering layer):
@@ -494,9 +601,15 @@ but with PSX-specific tightening at the texture and shading layers.
    fine control.
 
 7. **Create the prefab** under `Assets/Prefabs/Enemies/<creature>.prefab`.
-   Single child GameObject with the static MeshRenderer; no animator,
-   no script (the existing `NetworkClient.HandleEnemyAdd` code drives
-   the transform).
+   - **Path A:** root GameObject with the static MeshRenderer +
+     procedural animator MonoBehaviour (e.g., `SlimeBob.cs`,
+     `GhostFloat.cs` — one tiny script per creature, three to five
+     lines each). The MonoBehaviour reads `Time.time` and writes
+     `transform.localScale` / `transform.localPosition`.
+   - **Path B:** root with the SkinnedMeshRenderer (Meshy auto-rigs
+     usually skin) + Animator wired to a controller (single state
+     for one-clip creatures like bat/beetle; 1D BlendTree for
+     skeleton/mushroom matching the M9 pattern from commit `c29ea92`).
 
 8. **Wire into NetworkClient** — extend `HandleEnemyAdd` to instantiate
    the right prefab based on `Enemy.kind` (currently a placeholder; this
@@ -514,8 +627,11 @@ Assuming Midjourney Standard ($30/mo) + Meshy Pro ($30/mo):
   ~$1–2 in credits for a textured + remeshed model.
 - **For all 9 enemies × 3 color variants × 3 concept rerolls:**
   - Concept art: ~81 images = ~$2.43
-  - 3D models: 9 meshes × ~$1.50 = ~$13.50 (color variants share the mesh)
-  - Total: **~$16 in usage cost**, well under the monthly subscription.
+  - 3D models (4 × Path A static GLB at ~$1.50): ~$6
+  - 3D models (5 × Path B rigged FBX at ~$2.25, ~50% premium for
+    auto-rig + bundled clips): ~$11.25
+  - Total: **~$20 in usage cost**, still well inside one month of
+    Meshy Pro.
 
 Cheaper if you only generate one variant per creature initially and
 expand later, or if you use the free tier of either tool (with the
