@@ -236,6 +236,34 @@ export type BoomerangThrownEvent = {
   serverFireTimeMs: number;
 };
 
+// M10: telegraph for the boss's AoE slam. Emitted once per ability
+// activation at the start of the windup. The client reads
+// fireServerTimeMs to time the ring's fill animation — same time-based
+// pattern as FireEvent.serverFireTimeMs (no per-tick syncing needed).
+export type BossTelegraphEvent = {
+  type: "boss_telegraph";
+  bossId: number;
+  originX: number;
+  originZ: number;
+  radius: number;
+  fireServerTimeMs: number;   // Date.now() at expected fire tick
+  serverTick: number;
+};
+
+// M10: AoE slam fired. Drives the strike VFX (ring shockwave). Per-player
+// damage rides on the existing PlayerDamagedEvent path — one event per
+// hit player — so the existing damage-number + downed-modal flow lights
+// up without changes. This event is the "the slam happened" cue for
+// ambient VFX only.
+export type BossAoeHitEvent = {
+  type: "boss_aoe_hit";
+  bossId: number;
+  originX: number;
+  originZ: number;
+  radius: number;
+  serverTick: number;
+};
+
 // M8 US-005: melee_arc swing — emitted once per swing for client VFX (a
 // brief slash flash). Damage events for the swing's hits go through the
 // existing HitEvent path (one per enemy hit) with fireId=0 (the existing
@@ -312,6 +340,8 @@ export const MessageType = {
   RunEnded: "run_ended",
   MeleeSwipe: "melee_swipe",  // M8 US-005
   BoomerangThrown: "boomerang_thrown",  // M8 US-011
+  BossTelegraph: "boss_telegraph",  // M10
+  BossAoeHit: "boss_aoe_hit",  // M10
   TerrainData: "terrain_data",  // Phase 6 (Unity migration plan)
 } as const;
 
