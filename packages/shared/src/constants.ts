@@ -114,3 +114,29 @@ export const TERMINAL_FALL_SPEED = 30;      // world units / s — clamp on |vy|
 // = 2 ticks. Inclusive at the boundary: elapsed == JUMP_BUFFER still fires.
 export const COYOTE_TIME = 0.1;
 export const JUMP_BUFFER = 0.1;
+
+// M10 — enemy expansion
+/**
+ * Vertical offset for flying enemies. tickEnemies snaps a flying enemy's
+ * y to terrainHeight(x, z) + FLYING_ENEMY_ALTITUDE every tick, so flying
+ * creatures float at a constant altitude above whatever ground is
+ * beneath them. Set per spec §AD5 (resnap-with-offset, not frozen
+ * spawn-altitude). 2.5 reads as "clearly above the player; below the
+ * canopy of terrain props if those land later."
+ */
+export const FLYING_ENEMY_ALTITUDE = 2.5;
+
+/**
+ * Radius (world units) of the evenly-spaced gem fan dropped on
+ * multi-gem enemy deaths. Per AD10 — angles are deterministic
+ * `(i / count) * 2π`, no rng consumption.
+ */
+export const GEM_FAN_RADIUS = 1.5;
+
+/**
+ * Ticks between boss spawn attempts. 3 minutes @ 20Hz = 3600 ticks.
+ * Tunable knob; the only cadence-control surface for boss appearances.
+ * Spec §AD7. First spawn is at this tick value (not at tick=0) — see
+ * GameRoom.onCreate which initializes nextBossAt = BOSS_INTERVAL_TICKS.
+ */
+export const BOSS_INTERVAL_TICKS = 3 * 60 * TICK_RATE;
