@@ -248,7 +248,8 @@ namespace MonkeyPunch.UI {
       BuildLevelUpCards(choices);
       lvlupBar.RemoveFromClassList("hidden");
       pendingShowSchedule?.Pause();
-      pendingShowSchedule = lvlupBar.schedule.Execute(() => lvlupBar.AddToClassList("shown")).ExecuteLater(16);
+      pendingShowSchedule = lvlupBar.schedule.Execute(() => lvlupBar.AddToClassList("shown"));
+      pendingShowSchedule.ExecuteLater(16);
     }
 
     public void HideLevelUp() {
@@ -265,7 +266,8 @@ namespace MonkeyPunch.UI {
 
       lvlupBar.RemoveFromClassList("shown");
       pendingHideSchedule?.Pause();
-      pendingHideSchedule = lvlupBar.schedule.Execute(() => lvlupBar.AddToClassList("hidden")).ExecuteLater(170);
+      pendingHideSchedule = lvlupBar.schedule.Execute(() => lvlupBar.AddToClassList("hidden"));
+      pendingHideSchedule.ExecuteLater(170);
     }
 
     private void BuildLevelUpCards(LevelUpChoiceDisplay[] choices) {
