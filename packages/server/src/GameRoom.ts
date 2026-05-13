@@ -603,6 +603,16 @@ export class GameRoom extends Room<{ state: RoomState }> {
     }
   }
 
+  /**
+   * TEST ONLY. Sets `bossSpawner.nextBossAt` so an integration test
+   * doesn't have to wait the full 3-minute production cadence. Not
+   * called by any production path; safe to leave in shipped code
+   * because it requires a typed reference to the room instance.
+   */
+  setBossSpawnAtForTest(tick: number): void {
+    this.bossSpawner.nextBossAt = tick;
+  }
+
   private installSnapshotLogger(): void {
     // Per-tick byte counting via broadcastPatch override. The exact internal
     // signature varies between Colyseus versions; the try/catch lets a

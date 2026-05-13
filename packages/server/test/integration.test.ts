@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Server } from "colyseus";
+import { Server, matchMaker } from "colyseus";
 import { Client } from "@colyseus/sdk";
 import { GameRoom } from "../src/GameRoom.js";
+import { BOSS_KIND_INDEX, ENEMY_KINDS } from "@mp/shared";
 
 // End-to-end integration test. Boots a real Colyseus server in-process and
 // connects two real colyseus.js clients over WebSocket. Catches the failure
@@ -474,6 +475,49 @@ describe("integration: M7 US-009 jump trajectory end-to-end", () => {
 
     await room.leave();
   }, 8000);
+});
+
+describe("integration: boss spawn timing", () => {
+  it("spawns exactly one boss after a short interval with correct maxHp", async () => {
+    const client = new Client(`ws://localhost:${PORT}`);
+    type BossRoomState = {
+      code: string;
+      tick: number;
+      enemies: {
+        size: number;
+        values: () => IterableIterator<{ kind: number; hp: number; maxHp: number; abilityFireAt: number }>;
+      };
+    };
+    const clientRoom = await client.create<BossRoomState>("game", { name: "BossTester" });
+    await waitFor(() => clientRoom.state.code !== "" && clientRoom.state.code != null, 1000);
+
+    // Acquire the server-side GameRoom instance via matchMaker.getLocalRoomById.
+    // The client-side `clientRoom.roomId` is the same roomId the server uses.
+    const room = matchMaker.getLocalRoomById(clientRoom.roomId) as GameRoom;
+    if (!room) throw new Error("getLocalRoomById returned undefined — room not found in this process");
+
+    // Fast-forward boss spawn to ~2s in the future = 40 ticks @ 20Hz.
+    const targetTick = room.state.tick + 40;
+    room.setBossSpawnAtForTest(targetTick);
+
+    // Wait for state.tick to overshoot the target by 2 ticks of slack
+    // (setSimulationInterval timing slop). Use the same waitFor helper
+    // used by all surrounding tests.
+    await waitFor(() => room.state.tick >= targetTick + 2, 5_000);
+
+    // Find any boss in state.enemies (kind === BOSS_KIND_INDEX).
+    const bosses = [...clientRoom.state.enemies.values()].filter(
+      (e) => e.kind === BOSS_KIND_INDEX,
+    );
+    expect(bosses).toHaveLength(1);
+    const boss = bosses[0]!;
+    const def = ENEMY_KINDS[BOSS_KIND_INDEX]!;
+    expect(boss.maxHp).toBe(def.baseHp);
+    expect(boss.hp).toBe(def.baseHp);
+    expect(boss.abilityFireAt).toBe(-1);
+
+    await clientRoom.leave();
+  }, 10_000);
 });
 
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
