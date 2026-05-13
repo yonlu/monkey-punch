@@ -891,6 +891,18 @@ namespace MonkeyPunch.Net {
       }
       GameUI.Instance.SetHud(s);
       GameUI.Instance.SetDownedState(localDowned);
+      // Per-frame level-up timer + queue rendering. Only meaningful while
+      // the bar is on screen; guard avoids wasted work each frame.
+      if (GameUI.Instance.LevelUpOpen && room?.State != null &&
+          room.State.players != null && room.SessionId != null) {
+        var lp = room.State.players[room.SessionId];
+        if (lp != null) {
+          double secondsRemaining = System.Math.Max(0,
+            (long)lp.levelUpDeadlineTick - (long)room.State.tick) * PredictorConstants.SIM_DT_S;
+          int queueCount = lp.levelUpChoices?.Count ?? 0;
+          GameUI.Instance.SetLevelUpTimer(secondsRemaining, queueCount);
+        }
+      }
     }
 
     async void OnDestroy() {

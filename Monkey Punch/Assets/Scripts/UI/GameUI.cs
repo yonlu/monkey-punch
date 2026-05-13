@@ -295,6 +295,28 @@ namespace MonkeyPunch.UI {
       }
     }
 
+    /// <summary>
+    /// Called by NetworkClient each frame while the level-up bar is open.
+    /// `secondsRemaining` is computed from Player.levelUpDeadlineTick minus
+    /// the current tick times SIM_DT_S on the caller side. `queueCount`
+    /// is the total pending offers in Player.levelUpChoices; the badge
+    /// shows +N MORE when count > 1.
+    /// </summary>
+    public void SetLevelUpTimer(double secondsRemaining, int queueCount) {
+      if (lvlupTimer == null) return;
+      int wholeSeconds = Mathf.CeilToInt((float)Mathf.Max(0f, (float)secondsRemaining));
+      lvlupTimer.text = "AUTO " + wholeSeconds.ToString() + "s";
+
+      if (lvlupQueue != null) {
+        if (queueCount > 1) {
+          lvlupQueue.RemoveFromClassList("hidden");
+          lvlupQueue.text = "+" + (queueCount - 1).ToString() + " MORE";
+        } else {
+          lvlupQueue.AddToClassList("hidden");
+        }
+      }
+    }
+
     public void ShowRunOver(string reason, Action onRestart) {
       runOverReason = reason;
       onRestartClicked = onRestart;
