@@ -68,6 +68,7 @@ namespace MonkeyPunch.UI {
     private Label statKills;
     private Label hudTime;
     private Label hudLevel;
+    private Label hudCode;
     private VisualElement hpFill;
     private Label hpText;
     private VisualElement xpFill;
@@ -108,6 +109,7 @@ namespace MonkeyPunch.UI {
       statKills       = root.Q<Label>("stat-kills");
       hudTime         = root.Q<Label>("hud-time");
       hudLevel        = root.Q<Label>("hud-level");
+      hudCode         = root.Q<Label>("hud-code");
       hpFill          = root.Q<VisualElement>("hp-fill");
       hpText          = root.Q<Label>("hp-text");
       xpFill          = root.Q<VisualElement>("xp-fill");
@@ -356,6 +358,11 @@ namespace MonkeyPunch.UI {
           lvlupQueue.AddToClassList("hidden");
         }
       }
+    }
+
+    public void SetRoomCode(string code) {
+      if (hudCode == null) return;
+      hudCode.text = string.IsNullOrEmpty(code) ? "" : code;
     }
 
     public void ShowRunOver(string reason, Action onRestart) {

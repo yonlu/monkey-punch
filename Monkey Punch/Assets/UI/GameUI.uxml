@@ -19,6 +19,9 @@
     <!-- Top-right level -->
     <ui:Label name="hud-level" class="hud-level" text="LV 1" picking-mode="Ignore"/>
 
+    <!-- Top-right room code (below the level label) -->
+    <ui:Label name="hud-code" class="hud-code" text="" picking-mode="Ignore"/>
+
     <!-- Left column: HP / XP / weapons / items -->
     <ui:VisualElement name="hud-leftcol" class="hud-leftcol" picking-mode="Ignore">
       <ui:VisualElement name="hud-hpbar" class="hud-hpbar">

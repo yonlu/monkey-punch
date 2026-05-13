@@ -916,6 +916,7 @@ namespace MonkeyPunch.Net {
         }
       }
       GameUI.Instance.SetHud(s);
+      GameUI.Instance.SetRoomCode(room.State?.code);
       GameUI.Instance.SetDownedState(localDowned);
       // Per-frame level-up timer rendering. Only meaningful while the
       // bar is on screen.

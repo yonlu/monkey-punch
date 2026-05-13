@@ -276,3 +276,17 @@
   font-size: 13px;
   letter-spacing: 1px;
 }
+
+/* ===== Top-right room code pill ===== */
+.hud-code {
+  position: absolute;
+  top: 44px;
+  right: 18px;
+  font-size: 14px;
+  color: var(--mp-gold);
+  background-color: var(--mp-dark);
+  border-width: 2px;
+  border-color: var(--mp-brown);
+  padding: 4px 8px;
+  letter-spacing: 1px;
+}
