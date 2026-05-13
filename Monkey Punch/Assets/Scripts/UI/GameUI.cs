@@ -235,7 +235,6 @@ namespace MonkeyPunch.UI {
     private int lvlupGen = 0;
 
     public void ShowLevelUp(LevelUpChoiceDisplay[] choices, Action<int> onClick) {
-      Debug.Log($"[GameUI] ShowLevelUp choices={choices?.Length ?? 0} gen={lvlupGen + 1}");
       int gen = ++lvlupGen;
       levelUpChoices = choices;
       onLevelUpClicked = onClick;
@@ -253,7 +252,6 @@ namespace MonkeyPunch.UI {
     }
 
     public void HideLevelUp() {
-      Debug.Log($"[GameUI] HideLevelUp gen={lvlupGen + 1}");
       int gen = ++lvlupGen;
       levelUpVisible = false;
       levelUpChoices = null;
@@ -426,15 +424,10 @@ namespace MonkeyPunch.UI {
     private void OnPick3(InputAction.CallbackContext _) => PickIndex(2);
 
     private void PickIndex(int idx) {
-      Debug.Log($"[GameUI] PickIndex({idx}) levelUpVisible={levelUpVisible} choicesLen={(levelUpChoices != null ? levelUpChoices.Length : -1)} cbNull={(onLevelUpClicked == null)}");
-      if (!levelUpVisible || levelUpChoices == null) {
-        Debug.Log("[GameUI] PickIndex bailing — guard tripped");
-        return;
-      }
+      if (!levelUpVisible || levelUpChoices == null) return;
       if (idx < 0 || idx >= levelUpChoices.Length) return;
       var cb = onLevelUpClicked;
       HideLevelUp();
-      Debug.Log($"[GameUI] PickIndex invoking callback for idx={idx}");
       cb?.Invoke(idx);
     }
 

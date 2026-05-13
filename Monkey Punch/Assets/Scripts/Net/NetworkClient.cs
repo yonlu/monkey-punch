@@ -707,10 +707,16 @@ namespace MonkeyPunch.Net {
       //   4 → Kronos (kind=7, behavior=aura) — see cyan pulse ring
       //   B → debug_spawn 10 enemies for instant targets
       if (room != null && kb != null) {
-        if (kb.digit1Key.wasPressedThisFrame) DebugGrantWeapon(1);
-        if (kb.digit2Key.wasPressedThisFrame) DebugGrantWeapon(6);
-        if (kb.digit3Key.wasPressedThisFrame) DebugGrantWeapon(3);
-        if (kb.digit4Key.wasPressedThisFrame) DebugGrantWeapon(7);
+        // Phase 8.4: when the level-up bar is open the 1/2/3 keys belong
+        // to its picker — suppress the digit-key debug grants so a single
+        // keypress doesn't both pick a card AND grant a weapon.
+        bool levelUpOwnsDigits = GameUI.Instance != null && GameUI.Instance.LevelUpOpen;
+        if (!levelUpOwnsDigits) {
+          if (kb.digit1Key.wasPressedThisFrame) DebugGrantWeapon(1);
+          if (kb.digit2Key.wasPressedThisFrame) DebugGrantWeapon(6);
+          if (kb.digit3Key.wasPressedThisFrame) DebugGrantWeapon(3);
+          if (kb.digit4Key.wasPressedThisFrame) DebugGrantWeapon(7);
+        }
         if (kb.bKey.wasPressedThisFrame) DebugSpawnEnemies(10);
         // Phase 8 polish: K → 10 hp self damage. Useful for testing the
         // downed / run-ended modal + Restart flow without farming enemy
