@@ -35,5 +35,34 @@ namespace MonkeyPunch.UI {
 
     public static string ItemName(int kind) =>
       kind >= 0 && kind < Items.Length ? Items[kind] : $"Item#{kind}";
+
+    // Item effect → glyph map. Mirrors web client's ITEM_ICONS in
+    // packages/client/src/game/LevelUpOverlay.tsx. Dispatches on enum
+    // (not item name) — rule 12 clean.
+    public static string ItemGlyph(int kind) {
+      switch (kind) {
+        case 0: return "🔥";  // Ifrit's Talisman   (damage_mult)
+        case 1: return "⚡";  // Wind of Verdure    (cooldown_mult)
+        case 2: return "❤";   // Apple of Idun      (max_hp_mult)
+        case 3: return "🥾";  // Sleipnir           (speed_mult)
+        case 4: return "🔍";  // Magnifier          (magnet_mult)
+        case 5: return "🐰";  // Bunny Top Hat      (xp_mult)
+        default: return "?";
+      }
+    }
+
+    public static string WeaponGlyph(int kind) {
+      switch (kind) {
+        case 0: return "⚡";  // Bolt
+        case 1: return "🏹";  // Gakkung Bow
+        case 2: return "🔱";  // Ahlspiess
+        case 3: return "🌀";  // Orbit
+        case 4: return "⚔";   // Damascus
+        case 5: return "🛡";  // Claymore
+        case 6: return "✨";  // Kronos
+        case 7: return "🪓";  // Bloody Axe
+        default: return "?";
+      }
+    }
   }
 }

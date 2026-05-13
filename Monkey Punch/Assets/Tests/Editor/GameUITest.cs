@@ -17,5 +17,15 @@ namespace MonkeyPunch.Tests.Editor {
     public void FormatTime_NegativeClampsToZero() {
       Assert.AreEqual("00:00", GameUI.FormatTime(-5.0));
     }
+
+    [Test]
+    public void ItemGlyph_DamageMult_ReturnsFireEmoji() {
+      Assert.AreEqual("🔥", Names.ItemGlyph(0));
+    }
+
+    [Test]
+    public void WeaponGlyph_UnknownKind_ReturnsQuestionMark() {
+      Assert.AreEqual("?", Names.WeaponGlyph(255));
+    }
   }
 }

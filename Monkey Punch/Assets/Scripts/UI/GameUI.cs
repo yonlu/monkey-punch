@@ -145,7 +145,48 @@ namespace MonkeyPunch.UI {
       float xpFrac = hud.XpForNextLevel > 0 ? Mathf.Clamp01((float)hud.Xp / hud.XpForNextLevel) : 0f;
       xpFill.style.width = new StyleLength(new Length(xpFrac * 100f, LengthUnit.Percent));
 
-      // Inventory grids — Task 8 owns this. Leave empty for now.
+      // Inventory grids
+      UpdateInventoryGrid(weaponsGrid, hud.Weapons, isWeapon: true);
+      UpdateInventoryGrid(itemsGrid,   hud.Items,   isWeapon: false);
+    }
+
+    private void UpdateInventoryGrid<T>(VisualElement grid, List<T> entries, bool isWeapon) where T : struct {
+      if (grid == null) return;
+
+      const int SlotCount = 8;
+      while (grid.childCount < SlotCount) {
+        var slot = new VisualElement();
+        slot.AddToClassList("hud-slot");
+        var glyph = new Label { name = "glyph" };
+        glyph.AddToClassList("glyph");
+        var lvl = new Label { name = "lvl" };
+        lvl.AddToClassList("lvl");
+        slot.Add(glyph);
+        slot.Add(lvl);
+        grid.Add(slot);
+      }
+
+      for (int i = 0; i < SlotCount; i++) {
+        var slot = grid[i];
+        var glyph = slot.Q<Label>("glyph");
+        var lvl = slot.Q<Label>("lvl");
+        if (entries != null && i < entries.Count) {
+          slot.RemoveFromClassList("empty");
+          if (isWeapon) {
+            var e = (HudWeaponEntry)(object)entries[i];
+            glyph.text = Names.WeaponGlyph(e.Kind);
+            lvl.text = "L" + e.Level.ToString();
+          } else {
+            var e = (HudItemEntry)(object)entries[i];
+            glyph.text = Names.ItemGlyph(e.Kind);
+            lvl.text = "L" + e.Level.ToString();
+          }
+        } else {
+          slot.AddToClassList("empty");
+          glyph.text = "";
+          lvl.text = "";
+        }
+      }
     }
 
     public void ShowLevelUp(LevelUpChoiceDisplay[] choices, Action<int> onClick) {
