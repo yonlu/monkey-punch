@@ -86,16 +86,12 @@ namespace MonkeyPunch.UI {
     }
 
     void OnEnable() {
-      Debug.Log($"[GameUI] OnEnable doc={(doc != null)} rootVisualElement={(doc?.rootVisualElement != null)}");
       if (doc == null) doc = GetComponent<UIDocument>();
-      var rve = doc != null ? doc.rootVisualElement : null;
-      Debug.Log($"[GameUI] OnEnable rootVisualElement.childCount={(rve != null ? rve.childCount : -1)}");
-      root = rve?.Q<VisualElement>("root");
+      root = doc.rootVisualElement?.Q<VisualElement>("root");
       if (root == null) {
         Debug.LogError("[GameUI] UXML root 'root' not found — check GameUI.uxml is assigned to the UIDocument.");
         return;
       }
-      Debug.Log($"[GameUI] OnEnable found root, hidden-class={root.ClassListContains("hidden")}");
       statTime        = root.Q<Label>("stat-time");
       statKills       = root.Q<Label>("stat-kills");
       hudTime         = root.Q<Label>("hud-time");
@@ -146,13 +142,8 @@ namespace MonkeyPunch.UI {
 
     // ----- Public API (migration boundary — keep stable for NetworkClient) -----
 
-    private int setHudLogCount = 0;
     public void SetHud(HudState s) {
       hud = s;
-      if (setHudLogCount < 3) {
-        Debug.Log($"[GameUI] SetHud #{setHudLogCount}: root={(root != null)} Connected={s.Connected} hp={s.Hp}/{s.MaxHp} lv={s.Level}");
-        setHudLogCount++;
-      }
       if (root == null) return;
       if (!hud.Connected) {
         root.AddToClassList("hidden");
