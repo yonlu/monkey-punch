@@ -27,6 +27,7 @@ import {
   ENEMY_SPAWN_INTERVAL_S,
   ENEMY_SPAWN_RADIUS,
   ENEMY_SPEED,
+  FLYING_ENEMY_ALTITUDE,
   GEM_FAN_RADIUS,
   GEM_PICKUP_RADIUS,
   GEM_VALUE,
@@ -361,12 +362,14 @@ export function tickEnemies(state: RoomState, dt: number): void {
   const toDespawn: number[] = [];
 
   state.enemies.forEach((enemy: Enemy) => {
+    const def = enemyDefAt(enemy.kind);
+
     let nearestDx = 0;
     let nearestDz = 0;
     let nearestSq = Infinity;
 
     state.players.forEach((p: Player) => {
-      if (p.downed) return;                    // skip downed for targeting + despawn
+      if (p.downed) return;
       const dx = p.x - enemy.x;
       const dz = p.z - enemy.z;
       const sq = dx * dx + dz * dz;
@@ -378,31 +381,32 @@ export function tickEnemies(state: RoomState, dt: number): void {
     });
 
     if (nearestSq === Infinity) {
-      // No living players — freeze in place horizontally, but still snap Y
-      // (a fresh enemy spawned this tick has y=0 from the ctor; the snap
-      // makes its first rendered frame correct even before it moves).
-      enemy.y = terrainHeight(enemy.x, enemy.z) + ENEMY_GROUND_OFFSET;
+      // No living players — freeze in place horizontally, but still snap Y.
+      enemy.y = terrainHeight(enemy.x, enemy.z)
+              + (def.flying ? FLYING_ENEMY_ALTITUDE : ENEMY_GROUND_OFFSET);
       return;
     }
     if (nearestSq > despawnSq) {
       toDespawn.push(enemy.id);
       return;
     }
-    if (nearestSq !== 0) {
+
+    // M10: skip movement while winding up a boss ability. abilityFireAt
+    // is -1 for non-bosses (set in the schema ctor + spawn paths) so the
+    // branch is a no-op for them — single conditional on a int32 field.
+    const isWindingUp = enemy.abilityFireAt > 0;
+
+    if (nearestSq !== 0 && !isWindingUp) {
       const dist = Math.sqrt(nearestSq);
-      // M8 US-009: slowMultiplier reduces movement step. Default 1.0
-      // (no slow) preserves M5/M6/M7 behavior. tickStatusEffects ran
-      // earlier this tick so an enemy whose slow just expired is moving
-      // at full speed already — slowMultiplier was reset to 1.0.
-      const step = ENEMY_SPEED * dt * enemy.slowMultiplier;
+      // M10: per-kind speed multiplier. Slime preserves baseline 1.0.
+      const step = ENEMY_SPEED * dt * def.speedMultiplier * enemy.slowMultiplier;
       enemy.x += (nearestDx / dist) * step;
       enemy.z += (nearestDz / dist) * step;
     }
-    // M7 US-012: snap Y to terrain after horizontal movement. No vy, no
-    // gravity, no jump for enemies (per PRD § US-012). The render-side
-    // InstancedMesh keys by Enemy.id (CLAUDE.md rule 10) so per-instance
-    // Y reaches the GPU through the snapshot interpolation buffer.
-    enemy.y = terrainHeight(enemy.x, enemy.z) + ENEMY_GROUND_OFFSET;
+    // M10: per-kind terrain snap. Flying enemies float at a constant
+    // altitude above whatever ground is beneath them.
+    enemy.y = terrainHeight(enemy.x, enemy.z)
+            + (def.flying ? FLYING_ENEMY_ALTITUDE : ENEMY_GROUND_OFFSET);
   });
 
   for (const id of toDespawn) state.enemies.delete(String(id));
