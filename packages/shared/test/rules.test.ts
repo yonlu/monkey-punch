@@ -1794,6 +1794,31 @@ describe("tickContactDamage", () => {
     expect(p.hp).toBe(100);
     expect(events.length).toBe(0);
   });
+
+  it("M10: applies per-kind contactDamage — Skeleton deals 10, not the slime baseline 5", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.hp = 100;
+    p.x = 0;
+    p.z = 0;
+    const sk = new Enemy();
+    sk.id = 1;
+    sk.kind = 3;
+    sk.x = 0;
+    sk.z = 0;
+    sk.maxHp = 80;
+    sk.hp = 80;
+    state.enemies.set("1", sk);
+
+    const events: CombatEvent[] = [];
+    const fc = makeFakeContactCooldown();
+    tickContactDamage(state, fc.store, 0.05, 0, (e) => events.push(e));
+
+    expect(events.filter((e) => e.type === "player_damaged").length).toBe(1);
+    const damageEvent = events.find((e) => e.type === "player_damaged");
+    expect(damageEvent?.type === "player_damaged" && damageEvent.damage).toBe(10);
+    expect(p.hp).toBe(90);
+  });
 });
 
 describe("tickRunEndCheck", () => {

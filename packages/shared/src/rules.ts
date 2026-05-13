@@ -2133,19 +2133,23 @@ export function tickContactDamage(
 ): void {
   if (state.runEnded) return;
   const cooldownMs = ENEMY_CONTACT_COOLDOWN_S * 1000;
-  const radiusSum = PLAYER_RADIUS + ENEMY_RADIUS;
-  const radiusSumSq = radiusSum * radiusSum;
 
   state.players.forEach((player: Player) => {
     if (player.downed) return;
 
     state.enemies.forEach((enemy: Enemy) => {
+      // M10: per-kind radius. Slime preserves baseline 0.5 (ENEMY_RADIUS).
+      const def = enemyDefAt(enemy.kind);
+      const radiusSum = PLAYER_RADIUS + def.radius;
+      const radiusSumSq = radiusSum * radiusSum;
+
       const dx = enemy.x - player.x;
       const dz = enemy.z - player.z;
       if (dx * dx + dz * dz > radiusSumSq) return;
       if (!cooldown.tryHit(player.sessionId, enemy.id, nowMs, cooldownMs)) return;
 
-      const damage = Math.min(player.hp, ENEMY_CONTACT_DAMAGE);
+      // M10: per-kind contact damage. Slime preserves baseline 5 (ENEMY_CONTACT_DAMAGE).
+      const damage = Math.min(player.hp, def.contactDamage);
       player.hp -= damage;
       emit({
         type: "player_damaged",
