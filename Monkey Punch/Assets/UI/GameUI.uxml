@@ -1,0 +1,55 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements"
+         xsi="http://www.w3.org/2001/XMLSchema-instance"
+         engine="UnityEngine.UIElements" editor="UnityEditor.UIElements"
+         noNamespaceSchemaLocation="../../UIElementsSchema/UIElements.xsd"
+         editor-extension-mode="False">
+  <Style src="project://database/Assets/UI/GameUI.uss"/>
+
+  <ui:VisualElement name="root" class="hud-root hidden" picking-mode="Ignore">
+
+    <!-- Top-left stat row -->
+    <ui:VisualElement name="hud-toprow" class="hud-toprow" picking-mode="Ignore">
+      <ui:Label name="stat-time"  class="stat" text="⏱ 00:00"/>
+      <ui:Label name="stat-kills" class="stat" text="💀 0"/>
+    </ui:VisualElement>
+
+    <!-- Top-center large time -->
+    <ui:Label name="hud-time" class="hud-time" text="00:00" picking-mode="Ignore"/>
+
+    <!-- Top-right level -->
+    <ui:Label name="hud-level" class="hud-level" text="LV 1" picking-mode="Ignore"/>
+
+    <!-- Left column: HP / XP / weapons / items -->
+    <ui:VisualElement name="hud-leftcol" class="hud-leftcol" picking-mode="Ignore">
+      <ui:VisualElement name="hud-hpbar" class="hud-hpbar">
+        <ui:VisualElement name="hp-fill" class="fill hp"/>
+        <ui:Label name="hp-text" text="0 / 0"/>
+      </ui:VisualElement>
+      <ui:VisualElement name="hud-xpbar" class="hud-xpbar">
+        <ui:VisualElement name="xp-fill" class="fill xp"/>
+      </ui:VisualElement>
+      <ui:VisualElement name="weapons-grid" class="hud-invgrid weapons"/>
+      <ui:VisualElement name="items-grid"   class="hud-invgrid items"/>
+    </ui:VisualElement>
+
+    <!-- Bottom-center level-up bar -->
+    <ui:VisualElement name="lvlup-bar" class="lvlup-bar hidden" picking-mode="Ignore">
+      <ui:VisualElement name="lvlup-prompt" class="lvlup-prompt">
+        <ui:Label name="lvlup-prompt-text" class="pulse" text="LEVEL UP — PRESS 1/2/3"/>
+        <ui:Label name="lvlup-timer" class="timer" text="AUTO 10s"/>
+        <ui:Label name="lvlup-queue" class="queue hidden" text="+0 MORE"/>
+      </ui:VisualElement>
+      <ui:VisualElement name="lvlup-cards" class="lvlup-cards"/>
+    </ui:VisualElement>
+
+    <!-- Run-over modal (centered, dimmer over the whole screen) -->
+    <ui:VisualElement name="runover" class="runover-modal hidden">
+      <ui:VisualElement name="runover-dimmer" class="runover-dimmer"/>
+      <ui:VisualElement name="runover-panel" class="runover-panel">
+        <ui:Label  name="runover-title" class="runover-title" text="DEFEAT"/>
+        <ui:Button name="runover-restart" class="runover-btn" text="RESTART"/>
+      </ui:VisualElement>
+    </ui:VisualElement>
+
+  </ui:VisualElement>
+</ui:UXML>
