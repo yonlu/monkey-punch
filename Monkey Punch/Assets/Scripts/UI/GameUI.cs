@@ -227,13 +227,16 @@ namespace MonkeyPunch.UI {
       }
     }
 
-    // Tracks pending ExecuteLater schedules so a fast Show→Hide→Show
-     // sequence (multiple level-ups in quick succession) doesn't have an
-     // older Hide's deferred `.hidden` add clobber a newer Show.
-    private IVisualElementScheduledItem pendingShowSchedule;
-    private IVisualElementScheduledItem pendingHideSchedule;
+    // Generation counter pattern: every Show/Hide bumps this. Each
+    // scheduled deferred class toggle captures the gen at schedule time
+    // and no-ops if a newer Show/Hide has run since. More bulletproof
+    // than IVisualElementScheduledItem.Pause() — that has a race window
+    // where an already-queued callback can still fire.
+    private int lvlupGen = 0;
 
     public void ShowLevelUp(LevelUpChoiceDisplay[] choices, Action<int> onClick) {
+      Debug.Log($"[GameUI] ShowLevelUp choices={choices?.Length ?? 0} gen={lvlupGen + 1}");
+      int gen = ++lvlupGen;
       levelUpChoices = choices;
       onLevelUpClicked = onClick;
       levelUpVisible = true;
@@ -241,33 +244,28 @@ namespace MonkeyPunch.UI {
       EnableLevelUpActions();
       if (lvlupBar == null) return;
 
-      // Cancel any pending hide so it doesn't re-hide the bar mid-flight.
-      pendingHideSchedule?.Pause();
-      pendingHideSchedule = null;
-
       BuildLevelUpCards(choices);
       lvlupBar.RemoveFromClassList("hidden");
-      pendingShowSchedule?.Pause();
-      pendingShowSchedule = lvlupBar.schedule.Execute(() => lvlupBar.AddToClassList("shown"));
-      pendingShowSchedule.ExecuteLater(16);
+      lvlupBar.schedule.Execute(() => {
+        if (gen != lvlupGen) return;
+        lvlupBar.AddToClassList("shown");
+      }).ExecuteLater(16);
     }
 
     public void HideLevelUp() {
+      Debug.Log($"[GameUI] HideLevelUp gen={lvlupGen + 1}");
+      int gen = ++lvlupGen;
       levelUpVisible = false;
       levelUpChoices = null;
       onLevelUpClicked = null;
       RefreshCursorState();
       DisableLevelUpActions();
       if (lvlupBar == null) return;
-
-      // Cancel any pending show so it doesn't re-show the bar after we hide.
-      pendingShowSchedule?.Pause();
-      pendingShowSchedule = null;
-
       lvlupBar.RemoveFromClassList("shown");
-      pendingHideSchedule?.Pause();
-      pendingHideSchedule = lvlupBar.schedule.Execute(() => lvlupBar.AddToClassList("hidden"));
-      pendingHideSchedule.ExecuteLater(170);
+      lvlupBar.schedule.Execute(() => {
+        if (gen != lvlupGen) return;
+        lvlupBar.AddToClassList("hidden");
+      }).ExecuteLater(170);
     }
 
     private void BuildLevelUpCards(LevelUpChoiceDisplay[] choices) {
@@ -428,10 +426,15 @@ namespace MonkeyPunch.UI {
     private void OnPick3(InputAction.CallbackContext _) => PickIndex(2);
 
     private void PickIndex(int idx) {
-      if (!levelUpVisible || levelUpChoices == null) return;
+      Debug.Log($"[GameUI] PickIndex({idx}) levelUpVisible={levelUpVisible} choicesLen={(levelUpChoices != null ? levelUpChoices.Length : -1)} cbNull={(onLevelUpClicked == null)}");
+      if (!levelUpVisible || levelUpChoices == null) {
+        Debug.Log("[GameUI] PickIndex bailing — guard tripped");
+        return;
+      }
       if (idx < 0 || idx >= levelUpChoices.Length) return;
       var cb = onLevelUpClicked;
       HideLevelUp();
+      Debug.Log($"[GameUI] PickIndex invoking callback for idx={idx}");
       cb?.Invoke(idx);
     }
 
