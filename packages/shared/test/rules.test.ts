@@ -1451,23 +1451,13 @@ describe("tickEnemies — M7 US-012 terrain Y snap", () => {
     expect(e.y).toBeCloseTo(terrainHeight(e.x, e.z) + ENEMY_GROUND_OFFSET, 10);
   });
 
-  it("Y tracks the post-movement (x, z), not the pre-movement position", () => {
-    const state = new RoomState();
-    const p = addPlayer(state, "p", 0, 0);
-    p.x = 0; p.z = 0;
-    const e = addEnemy(state, 1, 15, 0);
-    const yAtPre = terrainHeight(e.x, e.z) + ENEMY_GROUND_OFFSET;
-
-    tickEnemies(state, 1.0);
-
-    // Enemy stepped toward player by ENEMY_SPEED * 1.0; Y must reflect new x/z.
-    expect(e.x).toBeLessThan(15);
-    const yAtPost = terrainHeight(e.x, e.z) + ENEMY_GROUND_OFFSET;
-    expect(e.y).toBeCloseTo(yAtPost, 10);
-    // Sanity — the two heights are not equal in general (otherwise this test
-    // would tautologically pass even if Y were snapped to the pre-position).
-    expect(yAtPost).not.toBeCloseTo(yAtPre, 5);
-  });
+  // Deleted: "Y tracks the post-movement (x, z), not the pre-movement
+  // position." That test asserted yAtPre !== yAtPost as a sanity check,
+  // which required non-flat terrain. With terrainHeight returning 0
+  // everywhere, the pre/post distinction collapses and the test becomes
+  // vacuous. The behavior it guarded (sourcing Y from current position)
+  // is still covered by "snaps enemy.y to terrainHeight + ENEMY_GROUND_OFFSET
+  // after movement" above. Reinstate if terrain ever becomes non-flat.
 
   it("snaps Y when only downed players are present (freeze-in-place branch)", () => {
     // tickEnemies bails out entirely on `state.players.size === 0`, so the
@@ -1487,29 +1477,12 @@ describe("tickEnemies — M7 US-012 terrain Y snap", () => {
     expect(e.y).toBeCloseTo(terrainHeight(12, 4) + ENEMY_GROUND_OFFSET, 10);
   });
 
-  it("two parallel simulations of the same enemy walk produce identical Y traces", () => {
-    // Determinism guard: two states with the same input start, same dt, same
-    // seed produce bit-identical y traces. If terrainHeight ever became
-    // stateful or tickEnemies stopped sourcing y from terrainHeight, this
-    // would catch it.
-    initTerrain(123);
-    function run(): number[] {
-      const state = new RoomState();
-      const p = addPlayer(state, "p", 0, 0); p.x = 0; p.z = 0;
-      const e = addEnemy(state, 1, 20, 20);
-      const ys: number[] = [];
-      for (let i = 0; i < 50; i++) {
-        tickEnemies(state, 0.05);
-        ys.push(e.y);
-      }
-      return ys;
-    }
-    const a = run();
-    const b = run();
-    expect(a).toEqual(b);
-    // And the trace must vary (otherwise the test is vacuous).
-    expect(new Set(a).size).toBeGreaterThan(1);
-  });
+  // Deleted: "two parallel simulations of the same enemy walk produce
+  // identical Y traces." The non-vacuity check (Set(ys).size > 1)
+  // required non-flat terrain — under flat terrain every Y in the trace
+  // is the same constant. The determinism property itself is now
+  // trivially satisfied (constant === constant) and not worth a test.
+  // Reinstate if terrain ever becomes non-flat.
 
   it("freshly-spawned enemies (tickSpawner) have y already snapped on insertion", () => {
     initTerrain(99);

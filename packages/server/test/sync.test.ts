@@ -43,10 +43,12 @@ describe("integration: input seq + fixed-dt simulation", () => {
 
     const me = room.state.players.get(room.sessionId)!;
     // Loose tolerance: timer slop + the first tick may not include the input.
-    // Expected window: 7–11 ticks of motion.
+    // Expected window: 7–11 ticks of motion (inclusive on the lower bound —
+    // exactly 7 ticks is a valid borderline outcome that happens consistently
+    // when room creation is fast, e.g. after terrain init became a no-op).
     const min = 7 * PLAYER_SPEED * 0.05;
     const max = 11 * PLAYER_SPEED * 0.05;
-    expect(me.x).toBeGreaterThan(min);
+    expect(me.x).toBeGreaterThanOrEqual(min);
     expect(me.x).toBeLessThan(max);
     expect(me.lastProcessedInput).toBe(1);
 

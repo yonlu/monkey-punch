@@ -221,6 +221,18 @@ namespace MonkeyPunch.Net {
     private float lastLiveDirZ = float.NaN;
     private const double EXTRAP_CLAMP_MS = 50.0; // one predictor step
 
+    // Visual half-heights. The server reports player.y / enemy.y as the
+    // entity's BASE position (feet on terrain) — PLAYER_GROUND_OFFSET and
+    // ENEMY_GROUND_OFFSET are both 0 in shared/constants.ts. Unity's
+    // PrimitiveType.Cube has its origin at the CENTER, so positioning a
+    // GameObject at p.y directly would sink half the cube below the
+    // terrain mesh. Add these to the rendered Y to lift the cube's base
+    // onto the terrain. Update if the player or enemy mesh scale changes.
+    //   PLAYER cube: localScale 1×1×1 → half-height 0.5
+    //   ENEMY  cube: localScale uniform 0.9 (see HandleEnemyAdd) → 0.45
+    private const float PLAYER_VISUAL_HALF_HEIGHT = 0.5f;
+    private const float ENEMY_VISUAL_HALF_HEIGHT = 0.45f;
+
     private readonly Dictionary<string, SnapshotBuffer> playerBuffers = new Dictionary<string, SnapshotBuffer>();
     private readonly Dictionary<string, GameObject> playerObjects = new Dictionary<string, GameObject>();
 
@@ -558,7 +570,7 @@ namespace MonkeyPunch.Net {
       bool isLocal = room != null && sessionId == room.SessionId;
       var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
       go.name = $"Player:{sessionId}:{p.name}{(isLocal ? " [LOCAL]" : "")}";
-      go.transform.position = new Vector3(p.x, p.y, p.z);
+      go.transform.position = new Vector3(p.x, p.y + PLAYER_VISUAL_HALF_HEIGHT, p.z);
       var rend = go.GetComponent<Renderer>();
       if (rend != null) {
         rend.material.color = isLocal
@@ -621,7 +633,7 @@ namespace MonkeyPunch.Net {
       // keep in mind.
       var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
       go.name = $"Enemy:{e.id}";
-      go.transform.position = new Vector3(e.x, e.y, e.z);
+      go.transform.position = new Vector3(e.x, e.y + ENEMY_VISUAL_HALF_HEIGHT, e.z);
       go.transform.localScale = Vector3.one * 0.9f;
       var rend = go.GetComponent<Renderer>();
       if (rend != null) rend.material.color = new Color(0.9f, 0.2f, 0.2f);
@@ -791,18 +803,20 @@ namespace MonkeyPunch.Net {
           }
           kv.Value.transform.position = new Vector3(
             (float)(predictor.X + predictor.RenderOffsetX + extrapX),
-            renderY,
+            renderY + PLAYER_VISUAL_HALF_HEIGHT,
             (float)(predictor.Z + predictor.RenderOffsetZ + extrapZ)
           );
           continue;
         }
         if (playerBuffers.TryGetValue(kv.Key, out var buf) && buf.Sample(renderTime, out var pos)) {
+          pos.y += PLAYER_VISUAL_HALF_HEIGHT;
           kv.Value.transform.position = pos;
         }
       }
 
       foreach (var kv in enemyObjects) {
         if (enemyBuffers.TryGetValue(kv.Key, out var buf) && buf.Sample(renderTime, out var pos)) {
+          pos.y += ENEMY_VISUAL_HALF_HEIGHT;
           kv.Value.transform.position = pos;
         }
       }

@@ -60,20 +60,20 @@ export const PLAYER_NAME_MAX_LEN = 16;
 // M7 — verticality
 /**
  * Vertical offset from the terrain surface to the player's reported `y`.
- * Starts at 0 because the current cube mesh has its origin at the cube
- * center and the renderer offsets visually for now (see PRD Q2 — revisit
- * if a future mesh has its origin at the feet, then this becomes
- * meshHeight / 2). Server-side code adds this to `terrainHeight(x, z)`
- * when snapping the player to the ground.
+ * `player.y` is the player's base (feet) position; offset stays at 0 so
+ * `groundY = terrainHeight(x, z)` is the snap target. Renderers that draw
+ * a center-origin mesh (e.g. Unity's PrimitiveType.Cube) are responsible
+ * for adding the visual half-height when positioning the GameObject —
+ * see PLAYER_VISUAL_HALF_HEIGHT in PredictorConstants.cs.
  */
 export const PLAYER_GROUND_OFFSET = 0;
 
 /**
  * Vertical offset from the terrain surface to an enemy's reported `y`.
- * Same rationale as PLAYER_GROUND_OFFSET — current cone mesh has its
- * origin at the cone's center and the renderer offsets visually for
- * now. tickEnemies snaps `enemy.y = terrainHeight(x, z) +
- * ENEMY_GROUND_OFFSET` after movement integration each tick.
+ * Same rationale as PLAYER_GROUND_OFFSET — `enemy.y` is the base position;
+ * renderers add their own visual half-height. tickEnemies snaps
+ * `enemy.y = terrainHeight(x, z) + ENEMY_GROUND_OFFSET` after movement
+ * integration each tick.
  */
 export const ENEMY_GROUND_OFFSET = 0;
 

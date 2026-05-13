@@ -10,10 +10,11 @@ binding — violations are bugs.
 - TypeScript strict everywhere. No `any` outside narrowly-scoped escape hatches.
 - Client: Vite + React + React Three Fiber + drei.
 - Server: Colyseus on Node 20.
-- Shared: pure TS. Runtime deps: `@colyseus/schema`, plus narrowly-scoped
-  libraries needed for cross-runtime determinism (currently `simplex-noise`
-  and `alea`, used by the shared terrain function that both server simulation
-  and client prediction must agree on bit-for-bit). New deps require
+- Shared: pure TS. Runtime deps: `@colyseus/schema` only. Terrain and
+  environmental props used to require `simplex-noise` + `alea` for
+  bit-identical server/client output, but both were retired (terrain is
+  flat; `generateProps` returns []) and the deps were removed. Any
+  future shared dep needs the same load-bearing-determinism
   justification — see "Things NOT to do" below.
 - Tests: Vitest in `server/` and `shared/`.
 - Single Dockerfile for the server. Deploy target: Fly.io (later).
@@ -116,9 +117,11 @@ binding — violations are bugs.
   `shared/` only if its output must be bit-identical between server and
   client — e.g. seeded noise for terrain that both sides query during
   prediction. If a `client/`-only or `server/`-only home would work, the
-  code belongs there instead. Currently approved exceptions:
-  `simplex-noise`, `alea` (terrain). Adding to this list requires the same
-  load-bearing-determinism justification.
+  code belongs there instead. Currently no approved exceptions — the
+  previous `simplex-noise` + `alea` pair (terrain + props) was removed
+  when terrain became flat and props were disabled. Re-adding either,
+  or adding new deps, requires the same load-bearing-determinism
+  justification.
 - Do not introduce a physics engine. Movement is direct integration; collision
   (when it exists) will be radius checks in `rules.ts`.
 - Do not put gameplay code in Colyseus room handlers. Handlers route messages
