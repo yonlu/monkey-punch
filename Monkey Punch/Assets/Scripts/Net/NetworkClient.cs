@@ -37,6 +37,9 @@ namespace MonkeyPunch.Net {
     [SerializeField] private float interpDelayMs = 100f;
     [Tooltip("Prefab instantiated for each player (local + remote). Drag PlayerCharacter.prefab here.")]
     [SerializeField] private GameObject playerPrefab;
+    [Tooltip("Prefab instantiated for kind=0 enemies (slime). Drag Slime.prefab here. " +
+             "If null, falls back to the red-cube primitive.")]
+    [SerializeField] private GameObject slimePrefab;
 
     [Serializable]
     private class PongMessage { public string type; public double t; public double serverNow; }
@@ -223,16 +226,12 @@ namespace MonkeyPunch.Net {
     private float lastLiveDirZ = float.NaN;
     private const double EXTRAP_CLAMP_MS = 50.0; // one predictor step
 
-    // Visual half-height for enemies. The server reports enemy.y as the
-    // entity's BASE position (feet on terrain) — ENEMY_GROUND_OFFSET is 0
-    // in shared/constants.ts. Unity's PrimitiveType.Cube has its origin
-    // at the CENTER, so positioning an enemy at e.y directly would sink
-    // half the cube below the terrain mesh. Add this to the rendered Y
-    // to lift the cube's base onto the terrain. Update if the enemy
-    // mesh scale changes.
-    //
-    // (PlayerCharacter prefab is feet-pivoted by FBX convention; no
-    // player-side offset is needed.)
+    // Cube-fallback half-height. Used ONLY by the cube spawn path in
+    // HandleEnemyAdd to lift the cube child off its center pivot so its
+    // base sits at the parent's origin (feet-pivoted, same convention
+    // as the slime prefab and the PlayerCharacter prefab). The per-frame
+    // enemy position write no longer adds this — both cube and prefab
+    // enemies are now feet-pivoted at spawn time.
     private const float ENEMY_VISUAL_HALF_HEIGHT = 0.45f;
 
     private readonly Dictionary<string, SnapshotBuffer> playerBuffers = new Dictionary<string, SnapshotBuffer>();
@@ -628,16 +627,29 @@ namespace MonkeyPunch.Net {
 
       // TODO(rule-10): replace per-enemy GameObject with Graphics.DrawMeshInstanced
       // once the runtime-instantiated URP/Lit material's GPU-instancing variant
-      // is resolved (variant likely needs to be pre-included in a
-      // ShaderVariantCollection, or material asset created at edit time with
-      // instancing enabled and referenced here). 1023-instance batch cap to
-      // keep in mind.
-      var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-      go.name = $"Enemy:{e.id}";
-      go.transform.position = new Vector3(e.x, e.y + ENEMY_VISUAL_HALF_HEIGHT, e.z);
-      go.transform.localScale = Vector3.one * 0.9f;
-      var rend = go.GetComponent<Renderer>();
-      if (rend != null) rend.material.color = new Color(0.9f, 0.2f, 0.2f);
+      // is resolved. 1023-instance batch cap to keep in mind.
+      //
+      // Per-enemy GameObjects are feet-pivoted at the parent transform so the
+      // per-frame position write in Update() is just transform.position = e.{x,y,z}
+      // with no half-height offset. The cube fallback wraps the primitive in a
+      // parent to achieve that pivot; the slime prefab is already feet-pivoted
+      // (the inner glTFast-imported root sits at localPosition.y = +bounds.extents.y).
+      GameObject go;
+      if (slimePrefab != null && e.kind == 0) {
+        go = Instantiate(slimePrefab);
+        go.name = $"Enemy:{e.id}";
+      } else {
+        // Legacy cube fallback. Wrap the cube in a parent so the visual
+        // sits with its base at the parent's origin.
+        go = new GameObject($"Enemy:{e.id}");
+        var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        cube.transform.SetParent(go.transform, false);
+        cube.transform.localScale = Vector3.one * 0.9f;
+        cube.transform.localPosition = new Vector3(0f, ENEMY_VISUAL_HALF_HEIGHT, 0f);
+        var rend = cube.GetComponent<Renderer>();
+        if (rend != null) rend.material.color = new Color(0.9f, 0.2f, 0.2f);
+      }
+      go.transform.position = new Vector3(e.x, e.y, e.z);
       enemyObjects[e.id] = go;
 
       cb.OnChange(e, () => {
@@ -816,7 +828,6 @@ namespace MonkeyPunch.Net {
 
       foreach (var kv in enemyObjects) {
         if (enemyBuffers.TryGetValue(kv.Key, out var buf) && buf.Sample(renderTime, out var pos)) {
-          pos.y += ENEMY_VISUAL_HALF_HEIGHT;
           kv.Value.transform.position = pos;
         }
       }

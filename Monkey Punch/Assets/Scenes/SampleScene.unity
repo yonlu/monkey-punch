@@ -500,6 +500,7 @@ MonoBehaviour:
   playerName: UnitySpectator
   interpDelayMs: 100
   playerPrefab: {fileID: 5914916400753786653, guid: 3a68bb591619ba448b53483de6d6892e, type: 3}
+  slimePrefab: {fileID: 7749758278116342652, guid: 6532a8a80b927854396f6fc6d135e391, type: 3}
 --- !u!114 &1049207159
 MonoBehaviour:
   m_ObjectHideFlags: 0
