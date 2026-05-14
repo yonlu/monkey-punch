@@ -37,9 +37,10 @@ namespace MonkeyPunch.Net {
     [SerializeField] private float interpDelayMs = 100f;
     [Tooltip("Prefab instantiated for each player (local + remote). Drag PlayerCharacter.prefab here.")]
     [SerializeField] private GameObject playerPrefab;
-    [Tooltip("Prefab instantiated for kind=0 enemies (slime). Drag Slime.prefab here. " +
-             "If null, falls back to the red-cube primitive.")]
-    [SerializeField] private GameObject slimePrefab;
+    [Tooltip("Prefab per Enemy.kind index. ENEMY_KINDS in shared/enemies.ts " +
+             "defines the order: 0=Slime, 1=Bunny, 2=Ghost, 3=Skeleton, 4=Boss. " +
+             "Slots can be null — null falls back to the cube placeholder.")]
+    [SerializeField] private GameObject[] enemyPrefabs;
 
     [Serializable]
     private class PongMessage { public string type; public double t; public double serverNow; }
@@ -183,6 +184,25 @@ namespace MonkeyPunch.Net {
       public bool isCrit;
       public int serverTick;
       public double serverSwingTimeMs;
+    }
+
+    [System.Serializable]
+    private class BossTelegraphEventMsg {
+      public int bossId;
+      public float originX;
+      public float originZ;
+      public float radius;
+      public double fireServerTimeMs;
+      public int serverTick;
+    }
+
+    [System.Serializable]
+    private class BossAoeHitEventMsg {
+      public int bossId;
+      public float originX;
+      public float originZ;
+      public float radius;
+      public int serverTick;
     }
 
     // Static so a sibling CameraFollow can find us without inspector wiring.
@@ -335,6 +355,18 @@ namespace MonkeyPunch.Net {
             ev.arcAngle, ev.range);
         }
       });
+      room.OnMessage("boss_telegraph", (BossTelegraphEventMsg ev) => {
+        if (BossTelegraphVfx.Instance != null) {
+          BossTelegraphVfx.Instance.OnTelegraph(
+            (uint)ev.bossId, ev.originX, ev.originZ, ev.radius, ev.fireServerTimeMs);
+        }
+      });
+      room.OnMessage("boss_aoe_hit", (BossAoeHitEventMsg ev) => {
+        if (BossTelegraphVfx.Instance != null) {
+          BossTelegraphVfx.Instance.OnAoeHit(
+            (uint)ev.bossId, ev.originX, ev.originZ, ev.radius);
+        }
+      });
       room.OnMessage("player_downed", (PlayerDownedEventMsg ev) => {
         Debug.Log($"[NetworkClient] player_downed playerId={ev.playerId} tick={ev.serverTick}");
         if (CombatVfx.Instance != null) {
@@ -412,6 +444,21 @@ namespace MonkeyPunch.Net {
     public GameObject GetPlayerObject(string sessionId) {
       playerObjects.TryGetValue(sessionId, out var go);
       return go;
+    }
+
+    /// <summary>
+    /// M10: returns the first enemy in state with kind == BOSS_KIND_INDEX,
+    /// or null if no boss is alive. Used by GameUI to drive the boss HP
+    /// bar without exposing the whole room.
+    /// </summary>
+    public Enemy FindAliveBoss() {
+      if (room == null || room.State == null || room.State.enemies == null) return null;
+      foreach (var kv in room.State.enemies) {
+        if (kv.Value.kind == PredictorConstants.BOSS_KIND_INDEX) {
+          return kv.Value;
+        }
+      }
+      return null;
     }
 
     // Phase 7 MVP: send the player's pick to the server. Server validates
@@ -630,12 +677,16 @@ namespace MonkeyPunch.Net {
       // parent to achieve that pivot; the slime prefab is already feet-pivoted
       // (the inner glTFast-imported root sits at localPosition.y = +bounds.extents.y).
       GameObject go;
-      if (slimePrefab != null && e.kind == 0) {
-        go = Instantiate(slimePrefab);
+      GameObject prefab = (enemyPrefabs != null
+                           && e.kind < enemyPrefabs.Length
+                           && enemyPrefabs[e.kind] != null)
+        ? enemyPrefabs[e.kind] : null;
+      if (prefab != null) {
+        go = Instantiate(prefab);
         go.name = $"Enemy:{e.id}";
       } else {
-        // Legacy cube fallback. Wrap the cube in a parent so the visual
-        // sits with its base at the parent's origin.
+        // Cube fallback for missing prefab slots (empty during incremental
+        // art pipeline). Same shape as the pre-M10 fallback.
         go = new GameObject($"Enemy:{e.id}");
         var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
         cube.transform.SetParent(go.transform, false);

@@ -19,14 +19,14 @@ import {
 import {
   COYOTE_TIME,
   ENEMY_CONTACT_COOLDOWN_S,
-  ENEMY_CONTACT_DAMAGE,
   ENEMY_DESPAWN_RADIUS,
   ENEMY_GROUND_OFFSET,
-  ENEMY_HP,
   ENEMY_RADIUS,
   ENEMY_SPAWN_INTERVAL_S,
   ENEMY_SPAWN_RADIUS,
   ENEMY_SPEED,
+  FLYING_ENEMY_ALTITUDE,
+  GEM_FAN_RADIUS,
   GEM_PICKUP_RADIUS,
   GEM_VALUE,
   GRAVITY,
@@ -43,9 +43,11 @@ import {
   TERMINAL_FALL_SPEED,
   TICK_RATE,
   xpForLevel,
+  BOSS_INTERVAL_TICKS,
 } from "./constants.js";
 import { terrainHeight } from "./terrain.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon, isOrbitWeapon, isMeleeArcWeapon, isAuraWeapon, isBoomerangWeapon, type WeaponDef, type TargetingMode, type MeleeArcWeaponDef, type AuraWeaponDef, type BoomerangWeaponDef, type BoomerangLevel } from "./weapons.js";
+import { ENEMY_KINDS, enemyDefAt, BOSS_KIND_INDEX } from "./enemies.js";
 import type { Rng } from "./rng.js";
 import type {
   FireEvent,
@@ -59,6 +61,8 @@ import type {
   RunEndedEvent,
   MeleeSwipeEvent,
   BoomerangThrownEvent,
+  BossTelegraphEvent,
+  BossAoeHitEvent,
   LevelUpChoicePayload,
 } from "./messages.js";
 
@@ -116,6 +120,68 @@ export function canJump(
 ): boolean {
   if (state.grounded) return true;
   return (tick - state.lastGroundedAt) * (1 / TICK_RATE) <= COYOTE_TIME;
+}
+
+/**
+ * M10: shared "an enemy died this frame" path. Replaces the
+ * six copy-pasted death-handling blocks across tickWeapons
+ * (orbit), runMeleeArcSwing, runAuraTick, tickProjectiles,
+ * tickBoomerangs, and tickBloodPools.
+ *
+ * Behavior (preserves pre-M10 semantics for slime exactly):
+ *   - Look up the kind's gemDropCount.
+ *   - Spawn 1 gem at (enemy.x, enemy.z) when gemDropCount === 1
+ *     (preserves the M3 spawn position for slimes — the existing
+ *     determinism test asserts this exact position).
+ *   - Spawn N gems in an evenly-spaced ring at GEM_FAN_RADIUS for
+ *     N > 1. Angles are `(i / N) * 2π` — deterministic, no rng.
+ *   - Delete the enemy from state.enemies, evict orbit-hit cooldown,
+ *     emit enemy_died.
+ *
+ * Caller responsibilities (intentionally NOT inside the helper):
+ *   - Crediting the kill to `player.kills += 1` (caller knows the killer)
+ *   - boomerang/projectile-specific bookkeeping (pierceRemaining, etc.)
+ */
+export function spawnGemFanAndEmitDeath(
+  state: RoomState,
+  enemy: Enemy,
+  ctx: { nextGemId: () => number; orbitHitCooldown: OrbitHitCooldownLike },
+  emit: Emit,
+): void {
+  const def = enemyDefAt(enemy.kind);
+  const deathX = enemy.x;
+  const deathZ = enemy.z;
+  const deathId = enemy.id;
+  const count = Math.max(1, def.gemDropCount | 0);
+
+  if (count === 1) {
+    const gem = new Gem();
+    gem.id = ctx.nextGemId();
+    gem.x = deathX;
+    gem.z = deathZ;
+    gem.value = GEM_VALUE;
+    state.gems.set(String(gem.id), gem);
+  } else {
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;   // deterministic — no rng
+      const gem = new Gem();
+      gem.id = ctx.nextGemId();
+      gem.x = deathX + Math.cos(angle) * GEM_FAN_RADIUS;
+      gem.z = deathZ + Math.sin(angle) * GEM_FAN_RADIUS;
+      gem.value = GEM_VALUE;
+      state.gems.set(String(gem.id), gem);
+    }
+  }
+
+  state.enemies.delete(String(deathId));
+  ctx.orbitHitCooldown.evictEnemy(deathId);
+
+  emit({
+    type: "enemy_died",
+    enemyId: deathId,
+    x: deathX,
+    z: deathZ,
+  });
 }
 
 /**
@@ -297,12 +363,14 @@ export function tickEnemies(state: RoomState, dt: number): void {
   const toDespawn: number[] = [];
 
   state.enemies.forEach((enemy: Enemy) => {
+    const def = enemyDefAt(enemy.kind);
+
     let nearestDx = 0;
     let nearestDz = 0;
     let nearestSq = Infinity;
 
     state.players.forEach((p: Player) => {
-      if (p.downed) return;                    // skip downed for targeting + despawn
+      if (p.downed) return;
       const dx = p.x - enemy.x;
       const dz = p.z - enemy.z;
       const sq = dx * dx + dz * dz;
@@ -314,31 +382,32 @@ export function tickEnemies(state: RoomState, dt: number): void {
     });
 
     if (nearestSq === Infinity) {
-      // No living players — freeze in place horizontally, but still snap Y
-      // (a fresh enemy spawned this tick has y=0 from the ctor; the snap
-      // makes its first rendered frame correct even before it moves).
-      enemy.y = terrainHeight(enemy.x, enemy.z) + ENEMY_GROUND_OFFSET;
+      // No living players — freeze in place horizontally, but still snap Y.
+      enemy.y = terrainHeight(enemy.x, enemy.z)
+              + (def.flying ? FLYING_ENEMY_ALTITUDE : ENEMY_GROUND_OFFSET);
       return;
     }
     if (nearestSq > despawnSq) {
       toDespawn.push(enemy.id);
       return;
     }
-    if (nearestSq !== 0) {
+
+    // M10: skip movement while winding up a boss ability. abilityFireAt
+    // is -1 for non-bosses (set in the schema ctor + spawn paths) so the
+    // branch is a no-op for them — single conditional on a int32 field.
+    const isWindingUp = enemy.abilityFireAt > 0;
+
+    if (nearestSq !== 0 && !isWindingUp) {
       const dist = Math.sqrt(nearestSq);
-      // M8 US-009: slowMultiplier reduces movement step. Default 1.0
-      // (no slow) preserves M5/M6/M7 behavior. tickStatusEffects ran
-      // earlier this tick so an enemy whose slow just expired is moving
-      // at full speed already — slowMultiplier was reset to 1.0.
-      const step = ENEMY_SPEED * dt * enemy.slowMultiplier;
+      // M10: per-kind speed multiplier. Slime preserves baseline 1.0.
+      const step = ENEMY_SPEED * dt * def.speedMultiplier * enemy.slowMultiplier;
       enemy.x += (nearestDx / dist) * step;
       enemy.z += (nearestDz / dist) * step;
     }
-    // M7 US-012: snap Y to terrain after horizontal movement. No vy, no
-    // gravity, no jump for enemies (per PRD § US-012). The render-side
-    // InstancedMesh keys by Enemy.id (CLAUDE.md rule 10) so per-instance
-    // Y reaches the GPU through the snapshot interpolation buffer.
-    enemy.y = terrainHeight(enemy.x, enemy.z) + ENEMY_GROUND_OFFSET;
+    // M10: per-kind terrain snap. Flying enemies float at a constant
+    // altitude above whatever ground is beneath them.
+    enemy.y = terrainHeight(enemy.x, enemy.z)
+            + (def.flying ? FLYING_ENEMY_ALTITUDE : ENEMY_GROUND_OFFSET);
   });
 
   for (const id of toDespawn) state.enemies.delete(String(id));
@@ -348,6 +417,37 @@ export type SpawnerState = {
   accumulator: number;   // seconds since last spawn
   nextEnemyId: number;   // monotonic; starts at 1 so id=0 is never valid
 };
+
+/**
+ * M10: weighted-random kind pick over the currently-unlocked, non-boss
+ * rows of ENEMY_KINDS. Single rng() call per pick. Deterministic
+ * single-pass filter + accumulate — the loop runs ENEMY_KINDS.length
+ * iterations regardless of which kind is picked, so spawn behavior is
+ * order-independent across server/client.
+ *
+ * If totalWeight === 0 (e.g., earliest tick with no kinds unlocked
+ * yet), falls back to kind 0 (slime), which is always spawnable at
+ * tick=0 since its minSpawnTick is 0 and spawnWeight is positive.
+ */
+function pickEnemyKind(currentTick: number, rng: Rng): number {
+  let totalWeight = 0;
+  for (let i = 0; i < ENEMY_KINDS.length; i++) {
+    const def = ENEMY_KINDS[i]!;
+    if (def.isBoss) continue;
+    if (currentTick < def.minSpawnTick) continue;
+    totalWeight += def.spawnWeight;
+  }
+  if (totalWeight <= 0) return 0;
+  let r = rng() * totalWeight;
+  for (let i = 0; i < ENEMY_KINDS.length; i++) {
+    const def = ENEMY_KINDS[i]!;
+    if (def.isBoss) continue;
+    if (currentTick < def.minSpawnTick) continue;
+    r -= def.spawnWeight;
+    if (r <= 0) return i;
+  }
+  return 0;
+}
 
 /**
  * Advance the spawn timer; emit enemies when the interval elapses.
@@ -387,7 +487,13 @@ export function tickSpawner(
       return;
     }
 
-    // Pick a random non-downed player.
+    // M10: kind pick — 1 rng() call. Must happen BEFORE the player + angle
+    // picks; placed outside the angle retry loop so each spawn attempt
+    // picks one kind regardless of how many angle retries it takes.
+    const kind = pickEnemyKind(state.tick, rng);
+    const def = enemyDefAt(kind);
+
+    // Pick a random non-downed player. (unchanged)
     const liveIdx = Math.floor(rng() * liveCount);
     let i = 0;
     let target: Player | undefined;
@@ -411,11 +517,13 @@ export function tickSpawner(
       if (x * x + z * z > map2) continue;
       const enemy = new Enemy();
       enemy.id = spawner.nextEnemyId++;
-      enemy.kind = 0;
+      enemy.kind = kind;
       enemy.x = x;
       enemy.z = z;
-      enemy.y = terrainHeight(x, z) + ENEMY_GROUND_OFFSET;
-      enemy.hp = ENEMY_HP;
+      enemy.y = terrainHeight(x, z)
+              + (def.flying ? FLYING_ENEMY_ALTITUDE : ENEMY_GROUND_OFFSET);
+      enemy.hp = def.baseHp;
+      enemy.maxHp = def.baseHp;
       state.enemies.set(String(enemy.id), enemy);
       placed = true;
     }
@@ -440,6 +548,7 @@ export function spawnDebugBurst(
 ): void {
   const remaining = MAX_ENEMIES - state.enemies.size;
   const n = Math.max(0, Math.min(count, remaining));
+  const def = enemyDefAt(kind);
 
   for (let i = 0; i < n; i++) {
     const angle = rng() * Math.PI * 2;
@@ -448,8 +557,10 @@ export function spawnDebugBurst(
     enemy.kind = kind;
     enemy.x = centerPlayer.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
     enemy.z = centerPlayer.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
-    enemy.y = terrainHeight(enemy.x, enemy.z) + ENEMY_GROUND_OFFSET;
-    enemy.hp = ENEMY_HP;
+    enemy.y = terrainHeight(enemy.x, enemy.z)
+            + (def.flying ? FLYING_ENEMY_ALTITUDE : ENEMY_GROUND_OFFSET);
+    enemy.hp = def.baseHp;
+    enemy.maxHp = def.baseHp;
     state.enemies.set(String(enemy.id), enemy);
   }
 }
@@ -569,7 +680,9 @@ export type CombatEvent =
   | PlayerDownedEvent
   | RunEndedEvent
   | MeleeSwipeEvent       // M8 US-005
-  | BoomerangThrownEvent; // M8 US-011
+  | BoomerangThrownEvent  // M8 US-011
+  | BossTelegraphEvent    // M10
+  | BossAoeHitEvent;      // M10
 export type Emit = (event: CombatEvent) => void;
 
 /**
@@ -879,26 +992,8 @@ export function tickWeapons(
               });
 
               if (enemy.hp <= 0) {
-                const gem = new Gem();
-                gem.id = ctx.nextGemId();
-                gem.x = enemy.x;
-                gem.z = enemy.z;
-                gem.value = GEM_VALUE;
-                state.gems.set(String(gem.id), gem);
-
-                const deathX = enemy.x;
-                const deathZ = enemy.z;
-                const deathId = enemy.id;
-                state.enemies.delete(String(enemy.id));
                 player.kills += 1;
-                ctx.orbitHitCooldown.evictEnemy(deathId);
-
-                emit({
-                  type: "enemy_died",
-                  enemyId: deathId,
-                  x: deathX,
-                  z: deathZ,
-                });
+                spawnGemFanAndEmitDeath(state, enemy, ctx, emit);
               }
             }
           }
@@ -1081,26 +1176,8 @@ export function runMeleeArcSwing(
     });
 
     if (enemy.hp <= 0) {
-      const gem = new Gem();
-      gem.id = ctx.nextGemId();
-      gem.x = enemy.x;
-      gem.z = enemy.z;
-      gem.value = GEM_VALUE;
-      state.gems.set(String(gem.id), gem);
-
-      const deathX = enemy.x;
-      const deathZ = enemy.z;
-      const deathId = enemy.id;
       player.kills += 1;
-      state.enemies.delete(String(enemy.id));
-      ctx.orbitHitCooldown.evictEnemy(deathId);
-
-      emit({
-        type: "enemy_died",
-        enemyId: deathId,
-        x: deathX,
-        z: deathZ,
-      });
+      spawnGemFanAndEmitDeath(state, enemy, ctx, emit);
     }
   }
 
@@ -1203,26 +1280,8 @@ export function runAuraTick(
     });
 
     if (enemy.hp <= 0) {
-      const gem = new Gem();
-      gem.id = ctx.nextGemId();
-      gem.x = enemy.x;
-      gem.z = enemy.z;
-      gem.value = GEM_VALUE;
-      state.gems.set(String(gem.id), gem);
-
-      const deathX = enemy.x;
-      const deathZ = enemy.z;
-      const deathId = enemy.id;
       player.kills += 1;
-      state.enemies.delete(String(enemy.id));
-      ctx.orbitHitCooldown.evictEnemy(deathId);
-
-      emit({
-        type: "enemy_died",
-        enemyId: deathId,
-        x: deathX,
-        z: deathZ,
-      });
+      spawnGemFanAndEmitDeath(state, enemy, ctx, emit);
     }
   }
 }
@@ -1502,26 +1561,8 @@ export function tickBoomerangs(
       });
 
       if (enemy.hp <= 0) {
-        const gem = new Gem();
-        gem.id = ctx.nextGemId();
-        gem.x = enemy.x;
-        gem.z = enemy.z;
-        gem.value = GEM_VALUE;
-        state.gems.set(String(gem.id), gem);
-
-        const deathX = enemy.x;
-        const deathZ = enemy.z;
-        const deathId = enemy.id;
         if (owner) owner.kills += 1;
-        state.enemies.delete(String(enemy.id));
-        ctx.orbitHitCooldown.evictEnemy(deathId);
-
-        emit({
-          type: "enemy_died",
-          enemyId: deathId,
-          x: deathX,
-          z: deathZ,
-        });
+        spawnGemFanAndEmitDeath(state, enemy, ctx, emit);
       }
     });
 
@@ -1601,27 +1642,9 @@ export function tickBloodPools(
       });
 
       if (enemy.hp <= 0) {
-        const gem = new Gem();
-        gem.id = ctx.nextGemId();
-        gem.x = enemy.x;
-        gem.z = enemy.z;
-        gem.value = GEM_VALUE;
-        state.gems.set(String(gem.id), gem);
-
-        const deathX = enemy.x;
-        const deathZ = enemy.z;
-        const deathId = enemy.id;
         const owner = state.players.get(pool.ownerId);
         if (owner) owner.kills += 1;
-        state.enemies.delete(String(enemy.id));
-        ctx.orbitHitCooldown.evictEnemy(deathId);
-
-        emit({
-          type: "enemy_died",
-          enemyId: deathId,
-          x: deathX,
-          z: deathZ,
-        });
+        spawnGemFanAndEmitDeath(state, enemy, ctx, emit);
       }
     });
   });
@@ -1817,27 +1840,9 @@ export function tickProjectiles(
         });
 
         if (enemy.hp <= 0) {
-          const gem = new Gem();
-          gem.id = ctx.nextGemId();
-          gem.x = enemy.x;
-          gem.z = enemy.z;
-          gem.value = GEM_VALUE;
-          state.gems.set(String(gem.id), gem);
-
-          const deathX = enemy.x;
-          const deathZ = enemy.z;
-          const deathId = enemy.id;
           const owner = state.players.get(proj.ownerId);
           if (owner) owner.kills += 1;
-          state.enemies.delete(String(enemy.id));
-          ctx.orbitHitCooldown.evictEnemy(deathId);
-
-          emit({
-            type: "enemy_died",
-            enemyId: deathId,
-            x: deathX,
-            z: deathZ,
-          });
+          spawnGemFanAndEmitDeath(state, enemy, ctx, emit);
         }
       }
 
@@ -2131,19 +2136,23 @@ export function tickContactDamage(
 ): void {
   if (state.runEnded) return;
   const cooldownMs = ENEMY_CONTACT_COOLDOWN_S * 1000;
-  const radiusSum = PLAYER_RADIUS + ENEMY_RADIUS;
-  const radiusSumSq = radiusSum * radiusSum;
 
   state.players.forEach((player: Player) => {
     if (player.downed) return;
 
     state.enemies.forEach((enemy: Enemy) => {
+      // M10: per-kind radius. Slime preserves baseline 0.5 (ENEMY_RADIUS).
+      const def = enemyDefAt(enemy.kind);
+      const radiusSum = PLAYER_RADIUS + def.radius;
+      const radiusSumSq = radiusSum * radiusSum;
+
       const dx = enemy.x - player.x;
       const dz = enemy.z - player.z;
       if (dx * dx + dz * dz > radiusSumSq) return;
       if (!cooldown.tryHit(player.sessionId, enemy.id, nowMs, cooldownMs)) return;
 
-      const damage = Math.min(player.hp, ENEMY_CONTACT_DAMAGE);
+      // M10: per-kind contact damage. Slime preserves baseline 5 (ENEMY_CONTACT_DAMAGE).
+      const damage = Math.min(player.hp, def.contactDamage);
       player.hp -= damage;
       emit({
         type: "player_damaged",
@@ -2187,4 +2196,214 @@ export function tickRunEndCheck(state: RoomState, emit: Emit): void {
   state.runEnded = true;
   state.runEndedTick = state.tick;
   emit({ type: "run_ended", serverTick: state.tick });
+}
+
+/**
+ * M10: boss telegraphed-ability state machine. Idle → windup → fire,
+ * one ability per boss per cooldown cycle. Consumes NO rng — telegraph
+ * timing is deterministic from the off-schema cooldown map; AoE is a
+ * radius check.
+ *
+ *   - `currentTick` — state.tick, used for cooldown gating and the
+ *     fireAt countdown.
+ *   - `bossCooldowns` — off-schema Map<bossId, nextReadyTick>. Caller
+ *     initializes entries on boss spawn (set to currentTick +
+ *     cooldownTicks so the FIRST ability triggers one cooldown after
+ *     spawn, not immediately). Caller deletes entries on boss death
+ *     cleanup (in tickBossSpawner). This function only reads and
+ *     mutates existing entries.
+ *   - `nowMs` — server Date.now() at tick start. Embedded into
+ *     boss_telegraph.fireServerTimeMs so clients can sync the ring
+ *     fill across the network via ServerTime offset.
+ *   - `emit` — broadcast hook for boss_telegraph, boss_aoe_hit,
+ *     player_damaged, player_downed.
+ *
+ * Per CLAUDE.md rule 11, this runs between tickEnemies and
+ * tickContactDamage so the AoE strikes post-movement player positions
+ * and the boss's frozen-windup state is established before contact
+ * damage runs.
+ */
+export function tickBossAbilities(
+  state: RoomState,
+  currentTick: number,
+  bossCooldowns: Map<number, number>,
+  nowMs: number,
+  emit: Emit,
+): void {
+  if (state.runEnded) return;
+
+  state.enemies.forEach((enemy: Enemy) => {
+    const def = enemyDefAt(enemy.kind);
+    if (!def.isBoss) return;
+
+    if (enemy.abilityFireAt === -1) {
+      // Idle. Check cooldown — if ready, enter windup.
+      const nextReadyTick = bossCooldowns.get(enemy.id);
+      if (nextReadyTick === undefined) {
+        // No cooldown entry — caller (tickBossSpawner) should have
+        // initialized one on spawn. Defensive: initialize to one
+        // cooldown from now so we don't immediately fire.
+        bossCooldowns.set(enemy.id, currentTick + def.bossAbilityCooldownTicks);
+        return;
+      }
+      if (currentTick < nextReadyTick) return;
+
+      // Enter windup. abilityFireAt = currentTick + windupTicks.
+      enemy.abilityFireAt = currentTick + def.bossAbilityWindupTicks;
+      const windupMs = (def.bossAbilityWindupTicks / TICK_RATE) * 1000;
+      emit({
+        type: "boss_telegraph",
+        bossId: enemy.id,
+        originX: enemy.x,
+        originZ: enemy.z,
+        radius: def.bossAbilityRadius,
+        fireServerTimeMs: nowMs + windupMs,
+        serverTick: currentTick,
+      });
+      return;
+    }
+
+    // abilityFireAt > 0 — winding up. If it's not fire-tick yet, wait.
+    if (currentTick !== enemy.abilityFireAt) return;
+
+    // Fire! Apply AoE damage to every non-downed player in radius (2D XZ).
+    const radiusSq = def.bossAbilityRadius * def.bossAbilityRadius;
+    state.players.forEach((player: Player) => {
+      if (player.downed) return;
+      const dx = player.x - enemy.x;
+      const dz = player.z - enemy.z;
+      if (dx * dx + dz * dz > radiusSq) return;
+
+      const damage = Math.min(player.hp, def.bossAbilityDamage);
+      player.hp -= damage;
+      emit({
+        type: "player_damaged",
+        playerId: player.sessionId,
+        damage,
+        x: player.x,
+        y: player.y,
+        z: player.z,
+        serverTick: currentTick,
+      });
+
+      if (player.hp <= 0 && !player.downed) {
+        player.downed = true;
+        player.inputDir.x = 0;
+        player.inputDir.z = 0;
+        emit({
+          type: "player_downed",
+          playerId: player.sessionId,
+          serverTick: currentTick,
+        });
+      }
+    });
+
+    emit({
+      type: "boss_aoe_hit",
+      bossId: enemy.id,
+      originX: enemy.x,
+      originZ: enemy.z,
+      radius: def.bossAbilityRadius,
+      serverTick: currentTick,
+    });
+
+    // Reset for next cycle.
+    enemy.abilityFireAt = -1;
+    bossCooldowns.set(enemy.id, currentTick + def.bossAbilityCooldownTicks);
+  });
+}
+
+/**
+ * M10: server-only boss-spawn state. Lives on GameRoom, NOT on
+ * RoomState (server-only counters don't pollute the schema). Spec §AD3.
+ *
+ *   nextBossAt   — tick at which to attempt the next boss spawn.
+ *                  Initialized to BOSS_INTERVAL_TICKS so the first
+ *                  boss spawns at T=BOSS_INTERVAL seconds, not T=0.
+ *   aliveBossId  — id of the currently-alive boss, or -1 if none.
+ *                  Enforces the 1-alive-at-a-time invariant.
+ */
+export type BossSpawnerState = {
+  nextBossAt: number;
+  aliveBossId: number;
+};
+
+/**
+ * M10: paired boss spawn / death cleanup. Runs LAST in the tick order
+ * (after tickSpawner) so its rng consumption appends to the schedule
+ * rather than reordering existing consumers (spec §AD7).
+ *
+ * Death cleanup uses the post-condition check (spec §AD4): if the
+ * recorded alive boss is no longer in state.enemies, it died last tick.
+ * Reset aliveBossId and schedule the next spawn at currentTick +
+ * BOSS_INTERVAL_TICKS. Also evict the dead boss's bossCooldowns entry.
+ *
+ * Spawn uses the same rng-driven player + angle pattern as tickSpawner.
+ *   - 1 rng() for live-player pick
+ *   - 1 rng() for angle (single attempt; no map-radius retry — bosses
+ *     can spawn anywhere within the map without the retry loop, and
+ *     a once-per-3-minutes event tolerates a slot skip in the rare
+ *     edge case).
+ *
+ * Shares `spawner.nextEnemyId++` so boss ids are unique within the
+ * Enemy.id space.
+ */
+export function tickBossSpawner(
+  state: RoomState,
+  bossSpawner: BossSpawnerState,
+  currentTick: number,
+  rng: Rng,
+  spawner: SpawnerState,
+  bossCooldowns: Map<number, number>,
+): void {
+  if (state.runEnded) return;
+  if (state.players.size === 0) return;
+
+  // --- Cleanup: did our recorded alive boss die last tick? ---
+  if (
+    bossSpawner.aliveBossId !== -1
+    && !state.enemies.has(String(bossSpawner.aliveBossId))
+  ) {
+    bossCooldowns.delete(bossSpawner.aliveBossId);
+    bossSpawner.aliveBossId = -1;
+    bossSpawner.nextBossAt = currentTick + BOSS_INTERVAL_TICKS;
+  }
+
+  // --- Spawn gate ---
+  if (bossSpawner.aliveBossId !== -1) return;
+  if (currentTick < bossSpawner.nextBossAt) return;
+
+  // Count + pick a random non-downed player.
+  let liveCount = 0;
+  state.players.forEach((p) => { if (!p.downed) liveCount += 1; });
+  if (liveCount === 0) return;
+
+  const liveIdx = Math.floor(rng() * liveCount);
+  let i = 0;
+  let target: Player | undefined;
+  state.players.forEach((p) => {
+    if (p.downed) return;
+    if (i === liveIdx) target = p;
+    i++;
+  });
+  if (!target) return;
+
+  const angle = rng() * Math.PI * 2;
+  const def = enemyDefAt(BOSS_KIND_INDEX);
+  const enemy = new Enemy();
+  enemy.id = spawner.nextEnemyId++;
+  enemy.kind = BOSS_KIND_INDEX;
+  enemy.x = target.x + Math.cos(angle) * ENEMY_SPAWN_RADIUS;
+  enemy.z = target.z + Math.sin(angle) * ENEMY_SPAWN_RADIUS;
+  enemy.y = terrainHeight(enemy.x, enemy.z)
+          + (def.flying ? FLYING_ENEMY_ALTITUDE : ENEMY_GROUND_OFFSET);
+  enemy.hp = def.baseHp;
+  enemy.maxHp = def.baseHp;
+  enemy.abilityFireAt = -1;
+  state.enemies.set(String(enemy.id), enemy);
+
+  bossSpawner.aliveBossId = enemy.id;
+  // Initialize cooldown so the first ability triggers AFTER one
+  // cooldown period (not immediately on spawn).
+  bossCooldowns.set(enemy.id, currentTick + def.bossAbilityCooldownTicks);
 }

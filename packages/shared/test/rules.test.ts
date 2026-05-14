@@ -32,6 +32,7 @@ import {
   applySlow,
   tickStatusEffects,
   getItemMultiplier,
+  spawnGemFanAndEmitDeath,
   type SpawnerState,
   type Projectile,
   type Boomerang,
@@ -63,14 +64,20 @@ import {
   ENEMY_RADIUS,
   GEM_VALUE,
   GEM_PICKUP_RADIUS,
+  GEM_FAN_RADIUS,
   TARGETING_MAX_RANGE,
   LEVEL_UP_DEADLINE_TICKS,
   xpForLevel,
   MAP_RADIUS,
   ENEMY_DESPAWN_RADIUS,
+  FLYING_ENEMY_ALTITUDE,
 } from "../src/constants.js";
 import { WEAPON_KINDS, statsAt, isProjectileWeapon } from "../src/weapons.js";
+import { ENEMY_KINDS, BOSS_KIND_INDEX, enemyDefAt } from "../src/enemies.js";
 import { mulberry32 } from "../src/rng.js";
+import type { EnemyDiedEvent, BossTelegraphEvent } from "../src/messages.js";
+import { tickBossAbilities, tickBossSpawner, type BossSpawnerState } from "../src/rules.js";
+import { BOSS_INTERVAL_TICKS } from "../src/constants.js";
 
 function addPlayer(state: RoomState, id: string, dirX: number, dirZ: number): Player {
   const p = new Player();
@@ -205,6 +212,62 @@ describe("tickEnemies", () => {
     expect(e.x).toBe(0);
     expect(e.z).toBe(0);
   });
+
+  it("M10: applies per-kind speedMultiplier (Bunny moves 1.5× as fast as Slime)", () => {
+    const state = new RoomState();
+    const p = new Player(); p.x = 10; p.z = 0;
+    state.players.set("p1", p);
+
+    const slime = new Enemy(); slime.id = 1; slime.kind = 0; slime.x = 0; slime.z = 0; slime.maxHp = 30; slime.hp = 30;
+    const bunny = new Enemy(); bunny.id = 2; bunny.kind = 1; bunny.x = 0; bunny.z = 1; bunny.maxHp = 10; bunny.hp = 10;
+    state.enemies.set("1", slime);
+    state.enemies.set("2", bunny);
+
+    const dt = SIM_DT_S;
+    tickEnemies(state, dt);
+
+    // Slime moves ENEMY_SPEED * dt * 1.0 = 0.1 units toward the player (along +x).
+    expect(slime.x).toBeCloseTo(ENEMY_SPEED * dt * 1.0, 6);
+    // Bunny moves 1.5× as fast — but its target direction is at (10, -1) from (0, 1),
+    // so its X component is slightly less than (ENEMY_SPEED * dt * 1.5). The ratio
+    // |bunny step| / |slime step| should be exactly 1.5.
+    const slimeStep = Math.hypot(slime.x, slime.z);
+    const bunnyStep = Math.hypot(bunny.x, bunny.z - 1);
+    expect(bunnyStep / slimeStep).toBeCloseTo(1.5, 4);
+  });
+
+  it("M10: flying enemy Y is pinned to terrainHeight + FLYING_ENEMY_ALTITUDE every tick", () => {
+    const state = new RoomState();
+    const p = new Player(); p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    const ghost = new Enemy(); ghost.id = 3; ghost.kind = 2; ghost.x = 5; ghost.z = 5; ghost.maxHp = 20; ghost.hp = 20;
+    state.enemies.set("3", ghost);
+
+    tickEnemies(state, SIM_DT_S);
+    // Whatever terrainHeight(x, z) returns, the ghost's y is that + FLYING_ENEMY_ALTITUDE.
+    const expectedY = terrainHeight(ghost.x, ghost.z) + FLYING_ENEMY_ALTITUDE;
+    expect(ghost.y).toBeCloseTo(expectedY, 6);
+  });
+
+  it("M10: enemy with abilityFireAt > 0 does NOT move (windup freeze)", () => {
+    const state = new RoomState();
+    state.tick = 100;
+    const p = new Player(); p.x = 10; p.z = 0;
+    state.players.set("p1", p);
+    const boss = new Enemy();
+    boss.id = 4; boss.kind = 4; boss.x = 0; boss.z = 0;
+    boss.maxHp = 2000; boss.hp = 2000;
+    boss.abilityFireAt = 120;  // windup; > 0
+    state.enemies.set("4", boss);
+
+    const startX = boss.x;
+    const startZ = boss.z;
+    tickEnemies(state, SIM_DT_S);
+    expect(boss.x).toBe(startX);
+    expect(boss.z).toBe(startZ);
+    // Y-snap still happens — boss is not flying, so it lands on terrain.
+    expect(boss.y).toBeCloseTo(terrainHeight(boss.x, boss.z) + ENEMY_GROUND_OFFSET, 6);
+  });
 });
 
 function freshSpawner(): SpawnerState {
@@ -323,6 +386,88 @@ describe("tickSpawner", () => {
 
     expect(state.enemies.size).toBe(1);
     expect(spawner.accumulator).toBeCloseTo(0);
+  });
+
+  it("M10: respects minSpawnTick — Bunny (kind=1, minSpawnTick=600) doesn't spawn at tick=599", () => {
+    const state = new RoomState();
+    state.tick = 599;
+    const p = new Player(); p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    const spawner: SpawnerState = { accumulator: ENEMY_SPAWN_INTERVAL_S, nextEnemyId: 1 };
+    const rng = mulberry32(123);
+    tickSpawner(state, spawner, 0, rng);
+    expect(state.enemies.size).toBe(1);
+    // Only kind=0 was unlocked at tick=599; spawn must be a slime.
+    const only = [...state.enemies.values()][0]!;
+    expect(only.kind).toBe(0);
+  });
+
+  it("M10: per-kind stats applied at spawn — Bunny has baseHp=10, maxHp=10", () => {
+    const state = new RoomState();
+    state.tick = 30 * 20;  // bunny unlock tick exactly
+    const p = new Player(); p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    const spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+    spawnDebugBurst(state, spawner, mulberry32(1), p, 1, 1);  // force kind=1
+    expect(state.enemies.size).toBe(1);
+    const e = [...state.enemies.values()][0]!;
+    expect(e.kind).toBe(1);
+    expect(e.hp).toBe(10);
+    expect(e.maxHp).toBe(10);
+  });
+
+  it("M10: flying enemy spawn Y is terrainHeight + FLYING_ENEMY_ALTITUDE", () => {
+    const state = new RoomState();
+    const p = new Player(); p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    const spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+    spawnDebugBurst(state, spawner, mulberry32(1), p, 1, 2);  // kind=2 = Ghost
+    const e = [...state.enemies.values()][0]!;
+    expect(e.kind).toBe(2);
+    expect(e.y).toBeCloseTo(terrainHeight(e.x, e.z) + FLYING_ENEMY_ALTITUDE, 6);
+  });
+
+  it("M10: weighted pick distribution over many spawns approximates kind weights", () => {
+    const state = new RoomState();
+    state.tick = 150 * 20;  // all non-boss kinds unlocked
+    const p = new Player(); p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    const spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+    const rng = mulberry32(7);
+
+    const counts = new Map<number, number>();
+    const TRIALS = 1200;
+    for (let i = 0; i < TRIALS; i++) {
+      spawner.accumulator = ENEMY_SPAWN_INTERVAL_S;
+      tickSpawner(state, spawner, 0, rng);
+      // Read the just-spawned enemy and remove it so MAX_ENEMIES doesn't cap.
+      const newest = [...state.enemies.values()].pop()!;
+      counts.set(newest.kind, (counts.get(newest.kind) ?? 0) + 1);
+      state.enemies.clear();
+    }
+    const totalW = 60 + 30 + 20 + 15;  // slime + bunny + ghost + skeleton
+    expect(counts.get(0)! / TRIALS).toBeCloseTo(60 / totalW, 1);
+    expect(counts.get(1)! / TRIALS).toBeCloseTo(30 / totalW, 1);
+    expect(counts.get(2)! / TRIALS).toBeCloseTo(20 / totalW, 1);
+    expect(counts.get(3)! / TRIALS).toBeCloseTo(15 / totalW, 1);
+    // No boss spawns from tickSpawner — boss is spawnWeight=0.
+    expect(counts.get(4) ?? 0).toBe(0);
+  });
+
+  it("M10: boss kind never spawned by tickSpawner (spawnWeight=0)", () => {
+    const state = new RoomState();
+    state.tick = 1_000_000;  // past every gate
+    const p = new Player(); p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    const spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+    const rng = mulberry32(1);
+    for (let i = 0; i < 200; i++) {
+      spawner.accumulator = ENEMY_SPAWN_INTERVAL_S;
+      tickSpawner(state, spawner, 0, rng);
+    }
+    for (const e of state.enemies.values()) {
+      expect(e.kind).not.toBe(BOSS_KIND_INDEX);
+    }
   });
 });
 
@@ -1650,6 +1795,31 @@ describe("tickContactDamage", () => {
     tickContactDamage(state, fc.store, 0.05, 0, (e) => events.push(e));
     expect(p.hp).toBe(100);
     expect(events.length).toBe(0);
+  });
+
+  it("M10: applies per-kind contactDamage — Skeleton deals 10, not the slime baseline 5", () => {
+    const state = new RoomState();
+    const p = addPlayer(state, "p1", 0, 0);
+    p.hp = 100;
+    p.x = 0;
+    p.z = 0;
+    const sk = new Enemy();
+    sk.id = 1;
+    sk.kind = 3;
+    sk.x = 0;
+    sk.z = 0;
+    sk.maxHp = 80;
+    sk.hp = 80;
+    state.enemies.set("1", sk);
+
+    const events: CombatEvent[] = [];
+    const fc = makeFakeContactCooldown();
+    tickContactDamage(state, fc.store, 0.05, 0, (e) => events.push(e));
+
+    expect(events.filter((e) => e.type === "player_damaged").length).toBe(1);
+    const damageEvent = events.find((e) => e.type === "player_damaged");
+    expect(damageEvent?.type === "player_damaged" && damageEvent.damage).toBe(10);
+    expect(p.hp).toBe(90);
   });
 });
 
@@ -4642,5 +4812,255 @@ describe("describeItemEffect — M9 US-006 iteration (item descriptions in level
     expect(describeItemEffect(magnifier, 5)).toBe("+125% gem magnet range");
     expect(describeItemEffect(bunny, 1)).toBe("+10% XP gain");
     expect(describeItemEffect(bunny, 5)).toBe("+50% XP gain");
+  });
+});
+
+describe("spawnGemFanAndEmitDeath", () => {
+  // Minimal stub ctx — only the two methods the helper reads.
+  function makeCtx() {
+    let next = 1;
+    return {
+      nextGemId: () => next++,
+      orbitHitCooldown: { evictEnemy: () => {}, tryHit: () => true },
+    };
+  }
+
+  function makeEnemyAt(kind: number, x: number, z: number): Enemy {
+    const e = new Enemy();
+    e.id = 42;
+    e.kind = kind;
+    e.x = x;
+    e.z = z;
+    e.hp = 0;
+    e.maxHp = ENEMY_KINDS[kind]!.baseHp;
+    return e;
+  }
+
+  it("gemDropCount === 1: spawns exactly one gem at the death position", () => {
+    const state = new RoomState();
+    state.enemies.set("42", makeEnemyAt(0, 7, 11));  // slime, gemDropCount=1
+    const ctx = makeCtx();
+    const events: EnemyDiedEvent[] = [];
+    spawnGemFanAndEmitDeath(state, state.enemies.get("42")!, ctx, (e) => {
+      if (e.type === "enemy_died") events.push(e);
+    });
+    expect(state.gems.size).toBe(1);
+    const onlyGem = [...state.gems.values()][0]!;
+    expect(onlyGem.x).toBe(7);
+    expect(onlyGem.z).toBe(11);
+    expect(onlyGem.value).toBe(GEM_VALUE);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ enemyId: 42, x: 7, z: 11 });
+    expect(state.enemies.has("42")).toBe(false);
+  });
+
+  it("gemDropCount > 1: spawns N gems in an evenly-spaced ring at GEM_FAN_RADIUS", () => {
+    const state = new RoomState();
+    // kind=4 is the boss; gemDropCount=15.
+    state.enemies.set("42", makeEnemyAt(4, 0, 0));
+    const ctx = makeCtx();
+    spawnGemFanAndEmitDeath(state, state.enemies.get("42")!, ctx, () => {});
+    expect(state.gems.size).toBe(15);
+    // Every gem is at distance GEM_FAN_RADIUS from origin.
+    for (const g of state.gems.values()) {
+      const r = Math.sqrt(g.x * g.x + g.z * g.z);
+      expect(r).toBeCloseTo(GEM_FAN_RADIUS, 6);
+    }
+    // Angles are deterministic — the i=0 gem must be at (+R, 0).
+    const gemsSorted = [...state.gems.values()].sort((a, b) => a.id - b.id);
+    expect(gemsSorted[0]!.x).toBeCloseTo(GEM_FAN_RADIUS, 6);
+    expect(gemsSorted[0]!.z).toBeCloseTo(0, 6);
+  });
+
+  it("emits enemy_died exactly once regardless of fan size", () => {
+    const state = new RoomState();
+    state.enemies.set("42", makeEnemyAt(4, 0, 0));  // boss: 15 gems
+    let dies = 0;
+    spawnGemFanAndEmitDeath(state, state.enemies.get("42")!, makeCtx(), (e) => {
+      if (e.type === "enemy_died") dies++;
+    });
+    expect(dies).toBe(1);
+  });
+});
+
+describe("tickBossAbilities", () => {
+  it("idle → windup: emits boss_telegraph and sets abilityFireAt", () => {
+    const state = new RoomState();
+    state.tick = 100;
+    const boss = new Enemy();
+    boss.id = 1; boss.kind = BOSS_KIND_INDEX; boss.x = 5; boss.z = 7;
+    boss.maxHp = 2000; boss.hp = 2000; boss.abilityFireAt = -1;
+    state.enemies.set("1", boss);
+
+    // Cooldown elapsed: nextReadyTick (in cooldown map) was set to a tick <= now.
+    const bossCooldowns = new Map<number, number>();
+    bossCooldowns.set(1, 100);  // ready exactly this tick
+
+    const events: any[] = [];
+    tickBossAbilities(state, state.tick, bossCooldowns, /*nowMs*/0, (e) => events.push(e));
+
+    const def = enemyDefAt(BOSS_KIND_INDEX);
+    expect(boss.abilityFireAt).toBe(state.tick + def.bossAbilityWindupTicks);
+    const tele = events.find(e => e.type === "boss_telegraph") as BossTelegraphEvent | undefined;
+    expect(tele).toBeDefined();
+    expect(tele!.bossId).toBe(1);
+    expect(tele!.radius).toBe(def.bossAbilityRadius);
+    expect(tele!.originX).toBe(5);
+    expect(tele!.originZ).toBe(7);
+  });
+
+  it("currentTick === abilityFireAt: fires — damages players in radius, emits boss_aoe_hit + player_damaged, resets state", () => {
+    const state = new RoomState();
+    state.tick = 120;
+    const boss = new Enemy();
+    boss.id = 1; boss.kind = BOSS_KIND_INDEX; boss.x = 0; boss.z = 0;
+    boss.maxHp = 2000; boss.hp = 2000; boss.abilityFireAt = 120;  // fire NOW
+    state.enemies.set("1", boss);
+
+    const inside = new Player(); inside.sessionId = "in"; inside.x = 2; inside.z = 0; inside.hp = 100; inside.maxHp = 100;
+    const outside = new Player(); outside.sessionId = "out"; outside.x = 10; outside.z = 0; outside.hp = 100; outside.maxHp = 100;
+    state.players.set("in", inside);
+    state.players.set("out", outside);
+
+    const bossCooldowns = new Map<number, number>();
+    bossCooldowns.set(1, 0);
+
+    const events: any[] = [];
+    tickBossAbilities(state, state.tick, bossCooldowns, /*nowMs*/0, (e) => events.push(e));
+
+    const def = enemyDefAt(BOSS_KIND_INDEX);
+    expect(inside.hp).toBe(100 - def.bossAbilityDamage);
+    expect(outside.hp).toBe(100);
+    expect(events.filter(e => e.type === "boss_aoe_hit")).toHaveLength(1);
+    const dmg = events.filter(e => e.type === "player_damaged");
+    expect(dmg).toHaveLength(1);
+    expect(dmg[0].playerId).toBe("in");
+    expect(boss.abilityFireAt).toBe(-1);
+    expect(bossCooldowns.get(1)).toBe(state.tick + def.bossAbilityCooldownTicks);
+  });
+
+  it("non-boss enemies are ignored even if abilityFireAt > 0 spuriously", () => {
+    const state = new RoomState();
+    state.tick = 50;
+    const slime = new Enemy();
+    slime.id = 9; slime.kind = 0; slime.abilityFireAt = 999; slime.x = 0; slime.z = 0;
+    slime.maxHp = 30; slime.hp = 30;
+    state.enemies.set("9", slime);
+    const events: any[] = [];
+    tickBossAbilities(state, state.tick, new Map(), 0, (e) => events.push(e));
+    expect(events).toHaveLength(0);
+    expect(slime.abilityFireAt).toBe(999);
+  });
+
+  it("windup phase: still pending, no emit, abilityFireAt unchanged", () => {
+    const state = new RoomState();
+    state.tick = 105;
+    const boss = new Enemy();
+    boss.id = 1; boss.kind = BOSS_KIND_INDEX; boss.abilityFireAt = 120;  // 15 ticks until fire
+    boss.maxHp = 2000; boss.hp = 2000;
+    state.enemies.set("1", boss);
+    const events: any[] = [];
+    tickBossAbilities(state, state.tick, new Map([[1, 100]]), 0, (e) => events.push(e));
+    expect(events).toHaveLength(0);
+    expect(boss.abilityFireAt).toBe(120);
+  });
+
+  it("early-outs on state.runEnded", () => {
+    const state = new RoomState();
+    state.runEnded = true;
+    const boss = new Enemy();
+    boss.id = 1; boss.kind = BOSS_KIND_INDEX; boss.abilityFireAt = -1;
+    state.enemies.set("1", boss);
+    const events: any[] = [];
+    tickBossAbilities(state, 0, new Map([[1, -1]]), 0, (e) => events.push(e));
+    expect(events).toHaveLength(0);
+    expect(boss.abilityFireAt).toBe(-1);
+  });
+});
+
+describe("tickBossSpawner", () => {
+  function makeBossSpawnerState(nextBossAt: number, aliveBossId: number = -1): BossSpawnerState {
+    return { nextBossAt, aliveBossId };
+  }
+  function makeRoom(): { state: RoomState; spawner: SpawnerState } {
+    const state = new RoomState();
+    const p = new Player(); p.sessionId = "p1"; p.x = 0; p.z = 0;
+    state.players.set("p1", p);
+    return { state, spawner: { accumulator: 0, nextEnemyId: 1 } };
+  }
+
+  it("does NOT spawn before nextBossAt", () => {
+    const { state, spawner } = makeRoom();
+    const bossSpawner = makeBossSpawnerState(100);
+    state.tick = 99;
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(1), spawner, new Map());
+    expect(state.enemies.size).toBe(0);
+    expect(bossSpawner.aliveBossId).toBe(-1);
+  });
+
+  it("spawns exactly one boss at nextBossAt with correct stats", () => {
+    const { state, spawner } = makeRoom();
+    const bossSpawner = makeBossSpawnerState(100);
+    state.tick = 100;
+    const cooldowns = new Map<number, number>();
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(1), spawner, cooldowns);
+    expect(state.enemies.size).toBe(1);
+    const boss = [...state.enemies.values()][0]!;
+    expect(boss.kind).toBe(BOSS_KIND_INDEX);
+    const def = enemyDefAt(BOSS_KIND_INDEX);
+    expect(boss.hp).toBe(def.baseHp);
+    expect(boss.maxHp).toBe(def.baseHp);
+    expect(boss.abilityFireAt).toBe(-1);
+    expect(bossSpawner.aliveBossId).toBe(boss.id);
+    // Cooldown initialized — first ability after one cooldown from spawn.
+    expect(cooldowns.get(boss.id)).toBe(state.tick + def.bossAbilityCooldownTicks);
+  });
+
+  it("second boss does NOT spawn while first is alive", () => {
+    const { state, spawner } = makeRoom();
+    const bossSpawner = makeBossSpawnerState(100);
+    state.tick = 100;
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(1), spawner, new Map());
+    expect(state.enemies.size).toBe(1);
+
+    state.tick = 100 + BOSS_INTERVAL_TICKS * 5;
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(2), spawner, new Map());
+    expect(state.enemies.size).toBe(1);
+  });
+
+  it("death cleanup: resets aliveBossId and schedules next spawn one interval later", () => {
+    const { state, spawner } = makeRoom();
+    const bossSpawner = makeBossSpawnerState(100);
+    state.tick = 100;
+    const cooldowns = new Map<number, number>();
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(1), spawner, cooldowns);
+    const bossId = bossSpawner.aliveBossId;
+    expect(bossId).not.toBe(-1);
+
+    state.enemies.delete(String(bossId));
+    state.tick = 150;
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(99), spawner, cooldowns);
+    expect(bossSpawner.aliveBossId).toBe(-1);
+    expect(bossSpawner.nextBossAt).toBe(state.tick + BOSS_INTERVAL_TICKS);
+    expect(cooldowns.has(bossId)).toBe(false);
+  });
+
+  it("no spawn when all players are downed", () => {
+    const { state, spawner } = makeRoom();
+    state.players.get("p1")!.downed = true;
+    const bossSpawner = makeBossSpawnerState(100);
+    state.tick = 100;
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(1), spawner, new Map());
+    expect(state.enemies.size).toBe(0);
+    expect(bossSpawner.aliveBossId).toBe(-1);
+  });
+
+  it("early-outs on state.runEnded", () => {
+    const { state, spawner } = makeRoom();
+    state.runEnded = true;
+    const bossSpawner = makeBossSpawnerState(0);
+    state.tick = 0;
+    tickBossSpawner(state, bossSpawner, state.tick, mulberry32(1), spawner, new Map());
+    expect(state.enemies.size).toBe(0);
   });
 });

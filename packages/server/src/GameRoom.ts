@@ -16,6 +16,8 @@ import {
   tickXp,
   tickLevelUpDeadlines,
   tickSpawner,
+  tickBossAbilities,
+  tickBossSpawner,
   resolveLevelUp,
   spawnDebugBurst,
   LEVEL_UP_CHOICE_ITEM,
@@ -34,6 +36,8 @@ import {
   mulberry32,
   type Rng,
   type SpawnerState,
+  type BossSpawnerState,
+  BOSS_INTERVAL_TICKS,
   type Projectile,
   type Boomerang,
   type WeaponContext,
@@ -150,6 +154,8 @@ export class GameRoom extends Room<{ state: RoomState }> {
   // (esbuild emitting Object.defineProperty over @colyseus/schema's
   // prototype setters) only affects Schema subclasses.
   private spawner: SpawnerState = { accumulator: 0, nextEnemyId: 1 };
+  private bossSpawner!: BossSpawnerState;
+  private bossCooldowns = new Map<number, number>();
   // M7 US-009: per-tick jump intents. Input handler adds the sessionId of
   // any player whose latest input had jump=true; tickPlayers reads it; the
   // tick() loop clears it after tickPlayers returns. Server-only; not
@@ -217,6 +223,10 @@ export class GameRoom extends Room<{ state: RoomState }> {
     this.setState(state);
     this.emit = (e: CombatEvent) => this.broadcast(e.type, e);
     this.rng = mulberry32(state.seed);
+    this.bossSpawner = {
+      nextBossAt: BOSS_INTERVAL_TICKS,
+      aliveBossId: -1,
+    };
     // M7 US-002: terrain noise must be initialized before the first tick
     // calls terrainHeight in tickPlayers. Process-global state in
     // shared/terrain.ts — last room to boot wins, which is fine because
@@ -552,6 +562,13 @@ export class GameRoom extends Room<{ state: RoomState }> {
     // uses fresh slow state (CLAUDE.md rule 11). Doesn't consume rng.
     tickStatusEffects(this.state, this.state.tick);
     tickEnemies(this.state, SIM_DT_S);
+    tickBossAbilities(
+      this.state,
+      this.state.tick,
+      this.bossCooldowns,
+      Date.now(),
+      (e) => this.emit(e),
+    );
     tickContactDamage(this.state, this.contactCooldown, SIM_DT_S, Date.now(), this.emit);
     tickRunEndCheck(this.state, this.emit);
     tickWeapons(this.state, SIM_DT_S, this.weaponCtx, this.emit);
@@ -568,6 +585,14 @@ export class GameRoom extends Room<{ state: RoomState }> {
     tickXp(this.state, this.rng, this.emit);
     tickLevelUpDeadlines(this.state, this.emit);
     tickSpawner(this.state, this.spawner, SIM_DT_S, this.rng);
+    tickBossSpawner(
+      this.state,
+      this.bossSpawner,
+      this.state.tick,
+      this.rng,
+      this.spawner,
+      this.bossCooldowns,
+    );
 
     this.cooldownSweepCounter += 1;
     if (this.cooldownSweepCounter >= ORBIT_COOLDOWN_SWEEP_INTERVAL_TICKS) {
@@ -576,6 +601,16 @@ export class GameRoom extends Room<{ state: RoomState }> {
       this.orbitHitCooldown.sweep(now, this.maxOrbitHitCooldownMs);
       this.contactCooldown.sweep(now, ENEMY_CONTACT_COOLDOWN_S * 1000);
     }
+  }
+
+  /**
+   * TEST ONLY. Sets `bossSpawner.nextBossAt` so an integration test
+   * doesn't have to wait the full 3-minute production cadence. Not
+   * called by any production path; safe to leave in shipped code
+   * because it requires a typed reference to the room instance.
+   */
+  setBossSpawnAtForTest(tick: number): void {
+    this.bossSpawner.nextBossAt = tick;
   }
 
   private installSnapshotLogger(): void {

@@ -47,6 +47,16 @@ namespace MonkeyPunch.UI {
     // OnEnable. Assign GameUI.uss here in the Inspector.
     [SerializeField] private StyleSheet hudStyleSheet;
 
+    [Header("M10 — Boss HP bar")]
+    [Tooltip("Root GameObject toggled on/off based on whether a boss is alive.")]
+    [SerializeField] private GameObject bossHpBarRoot;
+
+    [Tooltip("Fill Image with type = Filled, fill method Horizontal.")]
+    [SerializeField] private UnityEngine.UI.Image bossHpFill;
+
+    [Tooltip("Text component for the boss name + numeric HP.")]
+    [SerializeField] private TMPro.TextMeshProUGUI bossHpLabel;
+
     // ----- Modal state -----
 
     private bool levelUpVisible;
@@ -190,6 +200,25 @@ namespace MonkeyPunch.UI {
         if (pauseVisible) { HidePauseMenu(); return; }
         ShowPauseMenu();
       }
+    }
+
+    // ----- Per-frame -----
+
+    void Update() {
+      UpdateBossHpBar();
+    }
+
+    private void UpdateBossHpBar() {
+      if (bossHpBarRoot == null || MonkeyPunch.Net.NetworkClient.Instance == null) return;
+      var boss = MonkeyPunch.Net.NetworkClient.Instance.FindAliveBoss();
+      if (boss == null) {
+        bossHpBarRoot.SetActive(false);
+        return;
+      }
+      bossHpBarRoot.SetActive(true);
+      float ratio = boss.maxHp > 0 ? (float)boss.hp / boss.maxHp : 0f;
+      if (bossHpFill != null) bossHpFill.fillAmount = ratio;
+      if (bossHpLabel != null) bossHpLabel.text = $"Boss  {boss.hp} / {boss.maxHp}";
     }
 
     // ----- Public API (migration boundary — keep stable for NetworkClient) -----

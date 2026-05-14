@@ -208,21 +208,22 @@ export class Enemy extends Schema {
   // M7 US-012: enemies snap to terrain. Enemies have no vy and do not
   // jump (per PRD § US-010 in tasks/prd-m7-verticality.md): tickEnemies
   // simply assigns `y = terrainHeight(x, z) + ENEMY_GROUND_OFFSET` after
-  // X/Z integration.
+  // X/Z integration. M10: flying enemies (def.flying === true) snap to
+  // terrainHeight + FLYING_ENEMY_ALTITUDE instead.
   declare y: number;
   declare z: number;
   declare hp: number;
-  // M8 US-009: status effects (single-effect shape, slow only). Per
-  // CLAUDE.md "Status effects scale to two kinds, not three" — a third
-  // effect kind requires refactoring to ArraySchema<StatusEffect>.
-  //
-  //   slowMultiplier — current movement-speed multiplier. 1.0 = full
-  //     speed. <1 = slowed (Kronos uses 0.6 → 0.4 across L1–L5).
-  //   slowExpiresAt — server tick at which the slow expires. -1 sentinel
-  //     means "no slow active." Encoded as int32 because of the -1
-  //     sentinel — same pattern Player.jumpBufferedAt uses.
+  // M8 US-009: status effects (single-effect shape, slow only).
   declare slowMultiplier: number;
   declare slowExpiresAt: number;
+  // M10: drives boss HP-bar ratio AND lets clients display damage as a
+  // percentage of max. Set at spawn from ENEMY_KINDS[kind].baseHp;
+  // never mutated post-spawn.
+  declare maxHp: number;
+  // M10: countdown tick for the boss telegraphed ability. -1 sentinel = idle
+  // (matches Player.jumpBufferedAt and Enemy.slowExpiresAt encoding).
+  // For non-boss enemies stays -1 forever after construction.
+  declare abilityFireAt: number;
   constructor() {
     super();
     this.id = 0;
@@ -233,6 +234,8 @@ export class Enemy extends Schema {
     this.hp = 0;
     this.slowMultiplier = 1;
     this.slowExpiresAt = -1;
+    this.maxHp = 0;
+    this.abilityFireAt = -1;
   }
 }
 defineTypes(Enemy, {
@@ -244,6 +247,8 @@ defineTypes(Enemy, {
   hp: "uint16",
   slowMultiplier: "number",
   slowExpiresAt: "int32",
+  maxHp: "uint16",          // M10
+  abilityFireAt: "int32",   // M10
 });
 
 // M8 US-011: blood pool — ground decal that DoTs enemies. Spawned along
