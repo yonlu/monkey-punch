@@ -41,6 +41,9 @@ namespace MonkeyPunch.Net {
              "defines the order: 0=Slime, 1=Bunny, 2=Ghost, 3=Skeleton, 4=Boss. " +
              "Slots can be null — null falls back to the cube placeholder.")]
     [SerializeField] private GameObject[] enemyPrefabs;
+    [Tooltip("Prefab instantiated for each gem pickup. Drag Prefabs/Pickups/Gem.prefab here. " +
+             "Null falls back to the yellow sphere placeholder.")]
+    [SerializeField] private GameObject gemPrefab;
 
     [Serializable]
     private class PongMessage { public string type; public double t; public double serverNow; }
@@ -717,12 +720,23 @@ namespace MonkeyPunch.Net {
     // --- Gems (static positions, no interp) ---
 
     private void HandleGemAdd(MonkeyPunch.Wire.Gem g) {
-      var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-      go.transform.localScale = Vector3.one * 0.5f;
-      go.transform.position = new Vector3(g.x, 0.5f, g.z);
+      // Per-gem GameObject is root-pivoted at world (g.x, 0, g.z). The prefab
+      // is expected to hold the visual mesh on a child transform (so GemSpinBob
+      // animates the visual without fighting the root position written here).
+      // Null prefab falls back to the pre-art-pipeline yellow sphere placeholder,
+      // matching the enemy cube-fallback pattern above.
+      GameObject go;
+      if (gemPrefab != null) {
+        go = Instantiate(gemPrefab);
+        go.transform.position = new Vector3(g.x, 0f, g.z);
+      } else {
+        go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        go.transform.localScale = Vector3.one * 0.5f;
+        go.transform.position = new Vector3(g.x, 0.5f, g.z);
+        var rend = go.GetComponent<Renderer>();
+        if (rend != null) rend.material.color = new Color(1.0f, 0.85f, 0.2f);
+      }
       go.name = $"Gem:{g.id}";
-      var rend = go.GetComponent<Renderer>();
-      if (rend != null) rend.material.color = new Color(1.0f, 0.85f, 0.2f);
       gemObjects[g.id] = go;
     }
 
