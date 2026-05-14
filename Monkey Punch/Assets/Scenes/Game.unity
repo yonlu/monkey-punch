@@ -503,6 +503,7 @@ MonoBehaviour:
   - {fileID: 0}
   - {fileID: 0}
   - {fileID: 0}
+  gemPrefab: {fileID: 5008697068588689993, guid: d6b12b74ee4c76d47a43d788dea32aaa, type: 3}
 --- !u!114 &1049207159
 MonoBehaviour:
   m_ObjectHideFlags: 0
