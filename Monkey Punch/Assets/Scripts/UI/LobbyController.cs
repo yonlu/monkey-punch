@@ -36,6 +36,14 @@ namespace MonkeyPunch.UI {
     private List<MatchmakerClient.AvailableRoom> lastRooms = new();
 
     void OnEnable() {
+      // CameraFollow.Awake (Game scene) locks the cursor for mouselook.
+      // When we land here from a Game→Lobby bounce (NetworkClient's guard
+      // or LeaveAndReturnToLobby) the lock survives the scene swap, so
+      // UI Toolkit pointer clicks never reach the lobby buttons even
+      // though keyboard nav still works. Unlock unconditionally on entry.
+      UnityEngine.Cursor.lockState = CursorLockMode.None;
+      UnityEngine.Cursor.visible = true;
+
       doc = GetComponent<UIDocument>();
       root = doc.rootVisualElement;
 
@@ -224,6 +232,12 @@ namespace MonkeyPunch.UI {
       connectCts = new CancellationTokenSource();
       try {
         var room = await connect();
+        // Register the terrain_data capture handler BEFORE LoadScene.
+        // The server unicast-sends terrain_data inside onJoin; the
+        // message lands during the WS sync-context pump before Game
+        // scene's NetworkClient.Start can register its own handler.
+        // See Bootstrap.RegisterTerrainCapture.
+        Bootstrap.I.RegisterTerrainCapture(room);
         Bootstrap.I.Room = room;
         Bootstrap.I.DisplayName = name;
         PlayerPrefs.SetString(DisplayNamePrefsKey, name);

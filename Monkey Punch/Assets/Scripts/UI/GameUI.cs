@@ -192,19 +192,14 @@ namespace MonkeyPunch.UI {
 
     void Update() {
       var kb = Keyboard.current;
-      if (kb == null) return;
-      if (kb.escapeKey.wasPressedThisFrame) {
+      if (kb != null && kb.escapeKey.wasPressedThisFrame) {
         // Esc precedence: level-up bar and run-over modal block pause.
-        if (levelUpVisible || runOverVisible) return;
-        if (leaveConfirmVisible) { HideLeaveConfirm(); return; }
-        if (pauseVisible) { HidePauseMenu(); return; }
-        ShowPauseMenu();
+        if (!(levelUpVisible || runOverVisible)) {
+          if (leaveConfirmVisible) { HideLeaveConfirm(); }
+          else if (pauseVisible) { HidePauseMenu(); }
+          else { ShowPauseMenu(); }
+        }
       }
-    }
-
-    // ----- Per-frame -----
-
-    void Update() {
       UpdateBossHpBar();
     }
 

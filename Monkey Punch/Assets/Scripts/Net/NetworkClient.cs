@@ -157,20 +157,6 @@ namespace MonkeyPunch.Net {
       public double serverFireTimeMs;
     }
 
-    // Phase 6 (Unity migration plan): one-shot heightmap + props payload.
-    // Sent unicast immediately after onJoin. heights is row-major
-    // (X-outer, Z-inner) of length (gridSize+1)². props is the full
-    // generateProps(seed) output.
-    [Serializable]
-    private class TerrainDataMsg {
-      public string type;
-      public uint seed;
-      public int gridSize;
-      public double gridSpacing;
-      public double[] heights;
-      public TerrainStreamer.PropPayload[] props;
-    }
-
     [Serializable]
     private class MeleeSwipeEventMsg {
       public string type;
@@ -213,6 +199,13 @@ namespace MonkeyPunch.Net {
     // Transform of the local player's cube. Null until the self
     // OnPlayerAdd callback fires. CameraFollow polls this each LateUpdate.
     public Transform LocalPlayerTransform { get; private set; }
+
+    // Cached PlayerAvatar on the local player GameObject. We push the
+    // live-input intent velocity here each render frame so the avatar
+    // can face the player's input direction rather than transform-diff
+    // (which includes cosmetic RenderOffset decay motion and would snap
+    // yaw on input release). Null until HandlePlayerAdd(isLocal) runs.
+    private MonkeyPunch.Render.PlayerAvatar localPlayerAvatar;
 
     private Room<RoomState> room;
     private readonly ServerTime serverTime = new ServerTime();
@@ -409,24 +402,29 @@ namespace MonkeyPunch.Net {
         }
       });
 
-      // Phase 6 (Unity migration plan): one-shot terrain + props payload.
-      // TerrainStreamer must already be on a sibling GameObject in the
-      // scene; we hand off the decoded heightmap + prop list and it
-      // rebuilds the world mesh. Multiple receipts (rejoin within
-      // grace) trigger a full rebuild — props/terrain are tear-down-
-      // and-replace, not diff.
-      room.OnMessage("terrain_data", (TerrainDataMsg ev) => {
+      // Phase 6: replay the terrain payload captured by Bootstrap during
+      // the Lobby→Game scene transition. The server unicasts terrain_data
+      // inside onJoin — it arrives between connect() resolving and Game
+      // scene's Start methods running. Bootstrap.RegisterTerrainCapture
+      // (called from LobbyController right after connect) installs the
+      // OnMessage handler on the Room before the message can be dropped.
+      // Rejoins within the grace window are handled by Bootstrap directly
+      // (TerrainStreamer is already alive on those).
+      var pending = Bootstrap.I.PendingTerrainPayload;
+      if (pending != null) {
         if (TerrainStreamer.Instance == null) {
-          Debug.LogWarning("[NetworkClient] terrain_data received but TerrainStreamer.Instance is null. " +
+          Debug.LogWarning("[NetworkClient] PendingTerrainPayload present but TerrainStreamer.Instance is null. " +
                            "Add a TerrainStreamer component to the scene.");
-          return;
+        } else if (pending.heights == null || pending.props == null) {
+          Debug.LogError("[NetworkClient] PendingTerrainPayload missing heights or props.");
+        } else {
+          TerrainStreamer.Instance.BuildFromPayload(
+            pending.gridSize, pending.gridSpacing, pending.heights, pending.props, pending.seed);
         }
-        if (ev.heights == null || ev.props == null) {
-          Debug.LogError("[NetworkClient] terrain_data payload missing heights or props.");
-          return;
-        }
-        TerrainStreamer.Instance.BuildFromPayload(ev.gridSize, ev.gridSpacing, ev.heights, ev.props, ev.seed);
-      });
+        Bootstrap.I.PendingTerrainPayload = null;
+      } else {
+        Debug.LogWarning("[NetworkClient] No PendingTerrainPayload at Start — terrain capture handler missed the message.");
+      }
     }
 
     // Server time for the closed-form projectile sim. CombatVfx polls
@@ -453,10 +451,9 @@ namespace MonkeyPunch.Net {
     /// </summary>
     public Enemy FindAliveBoss() {
       if (room == null || room.State == null || room.State.enemies == null) return null;
-      foreach (var kv in room.State.enemies) {
-        if (kv.Value.kind == PredictorConstants.BOSS_KIND_INDEX) {
-          return kv.Value;
-        }
+      foreach (var v in room.State.enemies.Values) {
+        var e = (Enemy)v;
+        if (e.kind == PredictorConstants.BOSS_KIND_INDEX) return e;
       }
       return null;
     }
@@ -622,6 +619,7 @@ namespace MonkeyPunch.Net {
       playerObjects[sessionId] = go;
       if (isLocal) {
         LocalPlayerTransform = go.transform;
+        localPlayerAvatar = go.GetComponent<MonkeyPunch.Render.PlayerAvatar>();
         // Phase 5: spin up the predictor once we have a server-authoritative
         // starting X/Z. Tick comes from the room state (it's set before
         // OnAdd fires).
@@ -653,7 +651,10 @@ namespace MonkeyPunch.Net {
 
     private void HandlePlayerRemove(string sessionId) {
       if (playerObjects.TryGetValue(sessionId, out var go)) {
-        if (LocalPlayerTransform == go.transform) LocalPlayerTransform = null;
+        if (LocalPlayerTransform == go.transform) {
+          LocalPlayerTransform = null;
+          localPlayerAvatar = null;
+        }
         Destroy(go);
         playerObjects.Remove(sessionId);
       }
@@ -865,6 +866,15 @@ namespace MonkeyPunch.Net {
             renderY,
             (float)(predictor.Z + predictor.RenderOffsetZ + extrapZ)
           );
+
+          // Drive avatar facing from live input intent rather than the
+          // rendered transform-diff. transform.position includes the
+          // cosmetic RenderOffset decay (a velocity that would otherwise
+          // snap yaw 180° on input release — see PlayerAvatar.cs comment).
+          if (localPlayerAvatar != null) {
+            localPlayerAvatar.FacingVelocityOverride = new Vector3(
+              (float)(live.x * effectiveSpeed), 0f, (float)(live.y * effectiveSpeed));
+          }
           continue;
         }
         if (playerBuffers.TryGetValue(kv.Key, out var buf) && buf.Sample(renderTime, out var pos)) {

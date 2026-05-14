@@ -29,6 +29,17 @@ namespace MonkeyPunch.Render {
     private bool hasPreviousPosition;
     private float heldYaw; // Last computed yaw, held while stationary.
 
+    /// <summary>
+    /// External facing-velocity override. When non-null, used in place of
+    /// the transform-diff velocity for yaw computation only (Animator
+    /// Speed still tracks real motion). NetworkClient sets this on the
+    /// local player each frame from the live input direction, so the
+    /// cosmetic RenderOffset decay doesn't produce a spurious velocity
+    /// that snaps facing on input release. Remote players leave this
+    /// null and continue to face the direction they're actually moving.
+    /// </summary>
+    public Vector3? FacingVelocityOverride { get; set; }
+
     void Awake() {
       animator = GetComponent<Animator>();
       // Server is authoritative for position; the animator must not
@@ -55,7 +66,10 @@ namespace MonkeyPunch.Render {
       float speed = LocomotionParams.ComputeSpeed(velocity);
       animator.SetFloat(SpeedParamHash, speed, LocomotionParams.SPEED_DAMP_TIME, dt);
 
-      if (LocomotionParams.TryComputeTargetYaw(velocity, out float targetYaw)) {
+      // Yaw sources its velocity from FacingVelocityOverride when set
+      // (local player intent), else falls back to transform-diff (remotes).
+      Vector3 facingVel = FacingVelocityOverride ?? velocity;
+      if (LocomotionParams.TryComputeTargetYaw(facingVel, out float targetYaw)) {
         heldYaw = targetYaw;
       }
       // Slerp the actual rotation toward heldYaw at YAW_SLERP_RATE per

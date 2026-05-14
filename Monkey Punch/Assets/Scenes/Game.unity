@@ -495,12 +495,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 93a1ad260433e46769c42c8dfeb7828c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MonkeyPunch.Net.NetworkClient
-  serverUrl: ws://localhost:2567
-  roomName: game
-  playerName: UnitySpectator
   interpDelayMs: 100
   playerPrefab: {fileID: 5914916400753786653, guid: 3a68bb591619ba448b53483de6d6892e, type: 3}
-  slimePrefab: {fileID: 7749758278116342652, guid: 6532a8a80b927854396f6fc6d135e391, type: 3}
+  enemyPrefabs:
+  - {fileID: 7749758278116342652, guid: 6532a8a80b927854396f6fc6d135e391, type: 3}
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
 --- !u!114 &1049207159
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -597,6 +599,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MonkeyPunch.UI.GameUI
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   hudStyleSheet: {fileID: 7433441132597879392, guid: da6a3b17d06846a4b94b3504e88ac1a1, type: 3}
+  bossHpBarRoot: {fileID: 0}
+  bossHpFill: {fileID: 0}
+  bossHpLabel: {fileID: 0}
 --- !u!4 &2088930860
 Transform:
   m_ObjectHideFlags: 0

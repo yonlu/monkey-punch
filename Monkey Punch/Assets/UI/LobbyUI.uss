@@ -82,6 +82,22 @@ TextField {
 TextField > * > .unity-text-element {
   color: rgb(255, 255, 255);
 }
+/* Style the inner input rectangle so white text isn't on Unity's
+   default near-white TextField background. Theme-matched dark brown
+   with the same brown border the cards / secondary buttons use. */
+TextField > .unity-base-text-field__input,
+TextField .unity-text-field__input {
+  background-color: var(--mp-brown-deep);
+  background-image: none;
+  border-color: var(--mp-brown);
+  border-width: 2px;
+  color: rgb(255, 255, 255);
+  padding: 4px 8px;
+}
+TextField:focus > .unity-base-text-field__input,
+TextField:focus .unity-text-field__input {
+  border-color: var(--mp-gold);
+}
 
 /* ----- Buttons ----- */
 .primary-btn {
